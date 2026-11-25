@@ -12,8 +12,13 @@ export CUDF_POLARS_DIAGNOSTICS_DIR="$PWD/artifacts/arm64-polars"
 export RAPIDS_TESTS_DIR="$CUDF_POLARS_DIAGNOSTICS_DIR/test-results"
 export RAPIDS_COVERAGE_DIR="$CUDF_POLARS_DIAGNOSTICS_DIR/coverage"
 mkdir -p "$CUDF_POLARS_DIAGNOSTICS_DIR"
+nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv > "$CUDF_POLARS_DIAGNOSTICS_DIR/gpus.csv"
 export PYTHONPATH="$PWD/ci/arm64_polars_diagnostics${PYTHONPATH:+:$PYTHONPATH}"
 export PYTEST_PLUGINS=repro_diagnostics
+if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == stress-* ]]; then
+    # The stress lanes run selected cases rather than the coverage suite.
+    export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov"
+fi
 
 # The replay uses the package artifacts from the failing run even when this workflow is rerun.
 rapids-download-from-github() {

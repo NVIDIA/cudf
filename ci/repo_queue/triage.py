@@ -31,7 +31,7 @@ SIGNALS = {
 PYTHON_SPECIALTIES = {"cudf.pandas", "cudf-polars", "pylibcudf"}
 
 
-SECTION = re.compile(r"(?m)^(?:#{1,6}[ \t]+(.+)|\*\*(.+?)\*\*[ \t]*)$")
+SECTION = re.compile(r"(?m)^(?:(#{1,6})[ \t]+(.+)|\*\*(.+?)\*\*[ \t]*)$")
 INTENT = re.compile(
     r"describe the bug|describe the problem|related to a problem|describe the solution|expected behavior",
     re.IGNORECASE,
@@ -76,12 +76,19 @@ def classify(issue, component_owners):
     opening = body[: headings[0].start()] if headings else body
     intent = [opening]
     supporting = [opening]
+    diagnostics_level = None
     for i, heading in enumerate(headings):
-        name = heading[1] or heading[2]
+        name = heading[2] or heading[3]
+        level = len(heading[1]) if heading[1] else 7
+        if diagnostics_level is not None and level > diagnostics_level:
+            continue
+        diagnostics_level = None
+        if DIAGNOSTICS.search(name):
+            diagnostics_level = level
+            continue
         end = headings[i + 1].start() if i + 1 < len(headings) else len(body)
-        section = body[heading.end() : end]
-        if not DIAGNOSTICS.search(name):
-            supporting.append(section)
+        section = name + body[heading.end() : end]
+        supporting.append(section)
         if INTENT.search(name):
             intent.append(section)
 
@@ -107,12 +114,20 @@ def classify(issue, component_owners):
     return [], {"matched_signals": {}}
 
 
-def linked_pr_numbers(issue, repository):
-    pattern = rf"https://github\.com/{re.escape(repository)}/pull/([1-9][0-9]*)(?![\w-])"
+def linked_pr_references(issue, repository):
+    pattern = (
+        rf"https://github\.com/{re.escape(repository)}/pull/([1-9][0-9]*)"
+        r"(?=$|[/?#\s)>\]\"',.])(?:/changes|/files)?(?:#discussion_r([1-9][0-9]*))?"
+    )
     text = issue["title"] + "\n" + (issue.get("body") or "")
-    return list(
-        dict.fromkeys(map(int, re.findall(pattern, text, re.IGNORECASE)))
-    )[:3]
+    references = {}
+    for number, comment in re.findall(pattern, text, re.IGNORECASE):
+        if number not in references and len(references) == 3:
+            continue
+        comments = references.setdefault(number, [])
+        if comment and comment not in comments and len(comments) < 3:
+            comments.append(comment)
+    return references
 
 
 def propose(issue, component_owners, team_members, linked_activity=None):
@@ -167,13 +182,23 @@ def propose(issue, component_owners, team_members, linked_activity=None):
     if not eligible:
         return {**result, "reason": "No eligible team member"}
     activity = list(linked_activity(issue)) if linked_activity else []
-    # Prefer people who implemented the linked work, then people who reviewed it.
-    for role in ("author", "reviewer"):
+    # A specific cited discussion is more relevant than general PR participation.
+    for role in ("comment author", "author", "reviewer"):
         for number, participants in activity:
             if candidates := set(eligible).intersection(participants[role]):
                 result["linked_pr"] = number
                 result["linked_role"] = role
-                eligible = sorted(candidates)
+                if role == "comment author":
+                    eligible = [
+                        next(
+                            login
+                            for login in participants[role]
+                            if login in candidates
+                        )
+                    ]
+                    result["linked_comment"] = participants[role][eligible[0]]
+                else:
+                    eligible = sorted(candidates)
                 break
         else:
             continue
@@ -230,9 +255,10 @@ def dm_payload(config, proposal):
     if source := proposal.get("signal_source"):
         lines.append(f"Evidence source: {source}")
     if number := proposal.get("linked_pr"):
-        lines.append(
-            f"https://github.com/{config['repository']}/pull/{number}"
-        )
+        link = f"https://github.com/{config['repository']}/pull/{number}"
+        if comment := proposal.get("linked_comment"):
+            link += f"#discussion_r{comment}"
+        lines.append(link)
     for name, signal in proposal.get("matched_signals", {}).items():
         lines.append(f"Evidence for {name}: {' '.join(signal.split())}")
     # Issue text and contact names must never turn into Slack mentions.
@@ -288,9 +314,33 @@ def main():
         return rosters[team]
 
     def linked_activity(issue):
-        for number in linked_pr_numbers(issue, repository):
+        for number, comments in linked_pr_references(
+            issue, repository
+        ).items():
             endpoint = f"repos/{repository}/pulls/{number}"
-            participants = {"author": set(), "reviewer": set()}
+            comment_authors = {}
+            participants = {
+                "comment author": comment_authors,
+                "author": set(),
+                "reviewer": set(),
+            }
+            for comment_id in comments:
+                try:
+                    comment = github.get(
+                        f"repos/{repository}/pulls/comments/{comment_id}",
+                        timeout=10,
+                    )
+                except (RuntimeError, TimeoutExpired):
+                    continue
+                # The repository-wide comment endpoint can return a different PR's comment.
+                if comment.get(
+                    "pull_request_url"
+                ) == f"https://api.github.com/{endpoint}" and (
+                    user := comment.get("user")
+                ):
+                    comment_authors.setdefault(
+                        user["login"].casefold(), comment_id
+                    )
             try:
                 pr = github.get(endpoint, timeout=10)
                 if user := pr.get("user"):

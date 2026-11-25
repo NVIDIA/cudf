@@ -420,8 +420,8 @@ used; conflicting signals within that tier leave the issue for manual triage.
 The output includes the matched signals and their source.
 
 For a single known component, the script checks up to three explicitly linked
-cuDF PRs. It prefers an eligible author, then a reviewer, then the stable
-per-issue rotation. All candidates must belong to the component codeowner
+cuDF PRs. It prefers the eligible author of a cited inline review comment,
+then a PR author, then a reviewer, then the stable per-issue rotation. All candidates must belong to the component codeowner
 team; the issue author and bots are excluded. Existing assignees suppress a
 contact suggestion. If an issue already has both a component label and an
 assignee, the workflow skips the DM and local output records the skip.

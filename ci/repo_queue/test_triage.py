@@ -18,7 +18,13 @@ REPOSITORY = "NVIDIA/cudf"
 
 class IssueEventTests(unittest.TestCase):
     def run_event(
-        self, repository, issue, *, roster_error=None, linked_responses=()
+        self,
+        repository,
+        issue,
+        *,
+        roster_error=None,
+        linked_responses=(),
+        members=None,
     ):
         with tempfile.TemporaryDirectory() as tmp:
             event = Path(tmp) / "event.json"
@@ -44,6 +50,7 @@ class IssueEventTests(unittest.TestCase):
                 get.side_effect = [
                     issue,
                     roster_error
+                    or members
                     or [
                         {"login": "maintainer", "type": "User"},
                         {"login": "reporter", "type": "User"},
@@ -143,6 +150,46 @@ class IssueEventTests(unittest.TestCase):
         self.assertIn("Suggested first contact: maintainer", message["text"])
         self.assertIn("Eligible reviewer on linked PR #123", message["text"])
 
+    def test_cited_review_comment_takes_precedence_only_on_the_linked_pr(self):
+        for comment_pr, expected in [(123, "commenter"), (456, "maintainer")]:
+            with self.subTest(comment_pr=comment_pr):
+                _, post = self.run_event(
+                    REPOSITORY,
+                    {
+                        "number": 42,
+                        "html_url": f"https://github.com/{REPOSITORY}/issues/42",
+                        "state": "open",
+                        "user": {"login": "reporter"},
+                        "title": "import cudf fails",
+                        "body": (
+                            f"Follow-up to https://github.com/{REPOSITORY}/pull/123 "
+                            f"and https://github.com/{REPOSITORY}/pull/123/files#discussion_r99"
+                        ),
+                        "labels": [],
+                    },
+                    members=[
+                        {"login": login, "type": "User"}
+                        for login in ("commenter", "maintainer")
+                    ],
+                    linked_responses=(
+                        {
+                            "pull_request_url": f"https://api.github.com/repos/{REPOSITORY}/pulls/{comment_pr}",
+                            "user": {"login": "commenter"},
+                        },
+                        {"user": {"login": "maintainer"}},
+                        [],
+                    ),
+                )
+                post.assert_called_once()
+                _, message = post.call_args.args
+                self.assertEqual(message["channel"], "U01PXPJ5741")
+                self.assertIn(
+                    f"Suggested first contact: {expected}", message["text"]
+                )
+                self.assertEqual(
+                    "#discussion_r99" in message["text"], comment_pr == 123
+                )
+
     def test_issue_closed_before_fetch_does_not_send(self):
         _, post = self.run_event(REPOSITORY, {"state": "closed"})
         post.assert_not_called()
@@ -178,3 +225,31 @@ class ComponentEvidenceTests(unittest.TestCase):
         self.assertEqual(
             evidence["signal_source"], "problem or requested behavior"
         )
+
+    def test_problem_heading_supplies_component_evidence(self):
+        components, evidence = classify(
+            {
+                "labels": [],
+                "title": "Unexpected result",
+                "body": (
+                    "## Describe the bug in libcudf\nUnexpected output.\n"
+                    "## Steps to reproduce\nimport cudf"
+                ),
+            },
+            {"libcudf": "cpp", "Python": "python"},
+        )
+        self.assertEqual(components, ["libcudf"])
+        self.assertEqual(
+            evidence["signal_source"], "problem or requested behavior"
+        )
+
+    def test_environment_subsections_are_ignored_until_sibling_heading(self):
+        issue = {
+            "labels": [],
+            "title": "Unexpected result",
+            "body": "## Environment details\n### Python packages\nimport cudf",
+        }
+        owners = {"Java": "java", "Python": "python"}
+        self.assertEqual(classify(issue, owners)[0], [])
+        issue["body"] += "\n## Additional context\nai.rapids.cudf"
+        self.assertEqual(classify(issue, owners)[0], ["Java"])

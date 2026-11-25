@@ -11,11 +11,10 @@ void ZSTD_trace_decompress_end() __attribute__((weak, visibility("hidden")));
 }
 
 namespace {
-using hook = void (*)();
 // __attribute__((used)) preserves this otherwise-unused array so its weak symbol references reach
 // the linker, which merges their hidden visibility with Zstd's tracing references.
-__attribute__((used)) hook const disabled_hooks[] = {ZSTD_trace_compress_begin,
-                                                     ZSTD_trace_compress_end,
-                                                     ZSTD_trace_decompress_begin,
-                                                     ZSTD_trace_decompress_end};
+__attribute__((used)) void (*const disabled_hooks[])() = {ZSTD_trace_compress_begin,
+                                                          ZSTD_trace_compress_end,
+                                                          ZSTD_trace_decompress_begin,
+                                                          ZSTD_trace_decompress_end};
 }  // namespace

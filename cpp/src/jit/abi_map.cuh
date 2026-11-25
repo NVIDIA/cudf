@@ -43,6 +43,8 @@ CUDF_MAP_ELEMENT(cudf_abi::uint8_t, uint8_t);
 CUDF_MAP_ELEMENT(cudf_abi::uint16_t, uint16_t);
 CUDF_MAP_ELEMENT(cudf_abi::uint32_t, uint32_t);
 CUDF_MAP_ELEMENT(cudf_abi::uint64_t, uint64_t);
+CUDF_MAP_ELEMENT(cudf_abi::float32_t, float);
+CUDF_MAP_ELEMENT(cudf_abi::float64_t, double);
 CUDF_MAP_ELEMENT(cudf_abi::string_view, string_view);
 CUDF_MAP_ELEMENT(cudf_abi::decimal32, numeric::decimal32);
 CUDF_MAP_ELEMENT(cudf_abi::decimal64, numeric::decimal64);

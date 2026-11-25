@@ -9,6 +9,8 @@
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cuda/std/concepts>
+
 namespace CUDF_EXPORT cudf {
 namespace detail {
 namespace ops {
@@ -184,28 +186,44 @@ __device__ numeric::decimal<To> decimal_cast(numeric::decimal<From> a)
   return numeric::decimal<To>{numeric::scaled_integer<To>{rep, a.scale()}};
 }
 
+/** @brief Casts an integral value to a scale-zero decimal. */
+template <typename To, cuda::std::integral From>
+__device__ numeric::decimal<To> decimal_cast(From a)
+{
+  return numeric::decimal<To>{a};
+}
+
+/** @brief Casts a floating-point value to a scale-zero decimal, truncating fractional digits. */
+template <typename To, cuda::std::floating_point From>
+__device__ numeric::decimal<To> decimal_cast(From a)
+{
+  return convert_floating_to_fixed<numeric::decimal<To>>(a, numeric::scale_type{0});
+}
+
 }  // namespace detail
 
 /**
- * @brief Casts decimal input values to decimal32.
+ * @brief Casts numeric input values to decimal32, preserving decimal scales or using scale zero.
  *
- * @tparam R Source decimal representation type.
+ * @tparam T Source numeric type.
  * @param a Input value.
  */
-template <typename R>
-__device__ numeric::decimal32 cast_to_decimal32(numeric::decimal<R> a)
+template <typename T>
+__device__ numeric::decimal32 cast_to_decimal32(T a)
+  requires requires { detail::decimal_cast<int32_t>(a); }
 {
   return detail::decimal_cast<int32_t>(a);
 }
 
 /**
- * @brief Casts decimal input values to decimal64.
+ * @brief Casts numeric input values to decimal64, preserving decimal scales or using scale zero.
  *
- * @tparam R Source decimal representation type.
+ * @tparam T Source numeric type.
  * @param a Input value.
  */
-template <typename R>
-__device__ numeric::decimal64 cast_to_decimal64(numeric::decimal<R> a)
+template <typename T>
+__device__ numeric::decimal64 cast_to_decimal64(T a)
+  requires requires { detail::decimal_cast<int64_t>(a); }
 {
   return detail::decimal_cast<int64_t>(a);
 }

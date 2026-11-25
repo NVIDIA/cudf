@@ -2103,8 +2103,10 @@ def _apply_filter_bool_eq(val, col_stats):
 
 
 def _apply_filter_not_eq(val, col_stats):
-    return ("minimum" in col_stats and val < col_stats["minimum"]) or (
-        "maximum" in col_stats and val > col_stats["maximum"]
+    col_min = col_stats.get("minimum")
+    col_max = col_stats.get("maximum")
+    return (col_min is not None and val < col_min) or (
+        col_max is not None and val > col_max
     )
 
 

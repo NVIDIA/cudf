@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "error.hpp"
+#include "io/utilities/kernel_error.hpp"
 #include "reader_impl_preprocess_utils.cuh"
 
 #include <cudf/detail/algorithms/reduce.cuh>

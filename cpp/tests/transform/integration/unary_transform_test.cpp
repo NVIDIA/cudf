@@ -218,6 +218,69 @@ TEST_F(RuntimeSupportTest, TransformProgramIncompatibleSpecifications)
   EXPECT_THROW((void)program.run(inputs, fewer_outputs, {}, std::nullopt), std::invalid_argument);
 }
 
+TEST_F(RuntimeSupportTest, TransformProgramRunUserData)
+{
+  std::string cuda = R"***(
+__device__ void transform(void* user_data, cudf::size_type row, int32_t* out, int32_t in)
+{
+  *out = in + static_cast<int32_t const*>(user_data)[row % 2];
+}
+  )***";
+
+  auto input     = cudf::test::fixed_width_column_wrapper<int32_t>{1, 2, 3, 4};
+  auto table1    = cudf::test::fixed_width_column_wrapper<int32_t>{10, 20};
+  auto table2    = cudf::test::fixed_width_column_wrapper<int32_t>{100, 200};
+  auto user_data = [](cudf::column_view const& table) -> void* {
+    return const_cast<int32_t*>(table.data<int32_t>());
+  };
+
+  cudf::transform_input inputs[] = {input};
+  std::array outputs{cudf::transform_output{cudf::data_type{cudf::type_id::INT32},
+                                            cudf::output_nullability::PRESERVE}};
+  std::array input_specs{cudf::transform_input_spec{.type = cudf::type_id::INT32}};
+  std::array output_specs{cudf::transform_output_spec{
+    .type = cudf::type_id::INT32, .nullability = cudf::output_nullability::PRESERVE}};
+  cudf::transform_program program{cuda,
+                                  cudf::udf_source_type::CUDA,
+                                  cudf::null_aware::NO,
+                                  /*late_bind_user_data=*/true,
+                                  std::nullopt,
+                                  input_specs,
+                                  output_specs};
+
+  auto result = program.run(user_data(table1), inputs, outputs, {}, std::nullopt);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(cudf::test::fixed_width_column_wrapper<int32_t>{11, 22, 13, 24},
+                                 result->get_column(0).view());
+
+  result = program.run(user_data(table2), inputs, outputs, {}, std::nullopt);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    cudf::test::fixed_width_column_wrapper<int32_t>{101, 202, 103, 204},
+    result->get_column(0).view());
+
+  EXPECT_THROW((void)program.run(inputs, outputs, {}, std::nullopt), std::invalid_argument);
+
+  EXPECT_THROW((cudf::transform_program{cuda,
+                                        cudf::udf_source_type::CUDA,
+                                        cudf::null_aware::NO,
+                                        /*late_bind_user_data=*/true,
+                                        user_data(table1),
+                                        input_specs,
+                                        output_specs}),
+               std::invalid_argument);
+
+  std::string cuda_without_user_data = R"***(
+__device__ void transform(int32_t* out, int32_t in) { *out = in; }
+  )***";
+  cudf::transform_program without_user_data{cuda_without_user_data,
+                                            cudf::udf_source_type::CUDA,
+                                            cudf::null_aware::NO,
+                                            std::nullopt,
+                                            input_specs,
+                                            output_specs};
+  EXPECT_THROW((void)without_user_data.run(user_data(table1), inputs, outputs, {}, std::nullopt),
+               std::invalid_argument);
+}
+
 struct UnaryOperationIntegrationTest : public cudf::test::BaseFixture {};
 
 template <class dtype, class Op, class Data>

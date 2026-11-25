@@ -137,6 +137,33 @@ struct transform_program {
                     std::span<std::unique_ptr<column> const> string_offsets);
 
   /**
+   * @brief Constructs a reusable program by deriving specifications from transform arguments,
+   * optionally with user data late-bound in `run`.
+   *
+   * @throws std::invalid_argument if both `late_bind_user_data` and `user_data` are provided
+   *
+   * @param udf The PTX or CUDA source for the transform UDF
+   * @param source_type The source type of `udf`
+   * @param is_null_aware Whether the UDF receives row inputs as optional values
+   * @param late_bind_user_data Whether the UDF takes user data passed to `run(void*, ...)` on each
+   * call, instead of `user_data`
+   * @param user_data User-defined device data, not owned by the program, retained and passed to the
+   * UDF by `run`
+   * @param inputs Inputs from which to derive the input specifications
+   * @param outputs Outputs from which to derive the output type and nullability specifications
+   * @param string_offsets Optional string offsets used to determine each string output
+   * representation
+   */
+  transform_program(std::string const& udf,
+                    udf_source_type source_type,
+                    null_aware is_null_aware,
+                    bool late_bind_user_data,
+                    std::optional<void*> user_data,
+                    std::span<transform_input const> inputs,
+                    std::span<transform_output const> outputs,
+                    std::span<std::unique_ptr<column> const> string_offsets);
+
+  /**
    * @brief Constructs a reusable program from explicit input and output specifications.
    *
    * This overload enables composition without requiring concrete columns when the program is
@@ -154,6 +181,30 @@ struct transform_program {
   transform_program(std::string const& udf,
                     udf_source_type source_type,
                     null_aware is_null_aware,
+                    std::optional<void*> user_data,
+                    std::span<transform_input_spec const> inputs,
+                    std::span<transform_output_spec const> outputs);
+
+  /**
+   * @brief Constructs a reusable program from explicit input and output specifications,
+   * optionally with user data late-bound in `run`.
+   *
+   * @throws std::invalid_argument if both `late_bind_user_data` and `user_data` are provided
+   *
+   * @param udf The PTX or CUDA source for the transform UDF
+   * @param source_type The source type of `udf`
+   * @param is_null_aware Whether the UDF receives row inputs as optional values
+   * @param late_bind_user_data Whether the UDF takes user data passed to `run(void*, ...)` on each
+   * call, instead of `user_data`
+   * @param user_data User-defined device data, not owned by the program, retained and passed to the
+   * UDF by `run`
+   * @param inputs Specifications of the transform inputs
+   * @param outputs Specifications of the transform outputs
+   */
+  transform_program(std::string const& udf,
+                    udf_source_type source_type,
+                    null_aware is_null_aware,
+                    bool late_bind_user_data,
                     std::optional<void*> user_data,
                     std::span<transform_input_spec const> inputs,
                     std::span<transform_output_spec const> outputs);
@@ -196,6 +247,7 @@ struct transform_program {
   /**
    * @brief Runs the transform program on the given inputs and outputs.
    *
+   * @throws std::invalid_argument if the program was constructed with `late_bind_user_data`
    * @throws std::invalid_argument if the inputs, outputs, or string offsets are not compatible with
    * the specifications used to construct the program
    *
@@ -211,6 +263,33 @@ struct transform_program {
    * element of the input according to the output specifications
    */
   std::unique_ptr<table> run(std::span<transform_input const> inputs,
+                             std::span<transform_output const> outputs,
+                             std::vector<std::unique_ptr<column>>&& string_offsets,
+                             std::optional<size_type> row_size,
+                             cuda::stream_ref stream   = cudf::get_default_stream(),
+                             cudf::memory_resources mr = cudf::get_current_device_resource_ref());
+
+  /**
+   * @brief Runs the transform program, passing the given user data to the UDF.
+   *
+   * @throws std::invalid_argument if the program was not constructed with `late_bind_user_data`
+   * @throws std::invalid_argument if the inputs, outputs, or string offsets are not compatible with
+   * the specifications used to construct the program
+   *
+   * @param user_data User-defined device data to pass to the UDF, not retained
+   * @param inputs The inputs to the transform program
+   * @param outputs The outputs of the transform program
+   * @param string_offsets For string output columns, the offsets can be pre-allocated and passed in
+   * to prevent overhead of compacting string views into run-end strings column.
+   * @param row_size The row size of the transform operation. If not provided, it will be inferred
+   * from the inputs.
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Device memory resource used to allocate the returned column's device memory
+   * @return A table containing the columns resulting from applying the transform function to every
+   * element of the input according to the output specifications
+   */
+  std::unique_ptr<table> run(void* user_data,
+                             std::span<transform_input const> inputs,
                              std::span<transform_output const> outputs,
                              std::vector<std::unique_ptr<column>>&& string_offsets,
                              std::optional<size_type> row_size,

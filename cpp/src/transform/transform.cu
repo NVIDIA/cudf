@@ -1062,6 +1062,7 @@ struct transform_program::impl {
   impl(std::string const& udf,
        udf_source_type source_type,
        null_aware is_null_aware,
+       bool late_bind_user_data,
        std::optional<void*> user_data,
        std::vector<transform_input_spec> inputs,
        std::vector<transform_output_spec> outputs,
@@ -1070,9 +1071,10 @@ struct transform_program::impl {
     : reflection_{jit::reflect(source_type, inputs, outputs)},
       source_type_{source_type},
       is_null_aware_{is_null_aware},
+      late_bind_user_data_{validate_user_data(late_bind_user_data, user_data)},
       user_data_{user_data},
       kernel_{jit_transform::get_kernel(is_null_aware_ == null_aware::YES,
-                                        user_data_.has_value(),
+                                        late_bind_user_data_ || user_data_.has_value(),
                                         inputs,
                                         outputs,
                                         udf,
@@ -1082,9 +1084,43 @@ struct transform_program::impl {
   {
   }
 
+  static bool validate_user_data(bool late_bind_user_data, std::optional<void*> user_data)
+  {
+    CUDF_EXPECTS(!(late_bind_user_data && user_data.has_value()),
+                 "User data cannot be both provided and late-bound",
+                 std::invalid_argument);
+    return late_bind_user_data;
+  }
+
+  std::unique_ptr<table> run(std::optional<void*> user_data,
+                             std::span<transform_input const> inputs,
+                             std::span<transform_output const> outputs,
+                             std::vector<std::unique_ptr<column>>&& string_offsets,
+                             std::optional<size_type> row_size,
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
+  {
+    validate(source_type_, inputs, outputs, string_offsets);
+    perform_checks(source_type_, is_null_aware_, row_size, inputs, outputs, string_offsets);
+    return execute_transform({},
+                             source_type_,
+                             is_null_aware_,
+                             row_size,
+                             user_data,
+                             inputs,
+                             outputs,
+                             std::move(string_offsets),
+                             &kernel_,
+                             stream,
+                             mr,
+                             {},
+                             {});
+  }
+
   jit::transform_reflection reflection_;
   udf_source_type source_type_;
   null_aware is_null_aware_;
+  bool late_bind_user_data_;
   std::optional<void*> user_data_;
   kernel kernel_;
   std::vector<std::unique_ptr<column>> ast_scalar_columns_;
@@ -1101,9 +1137,23 @@ transform_program::transform_program(std::string const& udf,
                                      std::span<transform_input const> inputs,
                                      std::span<transform_output const> outputs,
                                      std::span<std::unique_ptr<column> const> string_offsets)
+  : transform_program(
+      udf, source_type, is_null_aware, false, user_data, inputs, outputs, string_offsets)
+{
+}
+
+transform_program::transform_program(std::string const& udf,
+                                     udf_source_type source_type,
+                                     null_aware is_null_aware,
+                                     bool late_bind_user_data,
+                                     std::optional<void*> user_data,
+                                     std::span<transform_input const> inputs,
+                                     std::span<transform_output const> outputs,
+                                     std::span<std::unique_ptr<column> const> string_offsets)
   : transform_program(udf,
                       source_type,
                       is_null_aware,
+                      late_bind_user_data,
                       user_data,
                       jit::make_input_specs(inputs),
                       jit::make_output_specs(outputs, string_offsets))
@@ -1116,11 +1166,23 @@ transform_program::transform_program(std::string const& udf,
                                      std::optional<void*> user_data,
                                      std::span<transform_input_spec const> inputs,
                                      std::span<transform_output_spec const> outputs)
+  : transform_program(udf, source_type, is_null_aware, false, user_data, inputs, outputs)
+{
+}
+
+transform_program::transform_program(std::string const& udf,
+                                     udf_source_type source_type,
+                                     null_aware is_null_aware,
+                                     bool late_bind_user_data,
+                                     std::optional<void*> user_data,
+                                     std::span<transform_input_spec const> inputs,
+                                     std::span<transform_output_spec const> outputs)
 {
   CUDF_FUNC_RANGE();
   impl_ = std::make_unique<impl>(udf,
                                  source_type,
                                  is_null_aware,
+                                 late_bind_user_data,
                                  user_data,
                                  std::vector<transform_input_spec>{inputs.begin(), inputs.end()},
                                  std::vector<transform_output_spec>{outputs.begin(), outputs.end()},
@@ -1147,6 +1209,7 @@ transform_program::transform_program(
   impl_     = std::make_unique<impl>(args.udf,
                                  args.source_type,
                                  args.is_null_aware,
+                                 false,
                                  args.user_data,
                                  jit::make_input_specs(args.inputs),
                                  jit::make_output_specs(args.outputs, args.string_offsets),
@@ -1185,22 +1248,27 @@ std::unique_ptr<table> transform_program::run(std::span<transform_input const> i
                                               cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  impl_->validate(impl_->source_type_, inputs, outputs, string_offsets);
-  perform_checks(
-    impl_->source_type_, impl_->is_null_aware_, row_size, inputs, outputs, string_offsets);
-  return execute_transform({},
-                           impl_->source_type_,
-                           impl_->is_null_aware_,
-                           row_size,
-                           impl_->user_data_,
-                           inputs,
-                           outputs,
-                           std::move(string_offsets),
-                           &impl_->kernel_,
-                           stream,
-                           mr,
-                           {},
-                           {});
+  CUDF_EXPECTS(!impl_->late_bind_user_data_,
+               "Transform program was constructed with late-bound user data, which must be passed "
+               "to run",
+               std::invalid_argument);
+  return impl_->run(
+    impl_->user_data_, inputs, outputs, std::move(string_offsets), row_size, stream, mr);
+}
+
+std::unique_ptr<table> transform_program::run(void* user_data,
+                                              std::span<transform_input const> inputs,
+                                              std::span<transform_output const> outputs,
+                                              std::vector<std::unique_ptr<column>>&& string_offsets,
+                                              std::optional<size_type> row_size,
+                                              cuda::stream_ref stream,
+                                              cudf::memory_resources mr)
+{
+  CUDF_FUNC_RANGE();
+  CUDF_EXPECTS(impl_->late_bind_user_data_,
+               "Transform program was not constructed with late-bound user data",
+               std::invalid_argument);
+  return impl_->run(user_data, inputs, outputs, std::move(string_offsets), row_size, stream, mr);
 }
 
 std::unique_ptr<table> transform_program::run(table_view const& table,

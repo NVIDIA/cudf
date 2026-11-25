@@ -29,7 +29,9 @@
 #include <cuda/std/algorithm.any_of.h>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
+#include <cuda/std/bit>
 #include <cuda/std/chrono>
+#include <cuda/std/cstring>
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
@@ -332,7 +334,8 @@ __device__ uint8_t const* delta_encode(page_enc_state_s<0>* s, uint64_t* buffer,
   // might need to modify this if there's a big performance hit in the 32-bit case.
   int32_t const scale = s->col.ts_scale == 0 ? 1 : s->col.ts_scale;
   for (uint32_t cur_val_idx = 0; cur_val_idx < s->page.num_leaf_values;) {
-    uint32_t const nvals = min(s->page.num_leaf_values - cur_val_idx, delta::block_size);
+    uint32_t const nvals =
+      cuda::std::min<uint32_t>(s->page.num_leaf_values - cur_val_idx, delta::block_size);
 
     size_type const val_idx_in_block = cur_val_idx + t;
     size_type const val_idx          = s->page_start_val + val_idx_in_block;
@@ -654,7 +657,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_g.comp_data_size = comp_page_sizes[ck_g.first_page + num_pages];
         }
         page_headers_size += page_g.max_hdr_size;
-        max_page_data_size = max(max_page_data_size, page_g.max_data_size);
+        max_page_data_size = cuda::std::max(max_page_data_size, page_g.max_data_size);
       }
       __syncwarp();
       if (t == 0) {
@@ -686,11 +689,11 @@ CUDF_KERNEL void __launch_bounds__(128)
         if (t == 0) { frag_g = ck_g.fragments[fragments_in_chunk]; }
         if (!t && ck_g.stats) {
           if (col_g.stats_dtype == dtype_string) {
-            minmax_len = max(ck_g.stats[fragments_in_chunk].min_value.str_val.length,
-                             ck_g.stats[fragments_in_chunk].max_value.str_val.length);
+            minmax_len = cuda::std::max(ck_g.stats[fragments_in_chunk].min_value.str_val.length,
+                                        ck_g.stats[fragments_in_chunk].max_value.str_val.length);
           } else if (col_g.stats_dtype == dtype_byte_array) {
-            minmax_len = max(ck_g.stats[fragments_in_chunk].min_value.byte_val.length,
-                             ck_g.stats[fragments_in_chunk].max_value.byte_val.length);
+            minmax_len = cuda::std::max(ck_g.stats[fragments_in_chunk].min_value.byte_val.length,
+                                        ck_g.stats[fragments_in_chunk].max_value.byte_val.length);
           }
         }
       } else if (!t) {
@@ -709,7 +712,7 @@ CUDF_KERNEL void __launch_bounds__(128)
                                                                             : 512 * 1024;
 
       // override this_max_page_size if the requested size is smaller
-      this_max_page_size = min(this_max_page_size, max_page_size_bytes);
+      this_max_page_size = cuda::std::min(this_max_page_size, max_page_size_bytes);
 
       // subtract size of rep and def level vectors and RLE length field
       auto num_vals      = values_in_page + frag_g.num_values;
@@ -732,7 +735,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           page_size = 1 + max_RLE_page_size(ck_g.dict_rle_bits, values_in_page);
         } else if (write_v2_headers && col_g.physical_type == Type::BOOLEAN) {
           // V2 BOOLEAN data is RLE encoded, so one byte per value is not enough for tiny pages
-          page_size = max(page_size, max_RLE_page_size(1, leaf_values_in_page));
+          page_size = cuda::std::max(page_size, max_RLE_page_size(1, leaf_values_in_page));
         }
         if (!t) {
           page_g.num_fragments  = fragments_in_chunk - page_start;
@@ -785,7 +788,7 @@ CUDF_KERNEL void __launch_bounds__(128)
           if (is_use_delta) {
             auto const delta_len = delta_data_len(
               physical_type, type_id, page_g.num_leaf_values, page_size, column_data_encoding);
-            page_size = max(page_size, delta_len);
+            page_size = cuda::std::max(page_size, delta_len);
           }
           auto const max_data_size = page_size + rle_pad + lvl_size;
           // Page sizes must fit in parquet page size limit.
@@ -830,9 +833,9 @@ CUDF_KERNEL void __launch_bounds__(128)
                                                page_align);
           }
           page_headers_size += page_g.max_hdr_size;
-          max_page_data_size = max(max_page_data_size, page_g.max_data_size);
+          max_page_data_size = cuda::std::max(max_page_data_size, page_g.max_data_size);
           cur_row += rows_in_page;
-          ck_max_stats_len = max(ck_max_stats_len, max_stats_len);
+          ck_max_stats_len = cuda::std::max(ck_max_stats_len, max_stats_len);
         }
         __syncwarp();
         if (t == 0) {
@@ -867,7 +870,7 @@ CUDF_KERNEL void __launch_bounds__(128)
         page_start          = fragments_in_chunk;
         max_stats_len       = 0;
       }
-      max_stats_len = max(max_stats_len, minmax_len);
+      max_stats_len = cuda::std::max(max_stats_len, minmax_len);
       page_size += fragment_data_size;
       // fragment_data_size includes the length indicator...remove it
       var_bytes_size += frag_g.fragment_data_size - frag_g.num_valid * sizeof(size_type);
@@ -1067,7 +1070,7 @@ inline __device__ void PackLiteralsRoundRobin(
 
     // Copy 64 bit word into two 32 bit words while following C++ strict aliasing rules.
     uint32_t v32[2];
-    memcpy(&v32, &v64, sizeof(uint64_t));
+    cuda::std::memcpy(&v32, &v64, sizeof(uint64_t));
 
     // Atomically write result to scratch
     if (v32[0]) { atomicOr(scratch + ((t * w) >> 5), v32[0]); }
@@ -1145,13 +1148,13 @@ static __device__ void RleEncode(
       if (t < warp_size) {
         uint32_t c32 = ballot(t >= 4 || s->rpt_map[t] != 0xffff'ffffu);
         if (t == 0) {
-          uint32_t last_idx = __ffs(c32) - 1;
-          s->rle_rpt_count =
-            last_idx * warp_size + ((last_idx < 4) ? __ffs(~s->rpt_map[last_idx]) - 1 : 0);
+          uint32_t last_idx = cuda::std::countr_zero(c32);
+          s->rle_rpt_count  = last_idx * warp_size +
+                             ((last_idx < 4) ? cuda::std::countr_zero(~s->rpt_map[last_idx]) : 0);
         }
       }
       __syncthreads();
-      max_rpt_count = min(numvals - rle_pos, encode_block_size);
+      max_rpt_count = cuda::std::min<uint32_t>(numvals - rle_pos, encode_block_size);
       rle_rpt_count = s->rle_rpt_count;
       rle_run += rle_rpt_count << 1;
       rle_pos += rle_rpt_count;
@@ -1171,7 +1174,7 @@ static __device__ void RleEncode(
       uint32_t v0      = s->vals[rolling_idx(pos)];
       uint32_t v1      = s->vals[rolling_idx(pos + 1)];
       uint32_t mask    = ballot(pos + 1 < numvals && v0 == v1);
-      uint32_t maxvals = min(numvals - rle_pos, encode_block_size);
+      uint32_t maxvals = cuda::std::min<uint32_t>(numvals - rle_pos, encode_block_size);
       uint32_t rle_lit_count, rle_rpt_count;
       if (lane_id == 0) { s->rpt_map[warp_id] = mask; }
       __syncthreads();
@@ -1184,8 +1187,10 @@ static __device__ void RleEncode(
         uint32_t needed_mask = kRleRunMask[nbits - 1];
         mask                 = ballot((__funnelshift_r(m0, m1, pos8) & needed_mask) == needed_mask);
         if (!t) {
-          uint32_t rle_run_start = (mask != 0) ? min((__ffs(mask) - 1) * 8, maxvals) : maxvals;
-          uint32_t rpt_len       = 0;
+          uint32_t rle_run_start =
+            (mask != 0) ? cuda::std::min<uint32_t>(cuda::std::countr_zero(mask) * 8, maxvals)
+                        : maxvals;
+          uint32_t rpt_len = 0;
           if (rle_run_start < maxvals) {
             uint32_t idx_cur = rle_run_start / warp_size;
             uint32_t idx_ofs = rle_run_start % warp_size;
@@ -1194,7 +1199,7 @@ static __device__ void RleEncode(
               m1   = (idx_cur < 3) ? s->rpt_map[idx_cur + 1] : 0;
               mask = ~__funnelshift_r(m0, m1, idx_ofs);
               if (mask != 0) {
-                rpt_len += __ffs(mask) - 1;
+                rpt_len += cuda::std::countr_zero(mask);
                 break;
               }
               rpt_len += warp_size;
@@ -1202,7 +1207,7 @@ static __device__ void RleEncode(
             }
           }
           s->rle_lit_count = rle_run_start;
-          s->rle_rpt_count = min(rpt_len, maxvals - rle_run_start);
+          s->rle_rpt_count = cuda::std::min(rpt_len, maxvals - rle_run_start);
         }
       }
       __syncthreads();
@@ -1213,7 +1218,7 @@ static __device__ void RleEncode(
         bool need_more_data = false;
         if (!flush && rle_pos + rle_lit_count == numvals) {
           // Wait for more data
-          rle_lit_count -= min(rle_lit_count, 24);
+          rle_lit_count -= cuda::std::min<uint32_t>(rle_lit_count, 24);
           need_more_data = true;
         }
         if (rle_lit_count != 0) {
@@ -1226,7 +1231,7 @@ static __device__ void RleEncode(
             uint8_t* dst = s->rle_out + 1 + (rle_run >> 1) * nbits;
             PackLiterals(dst, (rle_pos + t < numvals) ? v0 : 0, lit_div8 * 8, nbits, t);
             rle_run = (rle_run + lit_div8 * 2) | 1;
-            rle_pos = min(rle_pos + lit_div8 * 8, numvals);
+            rle_pos = cuda::std::min(rle_pos + lit_div8 * 8, numvals);
           }
         }
         if (rle_run >= ((rle_rpt_count != 0 || (flush && rle_pos == numvals)) ? 0x03 : 0x7f)) {
@@ -1279,14 +1284,14 @@ static __device__ void PlainBoolEncode(rle_page_enc_state_s* s,
   while (rle_pos < numvals) {
     uint32_t pos    = rle_pos + t;
     uint32_t v      = (pos < numvals) ? s->vals[rolling_idx(pos)] : 0;
-    uint32_t n      = min(numvals - rle_pos, 128);
+    uint32_t n      = cuda::std::min<uint32_t>(numvals - rle_pos, 128);
     uint32_t nbytes = (n + ((flush) ? 7 : 0)) >> 3;
     if (!nbytes) { break; }
     v |= shuffle_xor(v, 1) << 1;
     v |= shuffle_xor(v, 2) << 2;
     v |= shuffle_xor(v, 4) << 4;
     if (t < n && !(t & 7)) { dst[t >> 3] = v; }
-    rle_pos = min(rle_pos + nbytes * 8, numvals);
+    rle_pos = cuda::std::min(rle_pos + nbytes * 8, numvals);
     dst += nbytes;
   }
   __syncthreads();
@@ -1350,7 +1355,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
       __syncthreads();
       while (s->rle_numvals < s->page.num_rows) {
         uint32_t rle_numvals = s->rle_numvals;
-        uint32_t nrows       = min(s->page.num_rows - rle_numvals, 128);
+        uint32_t nrows       = cuda::std::min<uint32_t>(s->page.num_rows - rle_numvals, 128);
         auto row             = s->page.start_row + rle_numvals + t;
         // Definition level encodes validity. Checks the valid map and if it is valid, then sets the
         // def_lvl accordingly and sets it in s->vals which is then given to RleEncode to encode
@@ -1427,7 +1432,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
       size_type col_last_val_idx   = s->col.level_offsets[s->col.num_rows];
       while (s->rle_numvals < s->page.num_values) {
         uint32_t rle_numvals = s->rle_numvals;
-        uint32_t nvals       = min(s->page.num_values - rle_numvals, 128);
+        uint32_t nvals       = cuda::std::min<uint32_t>(s->page.num_values - rle_numvals, 128);
         uint32_t idx         = page_first_val_idx + rle_numvals + t;
         uint32_t lvl_val =
           (rle_numvals + t < s->page.num_values && idx < col_last_val_idx) ? lvl_val_data[idx] : 0;
@@ -1637,7 +1642,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
   auto const stride = is_split_stream ? s->page.num_valid : 1;
 
   for (uint32_t cur_val_idx = 0; cur_val_idx < s->page.num_leaf_values;) {
-    uint32_t nvals = min(s->page.num_leaf_values - cur_val_idx, block_size);
+    uint32_t nvals = cuda::std::min<uint32_t>(s->page.num_leaf_values - cur_val_idx, block_size);
     uint32_t len, pos;
 
     auto [is_valid, val_idx] = [&]() {
@@ -1767,7 +1772,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
           }(type_id, s->col.leaf_column, val_idx);
           uint32_t v = len - 4;  // string length
           encode_value(dst + pos, v, 1);
-          if (v != 0) memcpy(dst + pos + 4, bytes, v);
+          if (v != 0) cuda::std::memcpy(dst + pos + 4, bytes, v);
         } break;
         case Type::FIXED_LEN_BYTE_ARRAY: {
           if (type_id == type_id::DECIMAL128) {
@@ -1794,7 +1799,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
                   dst[pos] = v_char_ptr[i];
                 }
               } else {
-                memcpy(dst + pos, elem.data(), len);
+                cuda::std::memcpy(dst + pos, elem.data(), len);
               }
             }
           }
@@ -1880,7 +1885,7 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
   __syncthreads();
 
   for (uint32_t cur_val_idx = 0; cur_val_idx < s->page.num_leaf_values;) {
-    uint32_t nvals = min(s->page.num_leaf_values - cur_val_idx, block_size);
+    uint32_t nvals = cuda::std::min<uint32_t>(s->page.num_leaf_values - cur_val_idx, block_size);
 
     auto [is_valid, val_idx] = [&]() {
       size_type const val_idx_in_block    = cur_val_idx + t;
@@ -2123,7 +2128,8 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
 
   uint32_t len = 0;
   for (uint32_t cur_val_idx = 0; cur_val_idx < s->page.num_leaf_values;) {
-    uint32_t const nvals = min(s->page.num_leaf_values - cur_val_idx, delta::block_size);
+    uint32_t const nvals =
+      cuda::std::min<uint32_t>(s->page.num_leaf_values - cur_val_idx, delta::block_size);
 
     size_type const val_idx_in_block = cur_val_idx + t;
     size_type const val_idx          = s->page_start_val + val_idx_in_block;
@@ -2177,7 +2183,7 @@ struct byte_array {
   // calculate the amount of overlap with a preceding array
   __device__ size_type common_prefix_length(byte_array const& preceding) const
   {
-    auto const max_pref_len = min(length, preceding.length);
+    auto const max_pref_len = cuda::std::min(length, preceding.length);
     size_type idx           = 0;
     while (idx < max_pref_len and data[idx] == preceding.data[idx]) {
       idx++;
@@ -2403,9 +2409,10 @@ CUDF_KERNEL void __launch_bounds__(block_size, 8)
       block_scan(temp_storage.scan_storage)
         .ExclusiveScan(suff_len, s_off, str_data_len, cuda::std::plus(), total);
 
-      if (t_idx < s->page.num_valid) {
+      // guard zero-size copies: cuda::std::memcpy asserts on them, unlike std::memcpy
+      if (t_idx < s->page.num_valid and suff_len != 0) {
         auto const dst = strings_ptr + s_off;
-        memcpy(dst, s_ptr + pref_len, suff_len);
+        cuda::std::memcpy(dst, s_ptr + pref_len, suff_len);
       }
       str_data_len += total;
       __syncthreads();
@@ -2660,7 +2667,8 @@ class header_encoder {
   inline __device__ void put_binary(void const* value, uint32_t length)
   {
     current_header_ptr = cpw_put_uint32(current_header_ptr, length);
-    memcpy(current_header_ptr, value, length);
+    // guard zero-size copies: cuda::std::memcpy asserts on them, unlike std::memcpy
+    if (length != 0) { cuda::std::memcpy(current_header_ptr, value, length); }
     current_header_ptr += length;
   }
 
@@ -2702,7 +2710,8 @@ class header_encoder {
     current_header_ptr =
       cpw_put_fldh(current_header_ptr, field, current_field_index, FieldType::BINARY);
     current_header_ptr = cpw_put_uint32(current_header_ptr, length);
-    memcpy(current_header_ptr, value, length);
+    // guard zero-size copies: cuda::std::memcpy asserts on them, unlike std::memcpy
+    if (length != 0) { cuda::std::memcpy(current_header_ptr, value, length); }
     current_header_ptr += length;
     current_field_index = field;
   }

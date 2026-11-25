@@ -195,7 +195,7 @@ TEST_F(StreamingHashJoinTest, ConcurrentInsert)
   std::vector<size_type> actual_batch_indices;
   actual_left_indices.reserve(num_batches);
   actual_batch_indices.reserve(num_batches);
-  for (auto const [left_index, batch_index, row_index] : actual) {
+  for (auto const& [left_index, batch_index, row_index] : actual) {
     actual_left_indices.push_back(left_index);
     actual_batch_indices.push_back(batch_index);
     EXPECT_EQ(row_index, 0);

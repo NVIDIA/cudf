@@ -29,6 +29,7 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
@@ -45,6 +46,7 @@ from cudf_polars.streaming.actor_graph.tracing import (
     send_chunk,
 )
 from cudf_polars.streaming.utils import _concat
+from cudf_polars.utils.config import RankLocalCPUComputeMode
 from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
@@ -482,6 +484,22 @@ async def evaluate_chunk(
     """
     Make chunk available, reserve memory, and evaluate.
 
+    Where the IR nodes run, by ``ir_context.rank_local_cpu_compute``:
+
+    +--------------+----------------------------+-----------------------+
+    | Mode         | Reservation fits           | Reservation overbooks |
+    +==============+============================+=======================+
+    | ``"never"``  | GPU                        | GPU                   |
+    +--------------+----------------------------+-----------------------+
+    | ``"always"`` | CPU                        | CPU                   |
+    +--------------+----------------------------+-----------------------+
+    | ``"on_oom"`` | GPU, CPU after MemoryError | CPU                   |
+    +--------------+----------------------------+-----------------------+
+
+    CPU applies only to CPU capable IR nodes, the others run on the GPU. With
+    ``"on_oom"``, the reservation overbooks after the timeout even when
+    ``allow_overbooking_by_default`` is off.
+
     Parameters
     ----------
     context
@@ -506,9 +524,20 @@ async def evaluate_chunk(
     The resulting table chunk after evaluation.
     """
     assert len(irs) > 0, "Expected at least one IR node"
-    if already_available:
-        if not chunk.is_available():
-            raise ValueError("already_available=True requires an available TableChunk")
+    on_oom = ir_context.rank_local_cpu_compute == RankLocalCPUComputeMode.ON_OOM
+    overbooked = 0
+    if already_available and not chunk.is_available():
+        raise ValueError("already_available=True requires an available TableChunk")
+    if on_oom:
+        size = chunk.data_alloc_size()
+        if not already_available:
+            size += chunk.make_available_cost()
+        reservation, overbooked = await context.memory(
+            MemoryType.DEVICE
+        ).reserve_or_wait_or_overbook(size, net_memory_delta=0)
+        if not already_available:
+            chunk = chunk.make_available(reservation)
+    elif already_available:
         reservation = await reserve_memory(
             context, size=chunk.data_alloc_size(), net_memory_delta=0
         )
@@ -518,6 +547,13 @@ async def evaluate_chunk(
             chunk,
             reserve_extra=chunk.data_alloc_size(),
             net_memory_delta=0,
+        )
+    if overbooked > 0:
+        # Run the IR nodes in `irs` on the CPU, if they are CPU capable. They still
+        # use the reservation, since the CPU path needs the input and the result
+        # on the device.
+        ir_context = replace(
+            ir_context, rank_local_cpu_compute=RankLocalCPUComputeMode.ALWAYS
         )
     with opaque_memory_usage(reservation):
         for single_ir in irs:

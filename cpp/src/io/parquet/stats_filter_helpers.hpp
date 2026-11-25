@@ -137,6 +137,29 @@ class stats_caster_base {
     }
   }
 
+  /**
+   * @brief Computes the parameters to convert the statistics values of a column to `T`
+   *
+   * @param schema Schema element of the column in a source
+   * @return Pair of the timestamp scale and whether values may be truncated to `T`, e.g. decimals
+   * read with a narrower `decimal_width`
+   */
+  template <typename T>
+  [[nodiscard]] static inline cuda::std::pair<int32_t, bool> compute_conversion_info(
+    SchemaElement const& schema)
+  {
+    auto const ts_scale = [&] {
+      if constexpr (cudf::is_timestamp<T>()) {
+        return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
+      }
+      return 0;
+    }();
+    auto const is_narrowing_column =
+      cuda::std::signed_integral<T> and
+      is_column_wider_than(schema.type, schema.type_length, sizeof(T));
+    return {ts_scale, is_narrowing_column};
+  }
+
   template <typename ToType, typename FromType>
   static inline ToType target_type(FromType value, int32_t ts_scale = 0)
   {
@@ -327,6 +350,30 @@ class stats_caster_base {
         val[index] = value.value();
       } else {
         set_index(index, std::nullopt, {});
+      }
+    }
+
+    /**
+     * @brief Sets whether all values are null: true if all are, false if none are, and null if
+     * only some are or `null_count` is absent
+     *
+     * @param index Row of the column chunk or page in this column
+     * @param null_count Optional number of nulls
+     * @param num_values Number of values
+     */
+    void inline set_all_null(size_type index, std::optional<int64_t> null_count, int64_t num_values)
+      requires std::same_as<T, bool>
+    {
+      if (not null_count.has_value()) {
+        set_value(index, std::nullopt);
+      } else if (null_count == 0) {
+        val[index] = false;
+      } else if (null_count < num_values) {
+        set_value(index, std::nullopt);
+      } else if (null_count == num_values) {
+        val[index] = true;
+      } else {
+        CUDF_FAIL("Invalid null count");
       }
     }
 

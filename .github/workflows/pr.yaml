@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-native-comparison
+  group: ${{ github.workflow }}-${{ github.ref }}-allocator-stress
   cancel-in-progress: true
 
 jobs:
@@ -19,19 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial:
-          - signal-target-01-aggregation
-          - signal-target-02-aggregation
-          - signal-target-03-aggregation
-          - signal-target-04-aggregation
-          - signal-target-05-aggregation
-          - signal-target-06-aggregation
-          - signal-target-07-aggregation
-          - signal-target-08-aggregation
-          - signal-target-09-aggregation
-          - signal-target-10-aggregation
-          - signal-target-11-aggregation
-          - signal-target-12-aggregation
+        trial: [signal-stress-aggregation]
     permissions:
       actions: read
       contents: read

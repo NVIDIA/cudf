@@ -9,6 +9,7 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/strings/detail/utf8.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/strings/translate.hpp>
 #include <cudf/utilities/error.hpp>
@@ -107,4 +108,29 @@ TEST_F(StringsTranslateTest, ErrorTest)
     cudf::strings::filter_characters(
       strings_view, filter_table, cudf::strings::filter_type::KEEP, cudf::string_scalar("", false)),
     cudf::logic_error);
+}
+
+TEST_F(StringsTranslateTest, NextCodepoint)
+{
+  using cudf::strings::detail::next_codepoint;
+
+  EXPECT_EQ(next_codepoint(0x61), 0x62u);        // a -> b
+  EXPECT_EQ(next_codepoint(0x7F), 0x80u);        // 1 -> 2 bytes
+  EXPECT_EQ(next_codepoint(0x00E9), 0x00EAu);    // é -> ê
+  EXPECT_EQ(next_codepoint(0xD7FF), 0xE000u);    // skip surrogates
+  EXPECT_EQ(next_codepoint(0xFFFF), 0x1'0000u);  // 3 -> 4 bytes
+  EXPECT_FALSE(next_codepoint(0x10'FFFF).has_value());
+}
+
+TEST_F(StringsTranslateTest, IsValidCodepoint)
+{
+  using cudf::strings::detail::is_valid_codepoint;
+
+  EXPECT_TRUE(is_valid_codepoint(0x61));
+  EXPECT_TRUE(is_valid_codepoint(0xD7FF));
+  EXPECT_FALSE(is_valid_codepoint(0xD800));
+  EXPECT_FALSE(is_valid_codepoint(0xDFFF));
+  EXPECT_TRUE(is_valid_codepoint(0xE000));
+  EXPECT_TRUE(is_valid_codepoint(0x10'FFFF));
+  EXPECT_FALSE(is_valid_codepoint(0x11'0000));
 }

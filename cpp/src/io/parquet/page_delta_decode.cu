@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "decimal_decode_utils.cuh"
 #include "delta_binary.cuh"
 #include "io/utilities/block_utils.cuh"
 #include "page_state_composed.cuh"
@@ -349,6 +350,36 @@ struct delta_byte_array_decoder {
   }
 };
 
+/**
+ * @brief Store a DELTA_BINARY_PACKED decoded value at the output width
+ *
+ * Deltas wrap around at the physical width, so decimals are first narrowed to their signed physical
+ * type, then sign extended or truncated to the output decimal width.
+ *
+ * @param dst Pointer to the output value
+ * @param val Decoded value
+ * @param dtype_len Size in bytes of the output type
+ * @param dtype_len_in Size in bytes of the physical type
+ * @param is_decimal Whether the column is a decimal
+ */
+__device__ inline void store_delta_binary_value(
+  void* dst, zigzag128_t val, uint32_t dtype_len, int32_t dtype_len_in, bool is_decimal)
+{
+  if (is_decimal) {
+    auto const value = dtype_len_in == sizeof(int32_t)
+                         ? static_cast<int64_t>(static_cast<int32_t>(val))
+                         : static_cast<int64_t>(val);
+    store_decimal(dst, dtype_len, [value]<typename T>() { return static_cast<T>(value); });
+    return;
+  }
+  switch (dtype_len) {
+    case 1: *static_cast<int8_t*>(dst) = val; break;
+    case 2: *static_cast<int16_t*>(dst) = val; break;
+    case 4: *static_cast<int32_t*>(dst) = val; break;
+    case 8: *static_cast<int64_t*>(dst) = val; break;
+  }
+}
+
 // Decode page data that is DELTA_BINARY_PACKED encoded. This encoding is
 // only used for int32 and int64 physical types (and appears to only be used
 // with V2 page headers; see https://www.mail-archive.com/dev@parquet.apache.org/msg11826.html).
@@ -396,6 +427,8 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
   // Must be evaluated after setup_local_page_info
   bool const has_repetition = s->setup.col.max_level[level_type::REPETITION] > 0;
   bool const process_nulls  = should_process_nulls(s);
+  bool const is_decimal     = s->setup.col.logical_type.has_value() and
+                          s->setup.col.logical_type->type == LogicalType::DECIMAL;
 
   // Capture initial valid_map_offset before any processing that might modify it
   int const init_valid_map_offset =
@@ -489,15 +522,13 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_block_size)
 
         // place value for this thread
         if (dst_pos >= 0 && sp < target_pos) {
-          void* const dst =
-            nesting_info_base[leaf_level_index].data_out + dst_pos * s->output_cvt.dtype_len;
-          auto const val = db->value_at(sp + skipped_leaf_values);
-          switch (s->output_cvt.dtype_len) {
-            case 1: *static_cast<int8_t*>(dst) = val; break;
-            case 2: *static_cast<int16_t*>(dst) = val; break;
-            case 4: *static_cast<int32_t*>(dst) = val; break;
-            case 8: *static_cast<int64_t*>(dst) = val; break;
-          }
+          void* const dst = nesting_info_base[leaf_level_index].data_out +
+                            static_cast<size_t>(dst_pos) * s->output_cvt.dtype_len;
+          store_delta_binary_value(dst,
+                                   db->value_at(sp + skipped_leaf_values),
+                                   s->output_cvt.dtype_len,
+                                   s->output_cvt.dtype_len_in,
+                                   is_decimal);
         }
       }
       if (warp.thread_rank() == 0) { s->progress.src_pos = src_pos + batch_size; }
@@ -632,12 +663,15 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
   // the decoder's mutable scalars. `value_at()` touches `value[]` and `first_value`, and the
   // producer writes neither below that index.
   //
-  // `data_out`, `dtype_len` and `first_row` are read into locals once, before the loop, rather than
-  // from `ni`, `s->output_cvt` and `s->setup` inside it. The compiler cannot rule out the store
-  // through `data_out` aliasing that shared state, so it would otherwise reload all three for every
-  // value.
-  auto* const data_out = ni.data_out;
-  auto const dtype_len = s->output_cvt.dtype_len;
+  // `data_out`, the dtype lengths and `first_row` are read into locals once, before the loop,
+  // rather than from `ni`, `s->output_cvt` and `s->setup` inside it. The compiler cannot rule out
+  // the store through `data_out` aliasing that shared state, so it would otherwise reload them for
+  // every value.
+  auto* const data_out    = ni.data_out;
+  auto const dtype_len    = s->output_cvt.dtype_len;
+  auto const dtype_len_in = s->output_cvt.dtype_len_in;
+  auto const is_decimal   = s->setup.col.logical_type.has_value() and
+                          s->setup.col.logical_type->type == LogicalType::DECIMAL;
   auto const first_row = s->setup.first_row;
   uint32_t produced    = db->next_pass_start_idx();
   while (s->setup.error == 0 && s->progress.src_pos < s->progress.nz_count) {
@@ -658,14 +692,8 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
         auto dst_pos = process_nulls ? static_cast<int32_t>(nz_idx[sp]) : static_cast<int32_t>(sp);
         dst_pos -= first_row;
         if (dst_pos >= 0) {
-          void* const dst = data_out + dst_pos * dtype_len;
-          auto const val  = db->value_at(sp);
-          switch (dtype_len) {
-            case 1: *static_cast<int8_t*>(dst) = val; break;
-            case 2: *static_cast<int16_t*>(dst) = val; break;
-            case 4: *static_cast<int32_t*>(dst) = val; break;
-            case 8: *static_cast<int64_t*>(dst) = val; break;
-          }
+          void* const dst = data_out + static_cast<size_t>(dst_pos) * dtype_len;
+          store_delta_binary_value(dst, db->value_at(sp), dtype_len, dtype_len_in, is_decimal);
         }
       }
       if (warp.thread_rank() == 0) { s->progress.src_pos = target_pos; }
@@ -691,16 +719,18 @@ CUDF_KERNEL void __launch_bounds__(decode_delta_binary_with_nz_map_block_size)
   // delta stream held fewer values than the definition levels call for. Those rows are already
   // marked valid, so without an error the read would return whatever their output slots happened
   // to contain.
-  cg::invoke_one(block, [&] {
+  //
+  // The error is reported by the same thread that updates `s->setup.error`, so no other thread
+  // reads the field while it is being written.
+  if (block.thread_rank() == 0) {
     if (s->setup.error == 0 and db->error) {
       s->setup.error |=
         static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED);
     } else if (s->setup.error == 0 and s->progress.src_pos < s->progress.nz_count) {
       s->setup.error |= static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN);
     }
-  });
-
-  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
+    if (s->setup.error != 0) { set_error(s->setup.error, error_code); }
+  }
 }
 
 // Decode page data that is DELTA_BYTE_ARRAY packed. This encoding consists of a DELTA_BINARY_PACKED

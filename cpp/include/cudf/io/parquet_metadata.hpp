@@ -302,11 +302,11 @@ std::vector<parquet::FileMetaData> read_parquet_footers(
 /**
  * @brief Decode parquet column-chunk min/max statistics for selected leaf columns.
  *
- * Missing min/max statistics are represented as nulls in the corresponding output column. Parquet
- * min/max exactness flags are not interpreted by this function. The requested column names are
- * resolved against each file's schema. The returned table contains one row per source row group.
- * Column 0 is the source file index, column 1 is the file-local row-group index, and subsequent
- * columns are min/max pairs in the order of ``column_names``.
+ * Missing min/max statistics, and invalid ones (truncated inexact values with min == max), are
+ * represented as nulls in the corresponding output column. The requested column names are resolved
+ * against each file's schema. The returned table contains one row per source row group. Column 0 is
+ * the source file index, column 1 is the file-local row-group index, and subsequent columns are
+ * min/max pairs in the order of ``column_names``.
  *
  * @ingroup io_readers
  *

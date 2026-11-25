@@ -249,7 +249,7 @@ _TIMEDELTA_SCALARS = [
     np.timedelta64(4, "s"),
     np.timedelta64(456, "D"),
     np.timedelta64(46, "h"),
-    np.timedelta64("nat"),
+    np.timedelta64("nat", "ns"),
     np.timedelta64(1, "s"),
     np.timedelta64(1, "ms"),
     np.timedelta64(1, "us"),
@@ -666,7 +666,7 @@ _DATETIME_SUBTRACT_OTHERS = [
     np.datetime64("2005-02"),
     np.datetime64("2005-02-25"),
     np.datetime64("2005-02-25T03:30"),
-    np.datetime64("nat"),
+    np.datetime64("nat", "ns"),
     # TODO: https://github.com/pandas-dev/pandas/issues/52295
 ]
 
@@ -2936,7 +2936,9 @@ def test_binops_decimal_scalar_compare(
     assert_eq(expected, actual)
 
 
-@pytest.mark.parametrize("null_scalar", [None, cudf.NA, np.datetime64("NaT")])
+@pytest.mark.parametrize(
+    "null_scalar", [None, cudf.NA, np.datetime64("NaT", "ns")]
+)
 def test_column_null_scalar_comparison(
     request, all_supported_types_as_str, null_scalar, comparison_op
 ):
@@ -3250,7 +3252,7 @@ def test_binops_float_scalar_decimal():
     "scalars",
     [
         pd.NaT,
-        np.datetime64("NaT"),
+        np.datetime64("NaT", "ns"),
         None,
         pd.NA,
         np.nan,
@@ -3283,17 +3285,46 @@ def test_binops_comparisons_datatime_with_scalars(scalars, comparison_op):
         assert_eq(expect, got)
 
 
-def test_timedelta_arrow_backed_comparisions_pandas_compat():
+@pytest.mark.parametrize("pa_type", [pa.timestamp, pa.duration])
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("other_kind", ["series", "scalar"])
+def test_datetimelike_arrow_backed_comparisons_pandas_compat(
+    pa_type, unit, other_kind, comparison_op
+):
+    dtype = pa_type(unit)
     s = pd.Series(
-        pd.arrays.ArrowExtensionArray(
-            pa.array([1, None, 3], type=pa.duration("ns"))
-        )
+        pd.arrays.ArrowExtensionArray(pa.array([1, None, 3], type=dtype))
+    )
+    other = pd.Series(
+        pd.arrays.ArrowExtensionArray(pa.array([None, 2, 3], type=dtype))
     )
 
     with cudf.option_context("mode.pandas_compatible", True):
         gs = cudf.from_pandas(s)
-        assert_eq(s == s, gs == gs)
-        assert_eq(s != s, gs != gs)
+        if other_kind == "scalar":
+            other = other.iloc[-1]
+            gother = other
+        else:
+            gother = cudf.from_pandas(other)
+        assert_eq(comparison_op(s, other), comparison_op(gs, gother))
+
+
+@pytest.mark.parametrize(
+    "left_dtype, right_dtype",
+    [
+        ("datetime64[ns]", "timestamp[ns][pyarrow]"),
+        ("timestamp[ns][pyarrow]", "datetime64[ns]"),
+    ],
+)
+def test_mixed_timestamp_comparisons_pandas_compat(
+    left_dtype, right_dtype, comparison_op
+):
+    left = pd.Series([1, None, 3, 4], dtype=left_dtype)
+    right = pd.Series([None, 2, 3, 5], dtype=right_dtype)
+    expected = comparison_op(left, right)
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = comparison_op(cudf.from_pandas(left), cudf.from_pandas(right))
+    assert_eq(expected, result)
 
 
 def test_decimal_arrow_backed_comparisons_pandas_compat(comparison_op):

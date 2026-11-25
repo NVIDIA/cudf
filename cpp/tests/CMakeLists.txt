@@ -302,8 +302,6 @@ ConfigureTest(
   binaryop/binop-compiled-fixed_point-test.cpp
   binaryop/binop-generic-ptx-test.cpp
   binaryop/operator_parity_test.cpp
-  GPUS 1
-  PERCENT 100
 )
 
 # ##################################################################################################
@@ -739,6 +737,8 @@ add_fragment(
 )
 
 add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
+
+add_fragment(cudf_test_fragments FRAGMENT copy_string SOURCE transform/fragments/copy_string.cu)
 
 add_fragment(
   cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu

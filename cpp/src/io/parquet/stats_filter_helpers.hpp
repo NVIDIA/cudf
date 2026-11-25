@@ -26,6 +26,7 @@
 
 #include <cuda/buffer>
 #include <cuda/std/concepts>
+#include <cuda/std/utility>
 
 #include <algorithm>
 #include <array>
@@ -36,6 +37,7 @@
 #include <span>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 
 namespace cudf::io::parquet::detail {
 
@@ -74,14 +76,12 @@ class stats_caster_base {
   static inline T decode_fixed_width_decimal(uint8_t const* stats_val, size_t stats_size)
   {
     // Decimal statistics with physical BYTE_ARRAY or FIXED_LEN_BYTE_ARRAY are stored as
-    // signed two's-complement values using big-endian byte order. The physical width may be
-    // smaller than the selected cudf storage width, so sign extend while decoding
+    // signed two's-complement values using big-endian byte order. Sign extend if the physical
+    // width is smaller than the cudf storage width, or keep the low bytes to narrow.
 
     CUDF_EXPECTS(cudf::is_signed<T>(),
                  "FLBA/BYTE_ARRAY decimals must have signed representation types");
     CUDF_EXPECTS(stats_size > 0, "Parquet reader encountered an empty decimal statistics vector");
-    CUDF_EXPECTS(stats_size <= sizeof(T),
-                 "Parquet reader encountered a statistics vector larger than the type's size");
 
     return decode_big_endian_decimal<T>(stats_val, static_cast<int32_t>(stats_size));
   }
@@ -135,6 +135,29 @@ class stats_caster_base {
     } else {
       return false;
     }
+  }
+
+  /**
+   * @brief Computes the parameters to convert the statistics values of a column to `T`
+   *
+   * @param schema Schema element of the column in a source
+   * @return Pair of the timestamp scale and whether values may be truncated to `T`, e.g. decimals
+   * read with a narrower `decimal_width`
+   */
+  template <typename T>
+  [[nodiscard]] static inline cuda::std::pair<int32_t, bool> compute_conversion_info(
+    SchemaElement const& schema)
+  {
+    auto const ts_scale = [&] {
+      if constexpr (cudf::is_timestamp<T>()) {
+        return calc_timestamp_scale(schema.logical_type, static_cast<int32_t>(T::period::den));
+      }
+      return 0;
+    }();
+    auto const is_narrowing_column =
+      cuda::std::signed_integral<T> and
+      is_column_wider_than(schema.type, schema.type_length, sizeof(T));
+    return {ts_scale, is_narrowing_column};
   }
 
   template <typename ToType, typename FromType>
@@ -270,47 +293,47 @@ class stats_caster_base {
     {
     }
 
-    void inline set_index(size_type index,
-                          std::optional<std::vector<uint8_t>> const& binary_value,
-                          Type const type,
-                          int32_t ts_scale = 0)
+    /**
+     * @brief Sets the min and max statistics
+     *
+     * Values truncated to `T` (e.g. decimals read with a narrower `decimal_width`) lose their
+     * order, so if the column can truncate, both are nulled unless both are present and fit in `T`
+     *
+     * @param min Min statistics column
+     * @param max Max statistics column
+     * @param index Row of the column chunk or page in this column
+     * @param min_value Optional binary min value
+     * @param max_value Optional binary max value
+     * @param is_narrowing_column Whether values may be truncated to `T`
+     * @param type Parquet physical type
+     * @param ts_scale Timestamp scale
+     */
+    static inline void set_min_max(host_column& min,
+                                   host_column& max,
+                                   size_type index,
+                                   std::optional<std::span<uint8_t const>> min_value,
+                                   std::optional<std::span<uint8_t const>> max_value,
+                                   bool is_narrowing_column,
+                                   Type const type,
+                                   int32_t ts_scale = 0)
     {
-      // Helper to set the stat value to null (ignore)
-      auto const set_to_null = [&] {
-        clear_bit_unsafe(null_mask.data(), index);
-        null_count++;
+      // Truncated values lose their order, so use the stats only if both bounds are present and fit
+      auto const value_fits_in_type = [&](auto const& value) {
+        if constexpr (cuda::std::signed_integral<T>) {
+          return value.has_value() and
+                 cuda::std::in_range<T>(convert<__int128_t>(value->data(), value->size(), type));
+        }
+        return true;
       };
 
-      // Return early if the binary value isn't set
-      if (not binary_value.has_value()) {
-        set_to_null();
-        return;
-      }
-
-      // For strings, also insert the characters
-      if constexpr (std::is_same_v<T, string_view>) {
-        // Create a temporary string view from the binary value
-        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
-                                     binary_value.value().size()};
-        // Current offset into the chars vector
-        auto const current_chars_offset = chars.size();
-        chars.insert(chars.end(), input_value.begin(), input_value.end());
-        // Convert to the target type
-        val[index] = stats_caster_base::convert<T>(
-          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
-          binary_value.value().size(),
-          type);
+      auto const are_stats_usable = not is_narrowing_column or (value_fits_in_type(min_value) and
+                                                                value_fits_in_type(max_value));
+      if (are_stats_usable) {
+        min.set_index(index, min_value, type, ts_scale);
+        max.set_index(index, max_value, type, ts_scale);
       } else {
-        val[index] = stats_caster_base::convert<T>(
-          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
-        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
-        if constexpr (cudf::is_floating_point<T>()) {
-          if (std::isnan(val[index])) {
-            val[index] = T{};  // No non-empty nulls
-            set_to_null();
-            return;
-          }
-        }
+        min.set_index(index, std::nullopt, type);
+        max.set_index(index, std::nullopt, type);
       }
     }
 
@@ -327,6 +350,30 @@ class stats_caster_base {
         val[index] = value.value();
       } else {
         set_index(index, std::nullopt, {});
+      }
+    }
+
+    /**
+     * @brief Sets whether all values are null: true if all are, false if none are, and null if
+     * only some are or `null_count` is absent
+     *
+     * @param index Row of the column chunk or page in this column
+     * @param null_count Optional number of nulls
+     * @param num_values Number of values
+     */
+    void inline set_all_null(size_type index, std::optional<int64_t> null_count, int64_t num_values)
+      requires std::same_as<T, bool>
+    {
+      if (not null_count.has_value()) {
+        set_value(index, std::nullopt);
+      } else if (null_count == 0) {
+        val[index] = false;
+      } else if (null_count < num_values) {
+        set_value(index, std::nullopt);
+      } else if (null_count == num_values) {
+        val[index] = true;
+      } else {
+        CUDF_FAIL("Invalid null count");
       }
     }
 
@@ -388,6 +435,51 @@ class stats_caster_base {
       stream.sync();
       return std::make_unique<column>(
         dtype, val.size(), data.release(), std::move(null_mask_buffer), null_count);
+    }
+
+   private:
+    void inline set_index(size_type index,
+                          std::optional<std::span<uint8_t const>> binary_value,
+                          Type const type,
+                          int32_t ts_scale = 0)
+    {
+      // Helper to set the stat value to null (ignore)
+      auto const set_to_null = [&] {
+        clear_bit_unsafe(null_mask.data(), index);
+        null_count++;
+      };
+
+      // Return early if the binary value isn't set
+      if (not binary_value.has_value()) {
+        set_to_null();
+        return;
+      }
+
+      // For strings, also insert the characters
+      if constexpr (std::is_same_v<T, string_view>) {
+        // Create a temporary string view from the binary value
+        std::string_view input_value{reinterpret_cast<char const*>(binary_value.value().data()),
+                                     binary_value.value().size()};
+        // Current offset into the chars vector
+        auto const current_chars_offset = chars.size();
+        chars.insert(chars.end(), input_value.begin(), input_value.end());
+        // Convert to the target type
+        val[index] = stats_caster_base::convert<T>(
+          reinterpret_cast<uint8_t const*>(chars.data()) + current_chars_offset,
+          binary_value.value().size(),
+          type);
+      } else {
+        val[index] = stats_caster_base::convert<T>(
+          binary_value.value().data(), binary_value.value().size(), type, ts_scale);
+        // Per Parquet spec, a `NaN` stats value must be ignored (set to null)
+        if constexpr (cudf::is_floating_point<T>()) {
+          if (std::isnan(val[index])) {
+            val[index] = T{};  // No non-empty nulls
+            set_to_null();
+            return;
+          }
+        }
+      }
     }
   };
 };

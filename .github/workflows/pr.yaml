@@ -211,9 +211,7 @@ jobs:
           - 'ci/test_python_cudf_polars_integrations.sh'
         test_cudf_polars_quent:
           - 'python/cudf_polars/cudf_polars/quent/**'
-          - 'python/cudf_polars/quent/analyzer/**'
-          - 'python/cudf_polars/quent/bridge/**'
-          - 'python/cudf_polars/quent/model.yaml'
+          - 'python/cudf_polars/quent/**'
           - 'python/cudf_polars/tests/quent/**'
           - 'ci/build_wheel_cudf_polars_quent.sh'
           - 'ci/run_cudf_polars_quent_tests.sh'
@@ -284,7 +282,7 @@ jobs:
     uses: rapidsai/shared-workflows/.github/workflows/checks.yaml@main
     with:
       enable_check_generated_files: false
-      ignored_pr_jobs: "cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional"
+      ignored_pr_jobs: "cudf-spark-jni cuml-compat-tests conda-python-cudf-polars-tests-integration-optional docs-preview"
       # Main builds seed this cache. PR merge refs can restore it but should not create
       # duplicate archives that are inaccessible to other PRs.
       pre-commit-cache-read-only: true
@@ -861,6 +859,16 @@ jobs:
       arch: "${{ matrix.arch }}"
       container_image: "rapidsai/ci-conda:27.02-cuda${{ matrix.CUDA_VER }}-${{ matrix.LINUX_VER }}-py${{ matrix.PY_VER }}"
       script: "ci/build_docs.sh"
+  docs-preview:
+    needs: [docs-build]
+    if: needs.docs-build.result == 'success'
+    permissions:
+      statuses: write
+    uses: rapidsai/shared-workflows/.github/workflows/docs-preview-status.yaml@main
+    with:
+      docs-project: cudf
+      docs-preview-urls: ${{ needs.docs-build.outputs.docs-preview-urls }}
+      sha: ${{ github.sha }}
   publish-api-docs:
     needs: [docs-build]
     permissions:

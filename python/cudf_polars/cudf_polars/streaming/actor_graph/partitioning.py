@@ -175,7 +175,7 @@ def _deduplicate_row_orderings(
 
 
 def partitioning_or_none(
-    inter_rank: InterRankScheme,
+    inter_rank: PartitioningScheme,
     local: PartitioningScheme,
     row_orderings: Sequence[RowOrdering],
 ) -> Partitioning | None:
@@ -718,7 +718,7 @@ class NormalizedPartitioning:
             local_scheme = None
 
         if matched_inter_rank is None and nranks == 1:
-            if local_scheme not in (None, "inherit"):
+            if isinstance(local_scheme, (HashScheme, OrderScheme)):
                 return local_scheme, "inherit"
             if trivial is not None:
                 return trivial, None

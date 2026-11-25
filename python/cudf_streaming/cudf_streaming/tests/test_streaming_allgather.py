@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+from contextlib import aclosing, nullcontext
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -134,17 +134,17 @@ async def allgather_and_concat(
     op_id: int,
     use_context_manager: bool,
 ) -> None:
-    gather = AllGather(context, comm, op_id)
-    cm = gather if use_context_manager else nullcontext(gather)
-    with cm as ag:
-        while (msg := await ch_in.recv(context)) is not None:
-            chunk = PackedDataChunk.from_message(
-                msg, br=context.br()
-            ).to_packed_data()
-            ag.insert(msg.sequence_number, chunk)
-    if not use_context_manager:
-        gather.insert_finished()
-    gathered = await gather.extract_all(context, ordered=True)
+    async with aclosing(AllGather(context, comm, op_id)) as gather:
+        cm = gather if use_context_manager else nullcontext(gather)
+        with cm as ag:
+            while (msg := await ch_in.recv(context)) is not None:
+                chunk = PackedDataChunk.from_message(
+                    msg, br=context.br()
+                ).to_packed_data()
+                ag.insert(msg.sequence_number, chunk)
+        if not use_context_manager:
+            gather.insert_finished()
+        gathered = await gather.extract_all(ordered=True)
     stream = context.br().stream_pool.get_stream()
     table = unpack_and_concat(gathered, stream, context.br())
     to_send = TableChunk.from_pylibcudf_table(

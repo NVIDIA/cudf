@@ -54,7 +54,7 @@ from pylibcudf.libcudf.io.parquet_schema import (
 from pylibcudf.types import TypeId
 
 if TYPE_CHECKING:
-    from typing_extensions import Buffer
+    from collections.abc import Buffer
     from pylibcudf.typing import CudaStreamLike
 
 ctypedef const unique_ptr[datasource] const_unique_ptr_datasource
@@ -1122,8 +1122,8 @@ cpdef Table read_parquet_column_chunk_bounds(
     """
     Decode parquet column-chunk min/max statistics for selected columns.
 
-    Missing min/max statistics are returned as nulls. Parquet min/max
-    exactness flags are not interpreted by this function.
+    Missing min/max statistics, and invalid ones (truncated inexact values
+    with min == max), are returned as nulls.
 
     Parameters
     ----------

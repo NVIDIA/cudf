@@ -18,10 +18,10 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
-from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
+from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.dsl.utils.naming import names_to_indices
@@ -346,10 +346,11 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
         needs_cast = index_column.type() != dtype
         memory_scope = nullcontext()
         if needs_cast:
-            reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-                index_column.size() * 8, net_memory_delta=0
+            memory_scope = opaque_memory_usage(
+                await reserve_memory(
+                    context, size=index_column.size() * 8, net_memory_delta=0
+                )
             )
-            memory_scope = opaque_memory_usage(reservation)
         with memory_scope:
             if needs_cast:
                 index_column = plc.unary.cast(index_column, dtype, stream=stream)
@@ -680,10 +681,11 @@ class RowCountOverlapPolicy(_OverlapPolicy[BufferedChunk]):
             [start - cursor.row_start, cursor.num_rows],
             stream=stream,
         )
-        reservation = await context.memory(MemoryType.DEVICE).reserve_or_wait(
-            cursor.chunk.data_alloc_size(), net_memory_delta=0
-        )
-        with opaque_memory_usage(reservation):
+        with opaque_memory_usage(
+            await reserve_memory(
+                context, size=cursor.chunk.data_alloc_size(), net_memory_delta=0
+            )
+        ):
             table = table.copy(stream=stream, mr=context.br().device_mr)
         return BufferedChunk(
             TableChunk.from_pylibcudf_table(
@@ -978,20 +980,18 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
     ) -> tuple[tuple[int, ...], ...]:
         """All-gather fixed-width signed integer metadata in rank order."""
         fmt = f"<{len(payload)}q"
-        gather = AllGather(self.context, self.comm, self.collective_id)
-        try:
-            gather.insert(
-                0,
-                PackedData.from_host_bytes(
-                    struct.pack(fmt, *payload), self.context.br()
-                ),
-            )
-        finally:
-            gather.insert_finished()
-        return tuple(
-            struct.unpack(fmt, item.to_host_bytes())
-            for item in await gather.extract_all(self.context, ordered=True)
-        )
+        async with aclosing(
+            AllGather(self.context, self.comm, self.collective_id)
+        ) as gather:
+            with gather:
+                gather.insert(
+                    0,
+                    PackedData.from_host_bytes(
+                        struct.pack(fmt, *payload), self.context.br()
+                    ),
+                )
+            gathered = await gather.extract_all(ordered=True)
+        return tuple(struct.unpack(fmt, item.to_host_bytes()) for item in gathered)
 
     async def _gather_counts(self, summary: _CountSummary) -> tuple[_CountSummary, ...]:
         """Gather the row count owned by every rank."""

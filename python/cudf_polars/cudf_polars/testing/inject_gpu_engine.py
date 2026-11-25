@@ -8,9 +8,10 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from functools import partialmethod, wraps
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import packaging.version
 import pytest
@@ -231,8 +232,33 @@ def pytest_configure(config: pytest.Config) -> None:
         )
 
     collect = polars.LazyFrame.collect
+    # Tests may collect from several threads at once, for example duckdb's polars
+    # source collecting the frames of one query in parallel. cudf-polars sets the
+    # current device resource per query, which is not thread safe, so the queries
+    # on the injected engine run one at a time. Other engines, such as the CPU
+    # fallback's ``engine="in-memory"``, are not serialized. The lock is held for the
+    # whole query, so a query that waits on another thread collecting on the injected
+    # engine would deadlock. Waiting for the lock times out with an error instead.
+    injected_engine_lock = threading.RLock()
+    lock_timeout = 60  # seconds
+
+    @wraps(collect)
+    def serialized_collect(self: polars.LazyFrame, *args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("engine") is not engine:
+            return collect(self, *args, **kwargs)
+        if not injected_engine_lock.acquire(timeout=lock_timeout):
+            raise RuntimeError(
+                f"Waited {lock_timeout} s for another collect on the injected GPU "
+                "engine to finish. A query that waits on another thread collecting "
+                "on the injected engine deadlocks."
+            )
+        try:
+            return collect(self, *args, **kwargs)
+        finally:
+            injected_engine_lock.release()
+
     # https://github.com/python/mypy/issues/2427
-    polars.LazyFrame.collect = partialmethod(collect, engine=engine)  # type: ignore[method-assign, assignment]
+    polars.LazyFrame.collect = partialmethod(serialized_collect, engine=engine)  # type: ignore[method-assign, assignment]
     config._inject_gpu_engine = engine  # type: ignore[attr-defined]
     _verify_collect_patch(engine)
 
@@ -257,6 +283,10 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "filterwarnings",
         "ignore:.*Query execution with GPU not possible",
+    )
+    config.addinivalue_line(
+        "filterwarnings",
+        "ignore:Sortedness of columns cannot be checked when 'by' groups provided:UserWarning",
     )
 
 
@@ -420,62 +450,6 @@ def pytest_report_header(config: pytest.Config) -> str:
     cls = type(engine)
     return f"injected GPU engine: {cls.__module__}.{cls.__name__}"
 
-
-# https://github.com/NVIDIA/cudf/issues/25021
-# libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs
-# polars) that differ only in the legacy converted_type. Which of these tests
-# hit this depends on the engine and blocksize (some pass with the streaming
-# engine), so they are marked as non-strict xfails: neither a failure nor an
-# unexpected pass fails the run.
-ICEBERG_MIXED_WRITER_REASON = (
-    "libcudf rejects Parquet sources from mixed writers (pyiceberg/pyarrow vs polars) "
-    "that differ only in the legacy converted_type: https://github.com/NVIDIA/cudf/issues/25021"
-)
-
-ICEBERG_MIXED_WRITER_TESTS: tuple[str, ...] = (
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
-    "tests/unit/io/test_iceberg.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate0]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate1]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate2]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate3]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate4]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate5]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate6]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate7]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate8]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate9]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate10]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate11]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate12]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate13]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate14]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate16]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate17]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate18]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate19]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate21]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate22]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate23]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate24]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate25]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate26]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate27]",
-    "tests/unit/io/test_iceberg_plugin_suite.py::test_sink_iceberg_overwrite_filter_polars_semantics[predicate28]",
-)
 
 EXPECTED_FAILURES: dict[str, str] = {
     "tests/unit/io/test_delta.py::test_scan_delta_nanosecond_timestamp": "The test asserts on the verbose log of the polars reader, which the GPU engine does not emit",
@@ -1011,7 +985,3 @@ def pytest_mark_and_shard_items(
             item.add_marker(pytest.mark.skip(reason=skip_reason))
         elif (xfail_reason := xfails.get(item.nodeid)) is not None:
             item.add_marker(pytest.mark.xfail(reason=xfail_reason))
-        elif item.nodeid in ICEBERG_MIXED_WRITER_TESTS:
-            item.add_marker(
-                pytest.mark.xfail(reason=ICEBERG_MIXED_WRITER_REASON, strict=False)
-            )

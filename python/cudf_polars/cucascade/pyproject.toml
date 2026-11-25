@@ -5,7 +5,6 @@
 build-backend = "scikit_build_core.build"
 requires = [
     "cython>=3.2.2,<3.3.0a0",
-    "cython-cmake>=2.0",
     "pylibcudf",
     "scikit-build-core>=0.11.0",
 ]

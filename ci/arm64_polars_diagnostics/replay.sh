@@ -23,7 +23,7 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-[0-9][0-9] ]] &&
     echo 'Target GPU was not assigned' | tee "$CUDF_POLARS_DIAGNOSTICS_DIR/skipped.txt"
     exit 0
 fi
-nvidia-smi -q -d ECC,PAGE_RETIREMENT,ROW_REMAPPER,RESET_STATUS > "$CUDF_POLARS_DIAGNOSTICS_DIR/gpu-health-before.txt" 2>&1 || true
+bash ci/arm64_polars_diagnostics/gpu-health.sh > "$CUDF_POLARS_DIAGNOSTICS_DIR/gpu-health-before.txt" 2>&1
 
 export PYTHONPATH="$PWD/ci/arm64_polars_diagnostics${PYTHONPATH:+:$PYTHONPATH}"
 export PYTEST_PLUGINS=repro_diagnostics

@@ -36,6 +36,7 @@ requirements:
   run:
     # 'nvidia-ml-py' provides the 'pynvml' module
     - nvidia-ml-py>=12
+    - nvtx >=0.2.1
     - python
     - pylibcudf =${{ version }}
     - rapidsmpf =${{ minor_version }}

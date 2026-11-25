@@ -26,6 +26,7 @@ dependencies = [
     "cudf-streaming==27.2.*,>=0.0.0a0",
     "kvikio==27.2.*,>=0.0.0a0",
     "nvidia-ml-py>=12",
+    "nvtx>=0.2.1",
     "packaging",
     "polars>=2.0,<2.2",
     "pylibcudf==27.2.*,>=0.0.0a0",
@@ -43,7 +44,6 @@ classifiers = [
 
 [project.optional-dependencies]
 test = [
-    "dask-cuda==27.2.*,>=0.0.0a0",
     "deltalake>=1.6.0",
     "pandas>=3.0.0,<3.1.0",
     "polars[iceberg]",

@@ -37,18 +37,14 @@ template <typename Rep>
 using division_magnitude_t = typename division_magnitude<Rep>::type;
 
 /**
- * @brief Computes `Rad` to the non-negative power `exponent`, returning false instead if it
+ * @brief Computes 10 to the non-negative power `exponent`, returning false instead if it
  * overflows `U`.
  */
-template <typename U, numeric::Radix Rad>
+template <typename U>
 __device__ inline bool checked_power(U& result, int32_t exponent)
 {
-  // The largest exponent for which `Rad^exponent` fits in `U`
-  constexpr int32_t max_exponent = Rad == numeric::Radix::BASE_2
-                                     ? cuda::std::numeric_limits<U>::digits - 1
-                                     : cuda::std::numeric_limits<U>::digits10;
-  if (exponent > max_exponent) { return false; }
-  result = numeric::detail::ipow<U, Rad>(exponent);
+  if (exponent > cuda::std::numeric_limits<U>::digits10) { return false; }
+  result = numeric::detail::ipow<U, numeric::Radix::BASE_10>(exponent);
   return true;
 }
 
@@ -191,8 +187,7 @@ __device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
 
   U factor{};
   if (exponent >= 0) {
-    if (!checked_power<U, numeric::Radix::BASE_10>(factor, exponent) ||
-        cuda::mul_overflow(dividend, dividend, factor)) {
+    if (!checked_power<U>(factor, exponent) || cuda::mul_overflow(dividend, dividend, factor)) {
       // An overflowing dividend is at least 2^64 (or 2^128), so unless the divisor or the output
       // is 128 bits wide, the quotient has more digits than the output can hold.
       if constexpr (sizeof(OutRep) == sizeof(__int128_t) || sizeof(RhsRep) == sizeof(__int128_t)) {
@@ -203,8 +198,7 @@ __device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
       }
       return cuda::std::nullopt;
     }
-  } else if (!checked_power<U, numeric::Radix::BASE_10>(factor, -exponent) ||
-             cuda::mul_overflow(divisor, divisor, factor)) {
+  } else if (!checked_power<U>(factor, -exponent) || cuda::mul_overflow(divisor, divisor, factor)) {
     // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
     return OutRep{0};
   }

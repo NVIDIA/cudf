@@ -15,8 +15,8 @@ mkdir -p "$CUDF_POLARS_DIAGNOSTICS_DIR"
 nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv > "$CUDF_POLARS_DIAGNOSTICS_DIR/gpus.csv"
 export PYTHONPATH="$PWD/ci/arm64_polars_diagnostics${PYTHONPATH:+:$PYTHONPATH}"
 export PYTEST_PLUGINS=repro_diagnostics
-if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == stress-* ]]; then
-    # The stress lanes run selected cases rather than the coverage suite.
+if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then
+    # Coverage gates do not apply to the selected worker history.
     export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov -W ignore::pytest_cov.CovDisabledWarning"
 fi
 

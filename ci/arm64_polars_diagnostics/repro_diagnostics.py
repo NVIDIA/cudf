@@ -5,7 +5,6 @@
 
 import ctypes
 import os
-import re
 import subprocess
 import time
 from pathlib import Path
@@ -14,10 +13,25 @@ import pytest
 
 _output = Path(os.environ["CUDF_POLARS_DIAGNOSTICS_DIR"])
 _trial = os.environ["CUDF_POLARS_DIAGNOSTICS_TRIAL"]
-_stress_cases = {
-    "tests/streaming/test_join.py::test_join[spmd-small-options1-False-left]",
-    "tests/streaming/test_unique.py::test_unique[spmd-small-none-subset15-False]",
-}
+_warmup_first = (
+    "tests/expressions/test_agg.py::"
+    "test_n_unique_sorted[spmd-small-data0-Int64-False-True-True-False]"
+)
+_warmup_join = (
+    "tests/streaming/test_join.py::test_join[spmd-small-options1-False-left]"
+)
+_warmup_last = "tests/streaming/test_unique.py::test_unique[spmd-small-none-subset15-False]"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(args):
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
+    if _trial == "warmup-serial":
+        args.append("--numprocesses=1")
+    elif _trial == "warmup-shared":
+        # Reproduce the same worker history on each worker under contention.
+        args.append("--dist=each")
 
 
 def _attach_debugger(worker):
@@ -96,7 +110,7 @@ def pytest_sessionstart(session):
             subprocess.run(
                 ["conda", "list", "--explicit"], stdout=packages, check=True
             )
-    elif _trial.startswith(("native-", "stress-")):
+    elif _trial.startswith(("native-", "warmup-")):
         session._cudf_debugger = _attach_debugger(worker)
         _trace_partition_and_pack(worker)
 
@@ -121,36 +135,24 @@ def pytest_runtest_logstart(nodeid):
             log.write(f"{time.monotonic_ns()} {nodeid}\n")
 
 
-def pytest_generate_tests(metafunc):
-    if not _trial.startswith("stress-") or not any(
-        case.startswith(metafunc.definition.nodeid + "[")
-        for case in _stress_cases
-    ):
-        return
-    # Generate separate pytest items so function-scoped fixtures reset between
-    # repetitions while each worker keeps the same session-scoped engine.
-    metafunc.fixturenames.append("cudf_diagnostic_iteration")
-    metafunc.parametrize(
-        "cudf_diagnostic_iteration",
-        range(64),
-        ids=lambda index: f"cudfdiag{index}",
-    )
-
-
+@pytest.hookimpl(wrapper=True)
 def pytest_collection_modifyitems(config, items):
-    if _trial.startswith("stress-"):
-        selected = [
-            item
-            for item in items
-            if re.sub(r"(?<=\[)cudfdiag\d+-|-cudfdiag\d+", "", item.nodeid)
-            in _stress_cases
-        ]
-        if len(selected) != 64 * len(_stress_cases):
-            raise pytest.UsageError(
-                f"Stress replay expected 128 cases, collected {len(selected)}"
-            )
-        selected_set = set(selected)
-        config.hook.pytest_deselected(
-            items=[item for item in items if item not in selected_set]
+    result = yield
+    if not _trial.startswith("warmup-"):
+        return result
+    # Select the recorded worker prefix after cuDF's conftest groups by engine.
+    positions = {item.nodeid: index for index, item in enumerate(items)}
+    try:
+        first, join, last = (
+            positions[node]
+            for node in (_warmup_first, _warmup_join, _warmup_last)
         )
-        items[:] = selected
+    except KeyError as error:
+        raise pytest.UsageError(f"Missing warmup landmark {error}") from error
+    if not first < join < last or last - first + 1 != 5820:
+        raise pytest.UsageError(
+            f"Unexpected warmup order or count: {first=}, {join=}, {last=}"
+        )
+    config.hook.pytest_deselected(items=[*items[:first], *items[last + 1 :]])
+    items[:] = items[first : last + 1]
+    return result

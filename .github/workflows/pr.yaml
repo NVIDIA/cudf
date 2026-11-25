@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [control, native-1, native-2, stress-1, stress-2]
+        trial: [control, native-1, native-2, warmup-serial, warmup-shared]
     permissions:
       actions: read
       contents: read

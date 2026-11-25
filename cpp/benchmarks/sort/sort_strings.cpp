@@ -6,6 +6,8 @@
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf_test/column_wrapper.hpp>
+
 #include <cudf/sorting.hpp>
 #include <cudf/strings/combine.hpp>
 #include <cudf/strings/strings_column_view.hpp>
@@ -16,8 +18,12 @@
 
 #include <nvbench/nvbench.cuh>
 
+#include <algorithm>
+#include <cstdint>
 #include <memory>
+#include <random>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -269,3 +275,55 @@ NVBENCH_BENCH(bench_sorted_order_strings_nulls)
   .add_int64_axis("num_rows", {262144, 2097152})
   .add_string_axis("profile", {"fixed_8", "variable_128"})
   .add_int64_axis("null_percent", {0, 50, 100});
+
+// Equal eight-byte prefixes form runs of controlled sizes; each row's suffix is distinct.
+static void bench_sorted_order_strings_runs(nvbench::state& state)
+{
+  auto const num_rows = static_cast<cudf::size_type>(state.get_int64("num_rows"));
+  auto const shared   = static_cast<std::size_t>(state.get_int64("shared_suffix"));
+  auto const profile  = state.get_string("run_profile");
+  std::vector<std::string> strings;
+  strings.reserve(num_rows);
+  cudf::size_type group = 0;
+  while (static_cast<cudf::size_type>(strings.size()) < num_rows) {
+    cudf::size_type length = 1;
+    if (profile == "pairs")
+      length = 2;
+    else if (profile == "tiny32")
+      length = 32;
+    else if (profile == "block256")
+      length = 256;
+    else if (profile == "logarithmic")
+      length = 1 << (1 + group % 13);
+    else if (profile == "hot90")
+      length = group == 0 ? num_rows / 10 * 9 : 32;
+    else if (profile == "few_giants")
+      length = group < 8 ? num_rows / 64 : 32;
+    else if (profile == "one_run")
+      length = num_rows;
+    else
+      CUDF_EXPECTS(profile == "singletons", "Unknown run profile");
+    length      = std::min(length, num_rows - static_cast<cudf::size_type>(strings.size()));
+    auto prefix = std::to_string(group++);
+    prefix.insert(0, 8 - prefix.size(), '0');
+    prefix += std::string(4 + shared, 'x');
+    for (cudf::size_type i = 0; i < length; ++i) {
+      auto value = static_cast<std::uint64_t>(strings.size()) * 0x9e3779b97f4a7c15ULL;
+      value ^= value >> 31;
+      auto suffix = std::to_string(value % 100000000);
+      suffix.insert(0, 8 - suffix.size(), '0');
+      strings.push_back(prefix + suffix);
+    }
+  }
+  std::shuffle(strings.begin(), strings.end(), std::mt19937{seed});
+  auto const input = cudf::test::strings_column_wrapper(strings.begin(), strings.end()).release();
+  run_sorted_order_benchmark(state, input);
+}
+
+NVBENCH_BENCH(bench_sorted_order_strings_runs)
+  .set_name("sorted_order_strings_runs")
+  .add_int64_axis("num_rows", {32768, 2097152})
+  .add_int64_axis("shared_suffix", {0, 64})
+  .add_string_axis(
+    "run_profile",
+    {"singletons", "pairs", "tiny32", "block256", "logarithmic", "hot90", "few_giants", "one_run"});

@@ -421,6 +421,11 @@ ConfigureTest(
   sort/string_sort_prefix_test.cpp
   sort/top_k_tests.cpp
 )
+ConfigureTest(
+  STRING_SORT_RADIX_LRB_TEST sort/string_sort_lrb_test.cpp
+  GPUS 1
+  PERCENT 70
+)
 
 # ##################################################################################################
 # * copying tests ---------------------------------------------------------------------------------

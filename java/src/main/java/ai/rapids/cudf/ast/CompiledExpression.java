@@ -201,10 +201,6 @@ public class CompiledExpression implements AutoCloseable {
    *         {@link AstExpression#compileJit()}
    */
   public long getNativeHandle() {
-    if (mode == CompilationMode.JIT) {
-      throw new IllegalStateException(
-          "JIT-compiled expressions cannot be used by a default AST consumer");
-    }
     return cleaner.nativeHandle;
   }
 

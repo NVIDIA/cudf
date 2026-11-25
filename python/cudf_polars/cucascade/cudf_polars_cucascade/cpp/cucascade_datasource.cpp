@@ -26,6 +26,9 @@ bool cucascade_datasource::supports_device_read() const { return _reader->suppor
 
 bool cucascade_datasource::is_device_read_preferred(size_t) const
 {
+  // At every size: the cache holds the bytes in pinned host memory, so a device read copies them
+  // to the GPU in one step. A host read would first copy them into a pageable buffer, which
+  // libcudf then copies to the GPU.
   return _reader->supports_device_read();
 }
 

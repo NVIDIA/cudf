@@ -26,5 +26,7 @@ rapids-download-from-github() {
 }
 export -f rapids-download-from-github
 
+# The frozen checkout has stale test calls to the ColRef constructor.
+git -C replay-source apply --unidiff-zero "$PWD/ci/arm64_polars_diagnostics/colref-tests.patch"
 cd replay-source
 env POLARS_VERSIONS=latest bash ci/test_python_cudf_polars.sh

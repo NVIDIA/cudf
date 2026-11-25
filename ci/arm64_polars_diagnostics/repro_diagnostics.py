@@ -141,15 +141,3 @@ def pytest_collection_modifyitems(config, items):
             items=[item for item in items if item not in selected_set]
         )
         items[:] = selected
-        return
-
-    for item in items:
-        if (
-            item.nodeid
-            == "tests/dsl/test_to_ast.py::test_to_parquet_filter_with_colref_raises"
-        ):
-            # The replayed source calls an older ColRef constructor than the
-            # installed package exposes. Avoid stopping the suite on that mismatch.
-            item.add_marker(
-                pytest.mark.skip(reason="ColRef mismatch in replay artifacts")
-            )

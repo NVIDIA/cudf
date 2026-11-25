@@ -142,7 +142,7 @@ void check_spark_type(column_view const& column)
   using enum type_id;
 
   switch (column.type().id()) {
-    case DICTIONARY32: check_spark_type(column.child(dictionary_keys_column_index)); break;
+    case DICTIONARY32: CUDF_FAIL("Unsupported JIT nested dictionary layout", data_type_error);
     case LIST:
       CUDF_EXPECTS(
         column.child(lists_column_view::child_column_index).type().id() != type_id::STRUCT,

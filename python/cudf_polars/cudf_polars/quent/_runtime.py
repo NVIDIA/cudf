@@ -236,7 +236,7 @@ class QuentWorkerRuntime:
     session: QuentSession
     worker_resources: WorkerResources
     worker_handle: quent_bindings.WorkerInitHandle | None
-    buffer_resource: BufferResource | None
+    buffer_resource: BufferResource
     reservation_ingestor: ReservationDeltaIngestor
     reservation_context_registry: ReservationContextRegistry
     _reservation_events_lock: threading.Lock = dataclasses.field(
@@ -389,13 +389,10 @@ class QuentWorkerRuntime:
                 configured_limit=configured_limit,
             )
 
-    def detach_buffer_resource(self) -> None:
+    def detach_buffer_resource(self) -> None:  # TODO: update the name?
         """Finish recording before the owning streaming Context is shut down."""
         with self._reservation_events_lock:
             buffer_resource = self.buffer_resource
-            self.buffer_resource = None
-            if buffer_resource is None:
-                return
             try:
                 events = buffer_resource.stop_reservation_event_recording()
             except Exception:
@@ -571,7 +568,6 @@ class QuentWorkerRuntime:
                 ingestor.dropped_event_count if ingestor is not None else 0
             )
             self.worker_handle = None
-            self.buffer_resource = None
 
         steps: list[Callable[[], object]] = []
         if worker_handle is not None:

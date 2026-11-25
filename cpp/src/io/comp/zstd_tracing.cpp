@@ -12,7 +12,8 @@ void ZSTD_trace_decompress_end() __attribute__((weak, visibility("hidden")));
 
 namespace {
 using hook = void (*)();
-// Unreferenced weak declarations otherwise disappear before the linker can merge their visibility.
+// [[gnu::used]] preserves this otherwise-unused array so its weak symbol references reach the
+// linker, which merges their hidden visibility with Zstd's tracing references.
 [[gnu::used]] hook const disabled_hooks[] = {ZSTD_trace_compress_begin,
                                              ZSTD_trace_compress_end,
                                              ZSTD_trace_decompress_begin,

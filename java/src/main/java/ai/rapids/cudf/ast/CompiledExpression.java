@@ -212,7 +212,11 @@ public class CompiledExpression implements AutoCloseable {
    * Returns the native address of this compiled expression in either compilation mode, for
    * native consumers that select the AST or JIT backend from the expression itself.
    * Intended for internal cudf use only.
+   *
+   * @deprecated This method will be removed in a future release once {@link #getNativeHandle()}
+   * can be called on JIT-compiled expressions.
    */
+  @Deprecated
   public long getModeAwareNativeHandle() {
     return cleaner.nativeHandle;
   }

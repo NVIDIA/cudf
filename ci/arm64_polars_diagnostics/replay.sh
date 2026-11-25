@@ -19,7 +19,8 @@ export PYTEST_PLUGINS=repro_diagnostics
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
     CUDF_POLARS_FAULT_LIBRARY=$(mktemp /tmp/cudf-polars-fault.XXXXXX.so)
     export CUDF_POLARS_FAULT_LIBRARY
-    cc -std=c11 -Wall -Wextra -O2 -fPIC -shared \
+    conda run --no-capture-output --name fault-compiler aarch64-conda-linux-gnu-gcc \
+        -std=c11 -Wall -Wextra -O2 -fPIC -shared \
         ci/arm64_polars_diagnostics/fault_address.c -o "$CUDF_POLARS_FAULT_LIBRARY"
 fi
 if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then

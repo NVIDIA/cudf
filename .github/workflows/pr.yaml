@@ -56,6 +56,9 @@ jobs:
           ref: ${{ endsWith(matrix.trial, '-aggregation') && 'd9ea4287c649fc0d6fcd6bdd2f4670373f3406a2' || '4b383a45d42d6ce75dc96fb9c50be380c624a9a3' }}
           path: replay-source
           persist-credentials: false
+      - name: Install the fault reporter compiler
+        if: steps.gpu.outputs.replay == 'true' && startsWith(matrix.trial, 'signal-')
+        run: conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge 'gcc_linux-aarch64=14.*'
       - name: Replay the Conda Polars job
         if: steps.gpu.outputs.replay == 'true'
         env:

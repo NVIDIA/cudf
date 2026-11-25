@@ -29,6 +29,7 @@ from cudf_polars.streaming.actor_graph.partitioning import (
 )
 from cudf_polars.streaming.actor_graph.tracing import send_chunk
 from cudf_polars.streaming.actor_graph.utils import (
+    CUDF_ROW_LIMIT,
     ChannelManager,
     ChunkStore,
     chunk_to_frame,
@@ -43,7 +44,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 )
 from cudf_polars.streaming.join import _has_direct_asof_on
 from cudf_polars.streaming.utils import _concat
-from cudf_polars.utils.cuda_stream import stream_ordered_after
+from cudf_polars.utils.cuda_stream import join_cuda_streams, stream_ordered_after
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -101,22 +102,18 @@ async def _gather_right(
 
 
 class _AscendingOrder:
-    """Validate ascending keys across chunks and infer null placement if needed."""
+    """Optionally validate ascending keys across chunks."""
 
     def __init__(
         self,
         ir_context: IRExecutionContext,
-        candidates: tuple[tuple[plc.types.NullOrder, ...], ...],
+        *,
+        validate: bool = True,
     ) -> None:
         """Initialize order checks across successive chunks."""
         self.ir_context = ir_context
         self.previous: tuple[plc.Table, Any] | None = None
-        self.candidates = candidates
-
-    @property
-    def null_orders(self) -> tuple[plc.types.NullOrder, ...]:
-        """Return null placements consistent with the chunks seen so far."""
-        return self.candidates[0]
+        self.validate = validate
 
     @staticmethod
     def endpoint(table: plc.Table, row: int, stream: Any) -> plc.Table:
@@ -125,50 +122,49 @@ class _AscendingOrder:
             stream=stream
         )
 
-    def check(self, table: plc.Table, upstream: Any) -> None:
-        """Check this chunk and its transition from the previous chunk."""
+    @staticmethod
+    def reservation_size(table: plc.Table) -> int:
+        """Estimate temporary storage for a few copied key rows."""
+        row_bytes = sum(
+            column.device_buffer_size() for column in table.columns()
+        ) // max(table.num_rows(), 1)
+        return max(1, 3 * row_bytes)
+
+    def check(self, table: plc.Table, upstream: Any) -> tuple[plc.Table, Any] | None:
+        """Observe this chunk and optionally validate its ascending order."""
         if not table.num_rows():
-            return
+            return None
         upstreams = (
             (upstream,) if self.previous is None else (self.previous[1], upstream)
         )
         with stream_ordered_after(
             self.ir_context.get_cuda_stream, upstreams=upstreams
         ) as stream:
-            pair = (
-                None
-                if self.previous is None
-                else plc.concatenate.concatenate(
-                    [self.previous[0], self.endpoint(table, 0, stream)],
-                    stream=stream,
+            if self.validate:
+                pair = (
+                    None
+                    if self.previous is None
+                    else plc.concatenate.concatenate(
+                        [self.previous[0], self.endpoint(table, 0, stream)],
+                        stream=stream,
+                    )
                 )
-            )
-            has_null = any(column.null_count() for column in table.columns()) or (
-                self.previous is not None
-                and any(column.null_count() for column in self.previous[0].columns())
-            )
-            candidates = self.candidates if has_null else self.candidates[:1]
-            orders = [plc.types.Order.ASCENDING] * table.num_columns()
-            valid = []
-            for null_orders in candidates:
-                null_order_list = list(null_orders)
+                orders = [plc.types.Order.ASCENDING] * table.num_columns()
+                null_orders = [plc.types.NullOrder.BEFORE] * table.num_columns()
                 if not plc.sorting.is_sorted(
-                    table, orders, null_order_list, stream=stream
+                    table, orders, null_orders, stream=stream
+                ) or (
+                    pair is not None
+                    and not plc.sorting.is_sorted(
+                        pair, orders, null_orders, stream=stream
+                    )
                 ):
-                    continue
-                if pair is not None and not plc.sorting.is_sorted(
-                    pair, orders, null_order_list, stream=stream
-                ):
-                    continue
-                valid.append(null_orders)
-            if not valid:
-                raise pl.exceptions.InvalidOperationError(
-                    "argument in operation 'asof_join' is not sorted, "
-                    "please sort the 'expr/series/column' first"
-                )
-            if has_null:
-                self.candidates = tuple(valid)
+                    raise pl.exceptions.InvalidOperationError(
+                        "argument in operation 'asof_join' is not sorted, "
+                        "please sort the 'expr/series/column' first"
+                    )
             self.previous = self.endpoint(table, table.num_rows() - 1, stream), stream
+            return self.previous
 
 
 class _AsofCursor:
@@ -180,8 +176,8 @@ class _AsofCursor:
     Time-major windows retain the last right row per group. Key-major windows
     retain only their final row, since earlier keys cannot recur. Left rows
     equal to a window's maximum key wait for the next window, so ties select
-    the last physical right row even across chunks. Grouped input with neither
-    ordering uses one prepared right table.
+    the last physical right row even across chunks. Grouped input without
+    compatible ordering uses one prepared right table.
     """
 
     def __init__(
@@ -191,21 +187,23 @@ class _AsofCursor:
         ir: AsofJoin,
         right_chunks: AsyncIterator[TableChunk],
         *,
-        key_major: bool,
+        mode: Literal["time", "key", "prepared"],
+        left_order_promised: bool,
+        right_order_promised: bool,
     ) -> None:
-        """Set up the right stream and state for probing left chunks."""
+        """Set up right chunks and state for probing left chunks."""
         self.context = context
         self.ir_context = ir_context
         self.ir = ir
         self.left_time = ir.left_on.name
         self.right_time = ir.right_on.name
-        self.key_major = key_major
+        self.mode = mode
         self.left_indices = names_to_indices(
-            (*ir.left_by, self.left_time) if key_major else (self.left_time,),
+            (*ir.left_by, self.left_time) if mode == "key" else (self.left_time,),
             ir.children[0].schema,
         )
         self.right_indices = names_to_indices(
-            (*ir.right_by, self.right_time) if key_major else (self.right_time,),
+            (*ir.right_by, self.right_time) if mode == "key" else (self.right_time,),
             ir.children[1].schema,
         )
         self.right_index = self.right_indices[-1]
@@ -213,24 +211,41 @@ class _AsofCursor:
         self.right_chunks = right_chunks
         self.predecessor: DataFrame | None = None
         self.current: DataFrame | None = None
-        candidates = (
-            ((plc.types.NullOrder.BEFORE,) * len(self.right_indices),)
-            if key_major
-            else ((plc.types.NullOrder.BEFORE,), (plc.types.NullOrder.AFTER,))
+        self.right_order = _AscendingOrder(
+            ir_context, validate=ir.options[3] and not right_order_promised
         )
-        self.right_order = _AscendingOrder(ir_context, candidates)
         self.maximum: plc.Table | None = None
         self.maximum_stream: Any = None
         self.joiner: plc.join.AsofJoin | None = None
         self.payload: DataFrame | None = None
         self.at_eof = False
-        self.left_order = _AscendingOrder(ir_context, candidates)
-        self.check_left_order = True
+        self.left_order = _AscendingOrder(
+            ir_context, validate=ir.options[3] and not left_order_promised
+        )
 
     @staticmethod
     def _keys(table: plc.Table, indices: tuple[int, ...]) -> plc.Table:
         """Select the columns that define cursor progress."""
         return plc.Table([table.columns()[index] for index in indices])
+
+    @staticmethod
+    def _searchable_left_keys(
+        keys: plc.Table, stream: Any
+    ) -> tuple[plc.Table, plc.Column]:
+        """Drop null as-of keys while retaining their original row positions."""
+        row_positions = plc.filling.sequence(
+            keys.num_rows(),
+            plc.Scalar.from_py(0, plc.types.SIZE_TYPE, stream=stream),
+            plc.Scalar.from_py(1, plc.types.SIZE_TYPE, stream=stream),
+            stream=stream,
+        )
+        filtered = plc.stream_compaction.drop_nulls(
+            plc.Table([*keys.columns(), row_positions]),
+            [keys.num_columns() - 1],
+            1,
+            stream=stream,
+        )
+        return plc.Table(filtered.columns()[:-1]), filtered.columns()[-1]
 
     @staticmethod
     def has_time_order(
@@ -285,32 +300,41 @@ class _AsofCursor:
         left: ChannelMetadata,
         right: ChannelMetadata,
         nranks: int,
-    ) -> Literal["time", "key", "prepared"]:
-        """Choose a streaming order or full-right grouped preparation."""
-        if not ir.right_by:
-            return "time"
+    ) -> tuple[Literal["time", "key", "prepared"], bool, bool]:
+        """Choose the join layout and identify trusted input ordering."""
         right_scope = (
             RowOrderingScope.RANK_LOCAL
             if right.duplicated or nranks == 1
             else RowOrderingScope.GLOBAL
         )
-        if cls.has_time_order(
+        left_time_ordered = cls.has_time_order(
             left,
             names_to_indices((ir.left_on.name,), ir.children[0].schema)[0],
             RowOrderingScope.RANK_LOCAL,
-        ) and cls.has_time_order(
+        )
+        right_time_ordered = cls.has_time_order(
             right,
             names_to_indices((ir.right_on.name,), ir.children[1].schema)[0],
             right_scope,
-        ):
-            return "time"
+        )
+        if not ir.right_by or (left_time_ordered and right_time_ordered):
+            return "time", left_time_ordered, right_time_ordered
         if cls.has_key_major_order(ir, left, right, right_scope):
-            return "key"
-        return "prepared"
+            return "key", True, True
+        return "prepared", False, False
 
     async def prepare_grouped_right(self) -> None:
         """Prepare a full right table when grouped time order is unproven."""
-        chunks = [chunk async for chunk in self.right_chunks]
+        chunks = []
+        total_rows = 0
+        async for chunk in self.right_chunks:
+            total_rows += chunk.shape[0]
+            if total_rows > CUDF_ROW_LIMIT:
+                raise NotImplementedError(
+                    "Streaming grouped as-of join needs a right table within "
+                    "the cuDF row limit when input order is unknown"
+                )
+            chunks.append(chunk)
         right = (
             await concat_batch(
                 chunks, self.context, self.ir.children[1].schema, self.ir_context
@@ -322,7 +346,6 @@ class _AsofCursor:
         )
         self.current = chunk_to_frame(right, self.ir.children[1])
         self.at_eof = True
-        self.check_left_order = False
 
     def _prepare(self, right: DataFrame) -> None:
         """Prepare the current right window for repeated probes."""
@@ -335,7 +358,7 @@ class _AsofCursor:
             right.column_map[self.right_time],
             ir.right_by,
             discarded,
-            already_sorted=not ir.right_by or self.key_major,
+            already_sorted=not ir.right_by or self.mode == "key",
         )
 
     async def _non_null_right_chunk(self, chunk: TableChunk) -> TableChunk | None:
@@ -365,7 +388,7 @@ class _AsofCursor:
 
     async def _last_right_rows(self, current: DataFrame) -> DataFrame:
         """Retain the latest right row per group, or the final row."""
-        if self.ir.right_by and not self.key_major:
+        if self.ir.right_by and self.mode != "key":
             last_rows = await run_with_reservation(
                 self.context,
                 self.ir_context,
@@ -408,20 +431,23 @@ class _AsofCursor:
             if right_chunk is None:
                 continue
             keys = self._keys(right_chunk.table_view(), self.right_indices)
-            await self.ir_context.to_thread(
+            maximum = await run_with_reservation(
+                self.context,
+                self.ir_context,
+                self.right_order.reservation_size(keys),
                 self.right_order.check,
                 keys,
                 right_chunk.stream,
             )
-            self.maximum = await self.ir_context.to_thread(
-                self.right_order.endpoint,
-                keys,
-                right_chunk.shape[0] - 1,
-                right_chunk.stream,
-            )
-            self.maximum_stream = right_chunk.stream
+            assert maximum is not None
+            self.maximum, self.maximum_stream = maximum
             right = chunk_to_frame(right_chunk, self.ir.children[1])
             if self.predecessor is not None:
+                if self.predecessor.num_rows + right.num_rows > CUDF_ROW_LIMIT:
+                    raise NotImplementedError(
+                        "Streaming as-of join predecessor state exceeds "
+                        "the cuDF row limit"
+                    )
                 right = await run_with_reservation(
                     self.context,
                     self.ir_context,
@@ -443,26 +469,39 @@ class _AsofCursor:
                 self.context,
                 self.ir_context,
                 self.current._size_bytes
-                * (2 if self.ir.right_by and not self.key_major else 1),
+                * (2 if self.ir.right_by and self.mode != "key" else 1),
                 self._prepare,
                 self.current,
             )
 
-    def _lower_bound(self, left: DataFrame) -> int:
-        """Find where left keys reach the current right-window maximum."""
+    def _lower_bound(
+        self, left: DataFrame, keys: plc.Table, positions: plc.Column | None
+    ) -> int:
+        """Find the original row where left keys reach the right-window maximum."""
         assert self.maximum is not None
+        if not keys.num_rows():
+            return left.num_rows
         with stream_ordered_after(
             self.ir_context.get_cuda_stream,
             upstreams=(left.stream, self.maximum_stream),
         ) as stream:
             end = plc.search.lower_bound(
-                self._keys(left.table, self.left_indices),
+                keys,
                 self.maximum,
                 [plc.types.Order.ASCENDING] * len(self.left_indices),
-                list(self.left_order.null_orders),
+                [plc.types.NullOrder.BEFORE] * len(self.left_indices),
                 stream=stream,
             )
+            if positions is not None:
+                (end,) = plc.copying.gather(
+                    plc.Table([positions]),
+                    end,
+                    plc.copying.OutOfBoundsPolicy.NULLIFY,
+                    stream=stream,
+                ).columns()
             split = end.to_scalar(stream=stream).to_py(stream=stream)
+            if split is None:
+                return left.num_rows
             assert isinstance(split, int)
             return split
 
@@ -533,48 +572,85 @@ class _AsofCursor:
         Keep the left chunk's row order and publish one owned output chunk.
         """
         ir = self.ir
-        if self.check_left_order:
-            await self.ir_context.to_thread(
-                self.left_order.check,
-                self._keys(left_chunk.table_view(), self.left_indices),
-                left_chunk.stream,
-            )
+        search_keys: plc.Table | None = None
+        positions: plc.Column | None = None
+        if self.mode != "prepared":
+            keys = self._keys(left_chunk.table_view(), self.left_indices)
+            if keys.columns()[-1].null_count():
+                # Both the sequence and its filtered copy hold row positions.
+                positions_size = (
+                    2 * plc.types.size_of(plc.types.SIZE_TYPE) * left_chunk.shape[0]
+                )
+                keys, positions = await run_with_reservation(
+                    self.context,
+                    self.ir_context,
+                    sum(column.device_buffer_size() for column in keys.columns())
+                    + positions_size,
+                    self._searchable_left_keys,
+                    keys,
+                    left_chunk.stream,
+                )
+            search_keys = keys
+            if self.left_order.validate:
+                await run_with_reservation(
+                    self.context,
+                    self.ir_context,
+                    self.left_order.reservation_size(keys),
+                    self.left_order.check,
+                    keys,
+                    left_chunk.stream,
+                )
         left = chunk_to_frame(left_chunk, ir.children[0])
         fragments: list[DataFrame] = []
         offset = 0
-        while offset < left.num_rows:
-            if self.current is None and not self.at_eof:
-                await self._advance()
-            if self.at_eof:
-                if self.current is None:
-                    if self.predecessor is None:
-                        empty = empty_table_chunk(
-                            ir.children[1],
-                            self.context,
-                            self.ir_context.get_cuda_stream(),
-                        )
-                        self.current = chunk_to_frame(empty, ir.children[1])
-                    else:
-                        self.current = self.predecessor
-                count = left.num_rows - offset
-            else:
-                assert self.maximum is not None
-                end = await self.ir_context.to_thread(
-                    self._lower_bound,
-                    left,
-                )
-                count = max(0, end - offset)
-                if not count:
+        try:
+            while offset < left.num_rows:
+                if self.current is None and not self.at_eof:
                     await self._advance()
-                    continue
-            part = left.slice((offset, count))
-            fragments.append(await self._probe_part(part))
-            offset += count
-        return await self._owned_result(fragments)
+                if self.at_eof:
+                    if self.current is None:
+                        if self.predecessor is None:
+                            empty = empty_table_chunk(
+                                ir.children[1],
+                                self.context,
+                                self.ir_context.get_cuda_stream(),
+                            )
+                            self.current = chunk_to_frame(empty, ir.children[1])
+                        else:
+                            self.current = self.predecessor
+                    count = left.num_rows - offset
+                else:
+                    assert self.maximum is not None
+                    assert search_keys is not None
+                    end = await run_with_reservation(
+                        self.context,
+                        self.ir_context,
+                        4 * left.num_rows + 32,
+                        self._lower_bound,
+                        left,
+                        search_keys,
+                        positions,
+                    )
+                    count = max(0, end - offset)
+                    if not count:
+                        await self._advance()
+                        continue
+                part = left.slice((offset, count))
+                fragments.append(await self._probe_part(part))
+                offset += count
+            return await self._owned_result(fragments)
+        finally:
+            if fragments:
+                join_cuda_streams(
+                    downstreams=(left.stream,),
+                    upstreams=tuple(part.stream for part in fragments),
+                )
 
     async def validate_remaining_right(self) -> None:
-        """Check the unused right tail for an ordering violation."""
+        """Drain unused right chunks and check their order if requested."""
         async for packed_chunk in self.right_chunks:
+            if not self.right_order.validate:
+                continue
             chunk, _ = await make_table_chunks_available_or_wait(
                 self.context, packed_chunk, reserve_extra=0, net_memory_delta=0
             )
@@ -590,7 +666,10 @@ class _AsofCursor:
                     1,
                     stream=chunk.stream,
                 )
-            await self.ir_context.to_thread(
+            await run_with_reservation(
+                self.context,
+                self.ir_context,
+                self.right_order.reservation_size(keys),
                 self.right_order.check,
                 keys,
                 chunk.stream,
@@ -616,7 +695,9 @@ async def asof_join_actor(
     The current backward path broadcasts right chunks to every rank. Each
     rank probes its left chunks in time-major or key-major order when metadata
     proves either layout. Other grouped layouts prepare the full right table
-    once before probing left chunks. Left ownership is preserved in all cases.
+    once before probing left chunks and must fit within the cuDF row limit.
+    Left ownership is preserved in all cases. With sortedness checking disabled,
+    the cursor trusts input order.
     """
     async with shutdown_on_error(
         context,
@@ -637,7 +718,9 @@ async def asof_join_actor(
             discarded.add(ir.right_on.name)
         has_payload = bool(ir.children[1].schema.keys() - discarded)
         skip_probe = not has_payload and (bool(ir.right_by) or not check_sortedness)
-        mode = _AsofCursor.select_order(ir, left_metadata, right_metadata, comm.nranks)
+        mode, left_order_promised, right_order_promised = _AsofCursor.select_order(
+            ir, left_metadata, right_metadata, comm.nranks
+        )
         if tracer is not None:
             tracer.decision = "passthrough" if skip_probe else f"asof_{mode}"
             if left_metadata.duplicated:
@@ -679,7 +762,13 @@ async def asof_join_actor(
                     )
             else:
                 cursor = _AsofCursor(
-                    context, ir_context, ir, right_source, key_major=mode == "key"
+                    context,
+                    ir_context,
+                    ir,
+                    right_source,
+                    mode=mode,
+                    left_order_promised=left_order_promised,
+                    right_order_promised=right_order_promised,
                 )
                 async with aclosing(right_source):
                     if mode == "prepared":

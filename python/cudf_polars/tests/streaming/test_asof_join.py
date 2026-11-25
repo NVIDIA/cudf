@@ -128,13 +128,12 @@ def test_asof_join_expression_on(streaming_engine_factory):
 
 
 @pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_rejects_unordered_left(streaming_engine_factory):
+def test_asof_join_skips_unchecked_left_validation(streaming_engine_factory):
     left = pl.LazyFrame({"time": [3, 1, 4, 2]})
     right = pl.LazyFrame({"time": [1, 2, 3], "right": [100, 200, 300]})
     query = left.join_asof(right, on="time", check_sortedness=False)
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
-        query.collect(engine=engine)
+    assert query.collect(engine=engine)["time"].to_list() == [3, 1, 4, 2]
 
 
 @pytest.mark.engine_params(["spmd-small", "ray"])
@@ -178,15 +177,68 @@ def test_asof_join_composite_by_and_slice(streaming_engine_factory):
 
 
 @pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_nulls_last(streaming_engine_factory):
+@pytest.mark.parametrize("check_sortedness", [False, True])
+def test_asof_join_nulls_last(streaming_engine_factory, *, check_sortedness):
     left = pl.LazyFrame({"time": [1, 3, None]}).sort("time", nulls_last=True)
     right = pl.LazyFrame({"time": [1, 2, None], "quote": [10, 20, 99]}).sort(
         "time", nulls_last=True
     )
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
     assert_frame_equal(
-        left.join_asof(right, on="time").collect(engine=engine),
+        left.join_asof(right, on="time", check_sortedness=check_sortedness).collect(
+            engine=engine
+        ),
         pl.DataFrame({"time": [1, 3, None], "quote": [10, 20, None]}),
+    )
+
+
+@pytest.mark.engine_params(["spmd-small", "ray"])
+@pytest.mark.parametrize("by", [None, "symbol"])
+@pytest.mark.filterwarnings(
+    "ignore:Sortedness of columns cannot be checked when 'by' groups provided"
+)
+def test_asof_join_interleaved_left_nulls(streaming_engine_factory, by):
+    left = pl.LazyFrame(
+        {
+            "time": [None, 1, None, None, 3, None, 5],
+            "symbol": ["A", "A", "B", "B", "B", "A", "A"],
+        }
+    )
+    if by is not None:
+        left = left.set_sorted("time")
+    right = pl.LazyFrame(
+        {"time": [1, 2, 4], "symbol": ["A", "B", "A"], "quote": [10, 20, 40]}
+    ).sort("time")
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    assert_frame_equal(
+        left.join_asof(right, on="time", by=by).collect(engine=engine),
+        left.set_sorted("time").join_asof(right, on="time", by=by).collect(),
+    )
+
+
+@pytest.mark.engine_params(["spmd-small", "ray"])
+@pytest.mark.filterwarnings(
+    "ignore:Sortedness of columns cannot be checked when 'by' groups provided"
+)
+def test_asof_join_key_major_interleaved_left_nulls(streaming_engine_factory):
+    left = pl.LazyFrame(
+        {
+            "symbol": ["A", "A", "A", "B", "B", "B"],
+            "time": [None, 1, None, None, 1, None],
+        }
+    ).set_sorted(["symbol", "time"])
+    right = pl.LazyFrame(
+        {
+            "symbol": ["A", "A", "B", "B"],
+            "time": [1, 2, 1, 3],
+            "quote": [10, 20, 30, 40],
+        }
+    ).sort(["symbol", "time"])
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time", by="symbol"),
+        engine=engine,
+        check_row_order=True,
     )
 
 
@@ -220,9 +272,51 @@ def test_asof_join_no_right_payload(streaming_engine_factory, *, check_sortednes
 
 
 @pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_validates_unused_right_chunks(streaming_engine_factory):
+@pytest.mark.parametrize("check_sortedness", [False, True])
+def test_asof_join_unused_right_validation(
+    streaming_engine_factory, *, check_sortedness
+):
     left = pl.LazyFrame({"time": [1]})
     right = pl.LazyFrame({"time": [1, 3, 2], "quote": [10, 30, 20]})
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
-        left.join_asof(right, on="time", check_sortedness=False).collect(engine=engine)
+    query = left.join_asof(right, on="time", check_sortedness=check_sortedness)
+    if check_sortedness:
+        with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+            query.collect(engine=engine)
+    else:
+        assert_frame_equal(
+            query.collect(engine=engine), pl.DataFrame({"time": [1], "quote": [10]})
+        )
+
+
+@pytest.mark.engine_params(["spmd-small"])
+def test_asof_join_unchecked_sorted_keys(streaming_engine_factory):
+    left = pl.LazyFrame({"time": [1, 2, 3, 4]}).sort("time")
+    right = pl.LazyFrame({"time": [1, 3], "quote": [10, 30]}).sort("time")
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time", check_sortedness=False),
+        engine=engine,
+        check_row_order=True,
+    )
+
+
+@pytest.mark.engine_params(["spmd-small"])
+@pytest.mark.parametrize("time_ordered", [False, True])
+@pytest.mark.filterwarnings(
+    "ignore:Sortedness of columns cannot be checked when 'by' groups provided"
+)
+def test_asof_join_right_row_limit(
+    streaming_engine_factory, monkeypatch, *, time_ordered
+):
+    monkeypatch.setattr("cudf_polars.streaming.actor_graph.asof_join.CUDF_ROW_LIMIT", 2)
+    left = pl.LazyFrame({"time": [4], "symbol": ["A"]})
+    right = pl.LazyFrame(
+        {"time": [1, 2, 3], "symbol": ["A", "B", "C"], "quote": [10, 20, 30]}
+    )
+    if time_ordered:
+        left = left.sort("time")
+        right = right.sort("time")
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=1))
+    with pytest.RaisesGroup(NotImplementedError):
+        left.join_asof(right, on="time", by="symbol").collect(engine=engine)

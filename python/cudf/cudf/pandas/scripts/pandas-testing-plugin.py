@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import hashlib
+import importlib
 import json
 import sys
 import traceback
@@ -165,6 +166,9 @@ def trace_calls(frame, event, arg):
 
 
 def pytest_sessionstart(session):
+    # The upstream API namespace test assumes this submodule has already been
+    # imported by another test file, which can belong to a different shard.
+    importlib.import_module("pandas.api.internals")
     # Set the profile function to trace calls
     sys.setprofile(trace_calls)
 

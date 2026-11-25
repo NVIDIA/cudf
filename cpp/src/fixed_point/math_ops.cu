@@ -128,9 +128,7 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
                        valid.data()});
 
   auto [null_mask, null_count] = cudf::detail::bools_to_mask(
-    column_view{data_type{type_id::BOOL8}, size, valid.data(), nullptr, 0},
-    stream,
-    mr.get_output_mr());
+    column_view{data_type{type_id::BOOL8}, size, valid.data(), nullptr, 0}, stream, mr);
   if (null_count > 0) { result->set_null_mask(std::move(*null_mask), null_count); }
   return result;
 }

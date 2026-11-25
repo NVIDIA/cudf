@@ -1385,9 +1385,11 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * an intermediate value of the given width.
    * See {@link #divideDecimal(ColumnView, DType, RoundMode)}.
    *
-   * With {@link DecimalIntermediate#STANDARD}, an output element is also null if the dividend,
-   * rescaled to give a quotient at the scale of {@code outType}, overflows the widest of the input
-   * and output types. {@link DecimalIntermediate#WIDE} rescales it into 256 bits instead.
+   * With {@link DecimalIntermediate#STANDARD}, an output element is also null if the magnitude of
+   * the dividend, rescaled to give a quotient at the scale of {@code outType}, overflows an
+   * unsigned 64-bit integer (if both inputs and {@code outType} are DECIMAL32) or an unsigned
+   * 128-bit integer (otherwise). {@link DecimalIntermediate#WIDE} rescales it into 256 bits
+   * instead.
    *
    * @param rhs          the divisor column, with the same number of rows as this column
    * @param outType      the decimal type and scale of the output

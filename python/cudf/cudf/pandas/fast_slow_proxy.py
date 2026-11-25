@@ -254,7 +254,6 @@ def make_final_proxy_type(
             lambda cls, args, kwargs: setattr(
                 self, "_fsproxy_wrapped", cls(*args, **kwargs)
             ),
-            None,
             type(self),
             args,
             kwargs,
@@ -857,7 +856,7 @@ class _FastSlowProxy:
             self._fsproxy_transfer_block is _BlockState.TO_FAST
             and self._fsproxy_state is _State.SLOW  # type: ignore[attr-defined]
         ):
-            raise RuntimeError("Fast-to-slow transfer is blocked")
+            raise RuntimeError("Slow-to-fast transfer is blocked")
 
         self._fsproxy_wrapped = self._fsproxy_slow_to_fast()
         return self._fsproxy_wrapped
@@ -885,10 +884,6 @@ class _FastSlowProxy:
             _BlockState.TO_SLOW: Block fast-to-slow transfers.
         """
         self._fsproxy_transfer_block = transfer_block
-
-    def get_transfer_blocking(self):
-        """Get current instance-level transfer blocking flag."""
-        return getattr(self, "_fsproxy_transfer_block", None)
 
     def force_state(self, state: _State):
         """Force the proxy to a specific state (FAST or SLOW) and block opposite transfers."""
@@ -1204,7 +1199,6 @@ class _CallableProxyMixin:
             # TODO: When Python 3.11 is the minimum supported Python version
             # this can use operator.call
             call_operator,
-            self.get_transfer_blocking(),  # type: ignore[attr-defined]
             self,
             args,
             kwargs,
@@ -1238,11 +1232,9 @@ class _FunctionProxy(_CallableProxyMixin):
         *,
         assigned=None,
         updated=None,
-        _fsproxy_transfer_block: _BlockState | None = None,
     ):
         self._fsproxy_fast = fast
         self._fsproxy_slow = slow
-        self._fsproxy_transfer_block = _fsproxy_transfer_block
         if assigned is None:
             assigned = functools.WRAPPER_ASSIGNMENTS
         if updated is None:
@@ -1281,10 +1273,6 @@ class _FunctionProxy(_CallableProxyMixin):
             unpickled_slow = pickle.loads(state[1])
         self._fsproxy_fast = unpickled_fast
         self._fsproxy_slow = unpickled_slow
-
-    def get_transfer_blocking(self):
-        """Get current instance-level transfer blocking flag."""
-        return self._fsproxy_transfer_block
 
 
 def is_bound_method(obj):
@@ -1332,18 +1320,13 @@ class _FastSlowAttribute:
                     raise e
 
             if _is_function_or_method(slow_attr):
-                self._attr = _MethodProxy(
-                    fast_attr,
-                    slow_attr,
-                    _fsproxy_transfer_block=instance.get_transfer_blocking()
-                    if instance is not None
-                    else None,
-                )
+                # The method proxy is shared by all receivers. The receiver's
+                # own fast conversion enforces its current transfer block.
+                self._attr = _MethodProxy(fast_attr, slow_attr)
             else:
                 # for anything else, use a fast-slow attribute:
                 self._attr, _ = _fast_slow_function_call(
                     getattr,
-                    None,
                     owner,
                     self._name,
                 )
@@ -1368,7 +1351,6 @@ class _FastSlowAttribute:
                     )
                 return _fast_slow_function_call(
                     getattr,
-                    None,
                     instance,
                     self._name,
                 )[0]
@@ -1396,7 +1378,7 @@ class _FastSlowAttribute:
 
 
 class _MethodProxy(_FunctionProxy):
-    def __init__(self, fast, slow, _fsproxy_transfer_block=None):
+    def __init__(self, fast, slow):
         super().__init__(
             fast,
             slow,
@@ -1404,7 +1386,6 @@ class _MethodProxy(_FunctionProxy):
             assigned=(
                 tuple(filter(lambda x: x != "__name__", _WRAPPER_ASSIGNMENTS))
             ),
-            _fsproxy_transfer_block=_fsproxy_transfer_block,
         )
 
     def __dir__(self):
@@ -1502,7 +1483,6 @@ def _slow_function_call():
 
 def _fast_slow_function_call(
     func: Callable,
-    transfer_block: _BlockState | None = None,
     /,
     *args,
     **kwargs,
@@ -1520,8 +1500,6 @@ def _fast_slow_function_call(
     fast = False
     block_transfer_to_fast = False
     try:
-        if transfer_block is _BlockState.TO_FAST:
-            raise Exception("Forcing slow path due to transfer blocking")
         with nvtx.annotate(
             "EXECUTE_FAST",
             color=_CUDF_PANDAS_NVTX_COLORS["EXECUTE_FAST"],

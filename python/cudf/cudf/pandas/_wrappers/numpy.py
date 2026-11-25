@@ -132,7 +132,6 @@ def ndarray__array_ufunc__(self, ufunc, method, *inputs, **kwargs):
                 return NotImplemented
     result, _ = _fast_slow_function_call(
         getattr(ufunc, method),
-        None,
         *inputs,
         **kwargs,
     )

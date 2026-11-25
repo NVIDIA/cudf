@@ -29,6 +29,9 @@ _suspect_cases = {
         "tests/expressions/test_agg.py::test_agg[nulls-max-Int8-unsorted-spmd-small]",
     ),
     "shuffle": (_warmup_join, _warmup_last),
+    "dask-datetime": (
+        "tests/expressions/test_datetime_basic.py::test_datetime_offset_by[dask-dtype18-3us]",
+    ),
 }
 _frozen_colref_cases = {
     "tests/dsl/test_to_ast.py::test_invalid_colref_construction_raises",
@@ -293,9 +296,16 @@ def pytest_collection_modifyitems(config, items):
 @pytest.hookimpl(wrapper=True)
 def pytest_pyfunc_call(pyfuncitem):
     result = yield
-    if not _trial.startswith(("signal-history-", "signal-context-")):
+    dask_trial = _trial in (
+        "signal-call-dask-datetime",
+        "signal-reset-dask-datetime",
+    )
+    if dask_trial:
+        kind = "dask-datetime"
+    elif _trial.startswith(("signal-history-", "signal-context-")):
+        kind = _trial.rsplit("-", 1)[1]
+    else:
         return result
-    kind = _trial.rsplit("-", 1)[1]
     if pyfuncitem.nodeid not in _suspect_cases[kind]:
         return result
 
@@ -306,9 +316,23 @@ def pytest_pyfunc_call(pyfuncitem):
         name: pyfuncitem.funcargs[name]
         for name in inspect.signature(pyfuncitem.obj).parameters
     }
+    if _trial == "signal-reset-dask-datetime":
+        from cudf_polars.testing.engine_utils import configure_streaming_engine
+
+        engine, options = pyfuncitem.funcargs["_unconfigured_engine"]
+        assert args["engine"] is engine and options is not None
+    repetitions = 128 if dask_trial else 63
     with (_output / f"{worker}.history.log").open("a", buffering=1) as log:
         log.write(f"{time.time_ns()} begin {pyfuncitem.nodeid}\n")
-        for _ in range(63):
+        for repetition in range(1, repetitions + 1):
+            if _trial == "signal-reset-dask-datetime":
+                # Use the archived test fixture's reset path on the same worker.
+                log.write(f"{time.time_ns()} reset {repetition}\n")
+                configure_streaming_engine(engine, options)
+            if dask_trial:
+                log.write(f"{time.time_ns()} evaluate {repetition}\n")
             pyfuncitem.obj(**args)
-        log.write(f"{time.time_ns()} completed 64 calls {pyfuncitem.nodeid}\n")
+        log.write(
+            f"{time.time_ns()} completed {repetitions + 1} calls {pyfuncitem.nodeid}\n"
+        )
     return result

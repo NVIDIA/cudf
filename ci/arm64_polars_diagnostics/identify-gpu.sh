@@ -23,7 +23,7 @@ if [[ "$trial" == probe-* ]]; then
     else
         for gpu in "${dask_gpus[@]}"; do
             if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
-                trial=signal-target-dask-datetime
+                trial=signal-paired-dask-datetime
                 break
             fi
         done

@@ -150,14 +150,16 @@ public class CompiledExpression implements AutoCloseable {
 
   static JitExpressionArgs getJitExpressionArgs(
       CompiledExpression[] expressions, long tableHandle) {
-    if (Objects.requireNonNull(expressions, "expressions").length == 0) {
-      throw new IllegalArgumentException("At least one expression is required");
-    }
     // Preserve array validation before the table check, and element validation after it.
+    requireExpressions(expressions);
     if (tableHandle == 0) {
       throw new IllegalStateException("Table is closed");
     }
-    CompiledExpression[] expressionRefs = expressions.clone();
+    return getJitExpressionArgs(expressions);
+  }
+
+  private static JitExpressionArgs getJitExpressionArgs(CompiledExpression[] expressions) {
+    CompiledExpression[] expressionRefs = requireExpressions(expressions).clone();
 
     long[] nativeHandles = new long[expressionRefs.length];
     for (int i = 0; i < expressionRefs.length; i++) {
@@ -172,6 +174,13 @@ public class CompiledExpression implements AutoCloseable {
       }
     }
     return new JitExpressionArgs(expressionRefs, nativeHandles);
+  }
+
+  private static CompiledExpression[] requireExpressions(CompiledExpression[] expressions) {
+    if (Objects.requireNonNull(expressions, "expressions").length == 0) {
+      throw new IllegalArgumentException("At least one expression is required");
+    }
+    return expressions;
   }
 
   static void reachabilityFence(Object object) {

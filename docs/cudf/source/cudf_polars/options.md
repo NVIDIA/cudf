@@ -110,7 +110,7 @@ Environment variables follow these patterns:
 |--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------|-------------|
 | `num_py_executors`       | Workers for the internal Python `ThreadPoolExecutor`.                                                                                               | `8`         |
 | `fallback_mode`          | When an unsupported operation forces a fallback to CPU execution: `"warn"`, `"raise"`, `"silent"`.                                                  | `"warn"`    |
-| `rank_local_cpu_compute` | When to evaluate IR nodes on the CPU with Polars: `"never"` or `"always"`. With `"always"`, unsupported nodes still run on the GPU. | `"never"`   |
+| `rank_local_cpu_compute` | When to evaluate operations on the CPU with Polars: `"never"`, `"on_oom"` to run an operation on the CPU when it runs out of device memory or its memory reservation overbooks (even with `allow_overbooking_by_default` off), or `"always"`. Unsupported operations always run on the GPU. | `"never"`   |
 | `max_rows_per_partition` | Maximum number of rows per partition. Only used for in-memory `DataFrame` sources, never for disk IO or dynamic planning.                           | `1_000_000` |
 | `broadcast_limit`        | Maximum number of bytes for broadcast joins.                                                                                                        | auto        |
 | `target_partition_size`  | Target partition size in bytes. Used for IO and dynamic planning. `0` means auto.                                                                   | auto        |

@@ -30,10 +30,12 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/traits.hpp>
 
 #include <algorithm>
 #include <functional>
 #include <ranges>
+#include <stdexcept>
 #include <utility>
 
 namespace cudf::io {
@@ -94,6 +96,15 @@ csv_writer_options_builder csv_writer_options::builder(sink_info const& sink,
 orc_reader_options_builder orc_reader_options::builder(source_info src)
 {
   return orc_reader_options_builder{std::move(src)};
+}
+
+void orc_reader_options::set_timestamp_type(data_type type)
+{
+  CUDF_EXPECTS(type.id() == type_id::EMPTY or
+                 (cudf::is_timestamp(type) and type.id() != type_id::TIMESTAMP_DAYS),
+               "timestamp_type must be a TIMESTAMP type other than TIMESTAMP_DAYS",
+               std::invalid_argument);
+  _timestamp_type = type;
 }
 
 // Returns builder for orc_writer_options
@@ -476,7 +487,8 @@ orc_metadata read_orc_metadata(source_info const& src_info, cuda::stream_ref str
 
   return {{make_orc_column_schema(footer.types, 0, "")},
           footer.numberOfRows,
-          static_cast<size_type>(footer.stripes.size())};
+          static_cast<size_type>(footer.stripes.size()),
+          footer.calendar};
 }
 
 /**
@@ -957,6 +969,15 @@ void parquet_reader_options::set_num_bytes(size_t val)
   CUDF_EXPECTS(_row_groups.empty(), "num_bytes can't be set along with a non-empty row_groups");
 
   _num_bytes = val;
+}
+
+void parquet_reader_options::set_timestamp_type(data_type type)
+{
+  CUDF_EXPECTS(type.id() == type_id::EMPTY or
+                 (cudf::is_timestamp(type) and type.id() != type_id::TIMESTAMP_DAYS),
+               "timestamp_type must be a TIMESTAMP type other than TIMESTAMP_DAYS",
+               std::invalid_argument);
+  _timestamp_type = type;
 }
 
 void parquet_writer_options_base::set_metadata(table_input_metadata metadata)

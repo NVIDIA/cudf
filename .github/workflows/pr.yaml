@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [signal-stress-aggregation]
+        trial: [signal-repeat-aggregation, signal-repeat-shuffle]
     permissions:
       actions: read
       contents: read

@@ -70,6 +70,8 @@ export -f rapids-mamba-retry
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-stress-aggregation ]]; then
     printf '%s\n' '#!/bin/bash' 'exec timeout --kill-after=15s 8m python -m stress_packed_size' \
         > replay-source/ci/run_cudf_polars_pytests.sh
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-repeat-* ]]; then
+    cp ci/arm64_polars_diagnostics/repeat-spmd-tests.sh replay-source/ci/run_cudf_polars_pytests.sh
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck* ]]; then
     cp ci/arm64_polars_diagnostics/memcheck-pytest.sh replay-source/ci/run_cudf_polars_pytests.sh
 elif [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then

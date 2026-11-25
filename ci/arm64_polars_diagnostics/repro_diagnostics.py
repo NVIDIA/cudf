@@ -176,6 +176,15 @@ def pytest_runtest_logstart(nodeid):
 @pytest.hookimpl(wrapper=True)
 def pytest_collection_modifyitems(config, items):
     result = yield
+    if _trial.startswith("signal-repeat-"):
+        if len({item.nodeid for item in items}) != 2 or len(items) != 2:
+            raise pytest.UsageError(
+                "Expected two distinct streaming stress cases"
+            )
+        # Alternate cases so pytest tears down function-scoped fixtures while
+        # the session-scoped SPMD engine stays alive on each worker.
+        items *= 768 if _trial.endswith("-aggregation") else 256
+        return result
     if not _trial.startswith("warmup-"):
         return result
     # Select the recorded worker prefix after cuDF's conftest groups by engine.

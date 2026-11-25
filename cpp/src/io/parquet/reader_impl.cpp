@@ -1026,14 +1026,14 @@ std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
     row_filter_expression_converter{expr->get(), num_prepended_cols, col_types}
       .get_converted_expr();
 
-  auto const evaluate = [&](table_view const& filter_input) {
+  auto const evaluate = [this](table_view const& filter_input, ast::expression const& filter) {
     auto const mr      = _mr.get_temporary_mr();
     auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
-    return use_jit ? cudf::compute_column_jit(filter_input, filter_expr.get(), {}, _stream, mr)
-                   : cudf::detail::compute_column(filter_input, filter_expr.get(), _stream, mr);
+    return use_jit ? cudf::compute_column_jit(filter_input, filter, {}, _stream, mr)
+                   : cudf::detail::compute_column(filter_input, filter, _stream, mr);
   };
 
-  if (null_check_col_indices.empty()) { return evaluate(input); }
+  if (null_check_col_indices.empty()) { return evaluate(input, filter_expr.get()); }
 
   // Append a null check column for each nested column under IS_NULL, in slot order
   auto null_check_cols = std::vector<std::unique_ptr<column>>{};
@@ -1044,7 +1044,7 @@ std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
     null_check_cols.push_back(cudf::is_null(input.column(col_idx), _stream, _mr.as_temporary()));
     filter_cols.push_back(null_check_cols.back()->view());
   }
-  return evaluate(table_view{filter_cols});
+  return evaluate(table_view{filter_cols}, filter_expr.get());
 }
 
 table_with_metadata reader_impl::finalize_output(read_mode mode,

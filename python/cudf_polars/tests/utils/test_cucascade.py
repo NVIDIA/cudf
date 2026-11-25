@@ -118,9 +118,16 @@ def test_wrap_sources_opens_every_remote_path(glue):
 
 
 @pytest.mark.parametrize(
-    "paths", [[], ["/local/a.parquet"], ["s3://bucket/a.parquet", "/local/b.parquet"]]
+    "paths",
+    [
+        [],
+        ["/local/a.parquet"],
+        ["s3://bucket/a.parquet", "/local/b.parquet"],
+        ["https://host/a.parquet"],
+        ["gs://bucket/a.parquet"],
+    ],
 )
-def test_wrap_sources_leaves_local_reads_alone(glue, paths):
+def test_wrap_sources_leaves_other_paths_alone(glue, paths):
     assert cucascade.wrap_sources(paths) is None
     assert glue.opened == []
 

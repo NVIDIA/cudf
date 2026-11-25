@@ -126,7 +126,7 @@ def _prefetch_parquet_footers_for_paths(
 
     cache_sources = cucascade.wrap_sources(paths)
     if cache_sources is not None:
-        # Remote paths read through cuCascade: opening each source resolves the file
+        # s3:// paths read through cuCascade: opening each source resolves the file
         # size and reads its footer in a single suffix-range request.
         sizes = [src.nbytes() for src in cache_sources]
         metadata = plc.io.parquet_metadata.read_parquet_footers(

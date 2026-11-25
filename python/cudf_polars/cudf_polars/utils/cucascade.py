@@ -113,8 +113,9 @@ def configure_cucascade(cache_bytes: int) -> None:
         )
 
 
-def _is_remote(path: str) -> bool:
-    return "://" in str(path)
+def _is_s3(path: str) -> bool:
+    # cuCascade reads only ``s3://`` objects; other remote schemes take the standard path.
+    return str(path).startswith("s3://")
 
 
 def _layout(info: Any) -> tuple[list[str], list[int], list[int], list[int]]:
@@ -187,7 +188,7 @@ def register_layouts(infos: Sequence[Any]) -> None:
         return
     for info in infos:
         path = str(info.path)
-        if not _is_remote(path):
+        if not _is_s3(path):
             continue
         with _lock:
             if path in _registered:
@@ -219,7 +220,7 @@ def register_layouts_from_sources(paths: Sequence[str], sources: Sequence[Any]) 
         todo = [
             (p, s)
             for p, s in zip(paths, sources, strict=True)
-            if str(p) not in _registered and _is_remote(str(p))
+            if str(p) not in _registered and _is_s3(str(p))
         ]
     if not todo:
         return
@@ -251,11 +252,11 @@ def wrap_sources(paths: Sequence[str]) -> list[Any] | None:
 
     Returns
     -------
-    One source per path, or None when the cache is off or any path is not remote,
-    in which case the caller uses the standard read path. The caller must keep the
-    returned list alive for as long as the sources are read.
+    One source per path, or None when the cache is off or any path is not an
+    ``s3://`` path, in which case the caller uses the standard read path. The
+    caller must keep the returned list alive for as long as the sources are read.
     """
-    if _cache is None or not paths or not all(_is_remote(p) for p in paths):
+    if _cache is None or not paths or not all(_is_s3(p) for p in paths):
         return None
     if len(paths) == 1:
         return [_cache.open(str(paths[0]))]

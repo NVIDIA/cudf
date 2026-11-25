@@ -1398,7 +1398,7 @@ class Scan(IR):
                         plc.io.types.FilepathSource(info.path, info.size)
                     )
                     parquet_metadatas.append(info.file_metadata)
-                # Remote paths read through the cuCascade cache when enabled; `cache_sources`
+                # s3:// paths read through the cuCascade cache when enabled; `cache_sources`
                 # keeps the cache-backed sources alive for the reads below.
                 cache_sources = cucascade.wrap_sources(
                     [info.path for info in cached_parquet_info]

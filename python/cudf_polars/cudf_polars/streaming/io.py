@@ -292,7 +292,7 @@ def _read_with_hybrid_scan(
     with nvtx_annotate_cudf_polars(
         message="HybridScan", payload=(split_index + 1, total_splits)
     ):
-        # Remote files read through the cuCascade cache when it is enabled (`cache_sources` keeps the
+        # s3:// files read through the cuCascade cache when it is enabled (`cache_sources` keeps the
         # cache-backed sources alive for the fetches below).
         cache_sources = cucascade.wrap_sources([cached_info.path])
         source_info = plc.io.SourceInfo(

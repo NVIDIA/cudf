@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-fault-capture
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-target-probes
   cancel-in-progress: true
 
 jobs:
@@ -20,20 +20,18 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - signal-context-reference-frozen-shuffle
-          - signal-context-target-01-frozen-shuffle
-          - signal-context-target-02-frozen-shuffle
-          - signal-context-target-03-frozen-shuffle
-          - signal-context-target-04-frozen-shuffle
-          - signal-reference-dask-datetime
-          - signal-target-01-dask-datetime
-          - signal-target-02-dask-datetime
-          - signal-target-03-dask-datetime
-          - signal-target-04-dask-datetime
-          - signal-target-05-dask-datetime
-          - signal-target-06-dask-datetime
-          - signal-target-07-dask-datetime
-          - signal-target-08-dask-datetime
+          - probe-01
+          - probe-02
+          - probe-03
+          - probe-04
+          - probe-05
+          - probe-06
+          - probe-07
+          - probe-08
+          - probe-09
+          - probe-10
+          - probe-11
+          - probe-12
     permissions:
       actions: read
       contents: read
@@ -61,23 +59,24 @@ jobs:
           name: arm64-polars-preflight-${{ matrix.trial }}-attempt-${{ github.run_attempt }}
           path: |
             artifacts/arm64-polars/gpus.csv
+            artifacts/arm64-polars/trial.txt
             artifacts/arm64-polars/gpu-health-before.txt
           if-no-files-found: error
       - name: Check out the reproducing source
         if: steps.gpu.outputs.replay == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ endsWith(matrix.trial, '-dask-datetime') && 'b67a6d83fad084fc600354b0787f1b4b35f9c5d2' || 'ed03e588cefe03804174c2141f4893d2f4f01833' }}
+          ref: ${{ endsWith(steps.gpu.outputs.trial, '-dask-datetime') && 'b67a6d83fad084fc600354b0787f1b4b35f9c5d2' || 'ed03e588cefe03804174c2141f4893d2f4f01833' }}
           path: replay-source
           persist-credentials: false
       - name: Install the fault reporter compiler
-        if: steps.gpu.outputs.replay == 'true' && startsWith(matrix.trial, 'signal-')
+        if: steps.gpu.outputs.replay == 'true'
         run: conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge 'gcc_linux-aarch64=14.*'
       - name: Replay the Conda Polars job
         if: steps.gpu.outputs.replay == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          CUDF_POLARS_DIAGNOSTICS_TRIAL: ${{ matrix.trial }}
+          CUDF_POLARS_DIAGNOSTICS_TRIAL: ${{ steps.gpu.outputs.trial }}
           CUDF_POLARS_REPEAT_REPLAY: ${{ steps.gpu.outputs.repeat }}
           RAPIDS_BUILD_TYPE: pull-request
           RAPIDS_CUDA_VERSION: '13.4.3'

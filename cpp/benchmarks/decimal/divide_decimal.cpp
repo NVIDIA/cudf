@@ -27,8 +27,9 @@ void bench_divide_decimal(nvbench::state& state, nvbench::type_list<DecimalType>
     static_cast<cudf::decimal_intermediate>(state.get_int64("intermediate"));
 
   // 64: dividends up to 10^8 rescaled by 10^2 stay below 2^64.
-  // 128: dividends up to 10^17 rescaled by 10^4 exceed 2^64.
-  // 256: dividends up to 10^17 rescaled by 10^22 exceed 2^127.
+  // 128: dividends from 2 * 10^15 to 10^17 rescaled by 10^4 exceed 2^64.
+  // 256: dividends from 4 * 10^16 to 10^17 rescaled by 10^22 exceed 2^128.
+  Rep lhs_min    = 1;
   Rep lhs_max    = 100'000'000;
   auto rhs_scale = numeric::scale_type{-2};
   if (dividend_bits > 64) {
@@ -36,21 +37,24 @@ void bench_divide_decimal(nvbench::state& state, nvbench::type_list<DecimalType>
       state.skip("decimal32 dividends always fit in 64 bits.");
       return;
     } else {
+      lhs_min   = 2'000'000'000'000'000;
       lhs_max   = 100'000'000'000'000'000;
       rhs_scale = numeric::scale_type{-4};
     }
   }
   if (dividend_bits > 128) {
-    if (!std::is_same_v<DecimalType, numeric::decimal128>) {
+    if constexpr (!std::is_same_v<DecimalType, numeric::decimal128>) {
       state.skip("Only decimal128 quotients fit when dividends exceed 128 bits.");
       return;
+    } else {
+      lhs_min   = 40'000'000'000'000'000;
+      rhs_scale = numeric::scale_type{-22};
     }
-    rhs_scale = numeric::scale_type{-22};
   }
   auto const type_id = cudf::type_to_id<DecimalType>();
 
   data_profile const lhs_profile = data_profile_builder().no_validity().distribution(
-    type_id, distribution_id::UNIFORM, Rep{1}, lhs_max, numeric::scale_type{-2});
+    type_id, distribution_id::UNIFORM, lhs_min, lhs_max, numeric::scale_type{-2});
   data_profile const rhs_profile = data_profile_builder().no_validity().distribution(
     type_id, distribution_id::UNIFORM, Rep{1}, Rep{1'000'000}, rhs_scale);
 

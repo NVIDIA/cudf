@@ -28,6 +28,9 @@ cdef class ScanCacheConfig:
     """
     Settings of a :class:`ScanCache`.
 
+    Every setting after ``session_token`` defaults to ``None``, which keeps
+    cuCascade's default for it.
+
     Parameters
     ----------
     cache_bytes : int
@@ -42,29 +45,29 @@ cdef class ScanCacheConfig:
         Secret key of the credentials.
     session_token : str, default ""
         Session token of the credentials, if they are temporary.
-    block_bytes : int, default 262144
-        Cache chunk size. 256 KiB measured best on S3.
-    eviction_threshold : float, default 0.97
+    block_bytes : int or None
+        Cache chunk size.
+    eviction_threshold : float or None
         Share of the pool in use at which the evictor starts. Leave headroom below
         1.0 for the pinned staging blocks of reads that are not cached.
-    eviction_batch : float, default 0.02
+    eviction_batch : float or None
         Share of the pool that one eviction pass frees.
-    admission_budget : float, default 0.96
+    admission_budget : float or None
         Share of the cache that admitted columns may fill, counted in whole chunks.
-    min_advise_bytes : int, default 262144
+    min_advise_bytes : int or None
         Reads smaller than this are not cached. 0 caches nothing.
-    reactors : int, default 4
+    reactors : int or None
         REST reactor threads.
-    connections : int, default 256
+    connections : int or None
         Connections each reactor drives.
-    stall_seconds : int, default 5
+    stall_seconds : int or None
         A request that moves under 64 KiB/s for this long is aborted and retried.
-    pinning_threads : int, default 8
+    pinning_threads : int or None
         Threads that pin the cache when it is created.
-    numa_node : int or None, default None
-        NUMA node to place the cache on. ``None`` (the default) uses the node of the current
-        CUDA device. -1 leaves the placement to the CUDA driver, which pins one pool at a time and
-        is slower.
+    numa_node : int or None
+        NUMA node to place the cache on. ``None`` uses the node of the current
+        CUDA device. -1 leaves the placement to the CUDA driver, which pins one pool
+        at a time and is slower.
     """
     def __init__(
         self,
@@ -75,27 +78,36 @@ cdef class ScanCacheConfig:
         str access_key,
         str secret_key,
         str session_token="",
-        size_t block_bytes=262144,
-        double eviction_threshold=0.97,
-        double eviction_batch=0.02,
-        double admission_budget=0.96,
-        size_t min_advise_bytes=262144,
-        size_t reactors=4,
-        size_t connections=256,
-        long stall_seconds=5,
-        size_t pinning_threads=8,
+        block_bytes=None,
+        eviction_threshold=None,
+        eviction_batch=None,
+        admission_budget=None,
+        min_advise_bytes=None,
+        reactors=None,
+        connections=None,
+        stall_seconds=None,
+        pinning_threads=None,
         numa_node=None,
     ):
         self.c_obj.cache_bytes = cache_bytes
-        self.c_obj.block_bytes = block_bytes
-        self.c_obj.eviction_threshold = eviction_threshold
-        self.c_obj.eviction_batch = eviction_batch
-        self.c_obj.admission_budget = admission_budget
-        self.c_obj.min_advise_bytes = min_advise_bytes
-        self.c_obj.reactors = reactors
-        self.c_obj.connections = connections
-        self.c_obj.stall_seconds = stall_seconds
-        self.c_obj.pinning_threads = pinning_threads
+        if block_bytes is not None:
+            self.c_obj.block_bytes = block_bytes
+        if eviction_threshold is not None:
+            self.c_obj.eviction_threshold = eviction_threshold
+        if eviction_batch is not None:
+            self.c_obj.eviction_batch = eviction_batch
+        if admission_budget is not None:
+            self.c_obj.admission_budget = admission_budget
+        if min_advise_bytes is not None:
+            self.c_obj.min_advise_bytes = min_advise_bytes
+        if reactors is not None:
+            self.c_obj.reactors = reactors
+        if connections is not None:
+            self.c_obj.connections = connections
+        if stall_seconds is not None:
+            self.c_obj.stall_seconds = stall_seconds
+        if pinning_threads is not None:
+            self.c_obj.pinning_threads = pinning_threads
         if numa_node is not None:
             self.c_obj.numa_node = <int> numa_node
         self.c_obj.object_store.endpoint = endpoint.encode()

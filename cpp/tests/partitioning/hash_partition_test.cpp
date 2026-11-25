@@ -262,8 +262,9 @@ TEST_F(HashPartition, LargePartitionCountWithNulls)
 
 TEST_F(HashPartition, ManyBlocksSlicedMixedTypes)
 {
-  // More rows than a thread block processes, with an offset in every column
-  cudf::size_type const num_rows = 100'002;
+  // More rows than a thread block processes, with an offset in every column. The offset keeps the
+  // decimal128 data 128-byte aligned, which thrust::scatter needs to copy it correctly on sm_90.
+  cudf::size_type const num_rows = 100'016;
   auto const iter                = cuda::counting_iterator<int64_t>{0};
   auto const valids   = cuda::transform_iterator(iter, [](auto i) { return i % 7 != 0; });
   auto const str_iter = cuda::transform_iterator(iter, [](auto i) { return std::to_string(i); });
@@ -276,7 +277,7 @@ TEST_F(HashPartition, ManyBlocksSlicedMixedTypes)
     iter, iter + num_rows, numeric::scale_type{-2});
   strings_column_wrapper strings(str_iter, str_iter + num_rows, valids);
   auto const input =
-    cudf::slice(cudf::table_view({row_ids, bytes, shorts, decimals, strings}), {1, num_rows - 1})
+    cudf::slice(cudf::table_view({row_ids, bytes, shorts, decimals, strings}), {8, num_rows - 8})
       .front();
 
   for (cudf::size_type const num_partitions : {13, 1024, 2049}) {

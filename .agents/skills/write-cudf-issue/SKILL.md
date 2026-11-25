@@ -1,6 +1,6 @@
 ---
 name: write-cudf-issue
-description: Draft or file NVIDIA/cudf issues from bug reports, performance investigations, feature proposals or story plans. Not for PR descriptions or comments on existing issues.
+description: Draft or file NVIDIA/cudf issues from bug reports, performance investigations, feature proposals, story plans or follow-up work from a pull request review. Not for PR descriptions or comments on existing issues.
 ---
 
 # Writing a cuDF issue
@@ -26,6 +26,12 @@ Write enough for a maintainer to act or join the discussion. A small bug may nee
 3. **Read the evidence.** Use the supplied branches, notes, result files and CI runs. Check commands, versions, commits and measurements against the claims. If they disagree, explain the discrepancy and resolve it with the user before filing. Mark missing facts in the draft as `TODO(<what is needed>)`. Separate measured results, estimates and suspected causes.
 
 4. **For an issue arising from PR review**, read the PR description and relevant comments or review thread, including later replies. Link the exact comment or thread and the PR. Capture the problem, why it matters, the agreed follow-up scope and any dependencies on the PR. Check what the latest PR changes already address. Distinguish agreed deferred work from suggestions or unresolved feedback; do not assume opening an issue resolves a review thread or makes a blocking concern safe to defer. If the intent is unclear, ask the user what should move into the issue.
+
+## Scope of an issue
+
+State what is in scope, how to verify the result and when the issue is done, so a maintainer can decide who should take it and whoever does can start without more questions. Do not assign the issue or ask for an agent to pick it up; maintainers decide who works on it and whether an agent should.
+
+Default to one issue. A checklist inside it is enough for steps that depend on each other or cannot merge separately. Suggest a story with sub-issues only when the pieces can each be fixed, reviewed and merged on their own and differ in cause, area or likely owner, or when the work is a plan with phases and a shared completion criterion. Each sub-issue then needs its own scope and way to verify it, so it can be taken without reading the story. Show the proposed split to the user and file nothing until they approve it. Many small issues cost every reader a notification, so do not split work that one issue describes well.
 
 ## Titles and labels
 
@@ -82,7 +88,7 @@ Leave it unchecked until the author explicitly confirms reviewing the final draf
 
 Write the body to a separate file for `gh issue create --body-file`. Keep the title, suggested labels and parent story outside that file. Show the user the full draft and metadata. A small, well-scoped bug may suit a new contributor; mention that to the user without adding a label yourself.
 
-File only after the user approves the draft and metadata. Check that no `TODO(...)` remains and that claims and links are supported. Create only the approved issue and labels:
+File only after the user approves the draft and metadata and explicitly confirms they reviewed the final draft; approval alone does not count as that confirmation. Check that no `TODO(...)` remains and that claims and links are supported. Create only the approved issue and labels:
 
 ```bash
 gh issue create -R NVIDIA/cudf --title '<title>' --body-file <draft.md> --label '<label>'

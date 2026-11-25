@@ -27,6 +27,22 @@ rapids-download-from-github() {
 }
 export -f rapids-download-from-github
 
+# Avoid changing nightly dependencies when the replay crosses daily builds.
+export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/original-arm64-explicit.txt"
+rapids-mamba-retry() {
+    local spec entry
+    spec="$CUDF_POLARS_DIAGNOSTICS_DIR/requested-explicit.txt"
+    while IFS= read -r entry; do
+        entry=${entry/\{CPP_CHANNEL\}/file:\/\/${CPP_CHANNEL}}
+        entry=${entry/\{PYTHON_CHANNEL\}/file:\/\/${PYTHON_CHANNEL}}
+        entry=${entry/\{PYTHON_NOARCH_CHANNEL\}/file:\/\/${PYTHON_NOARCH_CHANNEL}}
+        entry=${entry/\{CUDF_POLARS_QUENT_CHANNEL\}/file:\/\/${CUDF_POLARS_QUENT_CHANNEL}}
+        printf '%s\n' "$entry"
+    done < "$CUDF_POLARS_EXPLICIT_ENV" > "$spec"
+    conda create --yes --no-default-packages --name test --file "$spec"
+}
+export -f rapids-mamba-retry
+
 # The frozen checkout has stale test calls to the ColRef constructor.
 git -C replay-source apply --unidiff-zero "$PWD/ci/arm64_polars_diagnostics/colref-tests.patch"
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck ]]; then

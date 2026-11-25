@@ -4,6 +4,7 @@
 """Gather per-worker evidence for the temporary Arm64 Polars CI replay."""
 
 import ctypes
+import inspect
 import os
 import subprocess
 import threading
@@ -23,6 +24,12 @@ _warmup_join = (
     "tests/streaming/test_join.py::test_join[spmd-small-options1-False-left]"
 )
 _warmup_last = "tests/streaming/test_unique.py::test_unique[spmd-small-none-subset15-False]"
+_history_targets = {
+    "signal-history-aggregation": (
+        "tests/expressions/test_agg.py::test_agg[nulls-max-Int8-unsorted-spmd-small]",
+    ),
+    "signal-history-shuffle": (_warmup_join, _warmup_last),
+}
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -202,4 +209,25 @@ def pytest_collection_modifyitems(config, items):
         )
     config.hook.pytest_deselected(items=[*items[:first], *items[last + 1 :]])
     items[:] = items[first : last + 1]
+    return result
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_pyfunc_call(pyfuncitem):
+    result = yield
+    if pyfuncitem.nodeid not in _history_targets.get(_trial, ()):
+        return result
+
+    # Keep collection and scheduling intact until the real case runs. Repeat
+    # with the same fixtures and CUDA state left by that worker's test history.
+    worker = os.environ["PYTEST_XDIST_WORKER"]
+    args = {
+        name: pyfuncitem.funcargs[name]
+        for name in inspect.signature(pyfuncitem.obj).parameters
+    }
+    with (_output / f"{worker}.history.log").open("a", buffering=1) as log:
+        log.write(f"{time.time_ns()} begin {pyfuncitem.nodeid}\n")
+        for _ in range(63):
+            pyfuncitem.obj(**args)
+        log.write(f"{time.time_ns()} completed 64 calls {pyfuncitem.nodeid}\n")
     return result

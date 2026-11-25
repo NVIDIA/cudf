@@ -239,8 +239,8 @@ class QuentWorkerRuntime:
     buffer_resource: BufferResource | None
     reservation_ingestor: ReservationDeltaIngestor | None
     reservation_context_registry: ReservationContextRegistry
-    reservation_events_lock: threading.Lock = dataclasses.field(
-        default_factory=threading.Lock
+    _reservation_events_lock: threading.Lock = dataclasses.field(
+        default_factory=threading.Lock, init=False
     )
 
     @classmethod
@@ -311,7 +311,7 @@ class QuentWorkerRuntime:
 
     def drain_reservation_events(self) -> bool:
         """Drain and ingest reservation events without overlapping another drain."""
-        with self.reservation_events_lock:
+        with self._reservation_events_lock:
             if self.buffer_resource is None or self.reservation_ingestor is None:
                 return True
             try:
@@ -329,7 +329,7 @@ class QuentWorkerRuntime:
         """Drain and release completed-Actor occupancy with a zero balance."""
         if not self.drain_reservation_events():
             return
-        with self.reservation_events_lock:
+        with self._reservation_events_lock:
             tokens = self.reservation_context_registry.tokens_for_actor(actor_id)
             if self.reservation_ingestor is not None:
                 self.reservation_ingestor.complete_actor(actor_id, tokens)
@@ -337,7 +337,7 @@ class QuentWorkerRuntime:
 
     def retarget_buffer_resource(self, buffer_resource: BufferResource) -> None:
         """Finish recording on the old resource and start a fresh session."""
-        with self.reservation_events_lock:
+        with self._reservation_events_lock:
             ingestor = self.reservation_ingestor
             if ingestor is None:
                 return
@@ -391,7 +391,7 @@ class QuentWorkerRuntime:
 
     def detach_buffer_resource(self) -> None:
         """Finish recording before the owning streaming Context is shut down."""
-        with self.reservation_events_lock:
+        with self._reservation_events_lock:
             buffer_resource = self.buffer_resource
             self.buffer_resource = None
             if buffer_resource is None:
@@ -525,7 +525,7 @@ class QuentWorkerRuntime:
 
     def close(self) -> None:
         """Drain reservation telemetry, then close Worker and session."""
-        with self.reservation_events_lock:
+        with self._reservation_events_lock:
             worker_handle = self.worker_handle
             buffer_resource = self.buffer_resource
             ingestor = self.reservation_ingestor

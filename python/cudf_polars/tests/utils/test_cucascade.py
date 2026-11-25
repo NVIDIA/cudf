@@ -36,7 +36,7 @@ def disabled(monkeypatch):
 
 
 @pytest.fixture
-def glue(monkeypatch):
+def fake_cache(monkeypatch):
     fake = FakeScanCache()
     monkeypatch.setattr(cucascade, "_cache", fake)
     monkeypatch.setattr(cucascade, "_registered", set())
@@ -109,12 +109,12 @@ def test_installed_libcudf_version_does_not_need_the_pylibcudf_distribution_name
     assert cucascade._installed_cudf_version() is not None
 
 
-def test_wrap_sources_opens_every_remote_path(glue):
+def test_wrap_sources_opens_every_remote_path(fake_cache):
     paths = ["s3://bucket/a.parquet", "s3://bucket/b.parquet"]
     sources = cucascade.wrap_sources(paths)
     assert sources is not None
     assert [s.path for s in sources] == paths
-    assert sorted(glue.opened) == paths
+    assert sorted(fake_cache.opened) == paths
 
 
 @pytest.mark.parametrize(
@@ -127,9 +127,9 @@ def test_wrap_sources_opens_every_remote_path(glue):
         ["gs://bucket/a.parquet"],
     ],
 )
-def test_wrap_sources_leaves_other_paths_alone(glue, paths):
+def test_wrap_sources_leaves_other_paths_alone(fake_cache, paths):
     assert cucascade.wrap_sources(paths) is None
-    assert glue.opened == []
+    assert fake_cache.opened == []
 
 
 def test_layout_covers_every_column_chunk(parquet_info):
@@ -163,15 +163,15 @@ def test_layout_covers_every_leaf_of_nested_columns(tmp_path):
     assert max(o + s for o, s in zip(offsets, sizes, strict=True)) <= info.size
 
 
-def test_register_layouts_registers_each_file_once(glue, parquet_info):
+def test_register_layouts_registers_each_file_once(fake_cache, parquet_info):
     cucascade.register_layouts([parquet_info, parquet_info])
-    assert list(glue.layouts) == [parquet_info.path]
-    directory, columns, *_ = glue.layouts[parquet_info.path]
+    assert list(fake_cache.layouts) == [parquet_info.path]
+    directory, columns, *_ = fake_cache.layouts[parquet_info.path]
     assert directory == "s3://bucket/table"
     assert columns == ["a", "b"]
 
 
-def test_register_layouts_skips_local_files(glue, parquet_info):
+def test_register_layouts_skips_local_files(fake_cache, parquet_info):
     parquet_info.path = "/local/t.parquet"
     cucascade.register_layouts([parquet_info])
-    assert glue.layouts == {}
+    assert fake_cache.layouts == {}

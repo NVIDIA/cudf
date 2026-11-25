@@ -55,11 +55,13 @@ from cudf_polars.quent._runtime import (
     QuentWorkerRuntime,
 )
 from cudf_polars.unstable import unstable
+from cudf_polars.utils import cucascade
 from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
     DaskContext,
     MemoryResourceConfig,
     configure_kvikio,
+    resolve_cucascade_cache_bytes,
     resolve_kvikio_executor_options,
     resolve_quent_context,
 )
@@ -337,6 +339,7 @@ def _setup_worker(
     kvikio_bounce_buffer_bytes: int,
     kvikio_reactor_count: int,
     kvikio_request_ceiling: int,
+    cucascade_cache_bytes: int,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -380,6 +383,9 @@ def _setup_worker(
         Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
+    cucascade_cache_bytes
+        Size, in bytes, of the cuCascade host cache to create in this worker
+        process. 0 reads without it.
     """
     assert dask_worker is not None
     options = Options.deserialize(rapidsmpf_options_as_bytes)
@@ -425,6 +431,7 @@ def _setup_worker(
             reactor_count=kvikio_reactor_count,
             request_ceiling=kvikio_request_ceiling,
         )
+    cucascade.configure_cucascade(cucascade_cache_bytes)
 
     barrier(comm)
     ctx = Context.from_options(comm.logger, base_mr, options, statistics)
@@ -556,6 +563,7 @@ def _reset_worker(
     kvikio_bounce_buffer_bytes: int,
     kvikio_reactor_count: int,
     kvikio_request_ceiling: int,
+    cucascade_cache_bytes: int,
     dask_worker: distributed.Worker | None = None,
 ) -> None:
     """
@@ -585,6 +593,9 @@ def _reset_worker(
         Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
     kvikio_request_ceiling
         ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
+    cucascade_cache_bytes
+        Size, in bytes, of the cuCascade host cache of this worker process. The
+        cache is created once, so this only has an effect if there is none yet.
     dask_worker
         Injected by ``distributed`` when called via :meth:`distributed.Client.run`.
     """
@@ -597,6 +608,7 @@ def _reset_worker(
         reactor_count=kvikio_reactor_count,
         request_ceiling=kvikio_request_ceiling,
     )
+    cucascade.configure_cucascade(cucascade_cache_bytes)
     attr = f"_cudf_polars_mp_context_{uid}"
     mp_ctx: _WorkerContext | None = getattr(dask_worker, attr, None)
     if mp_ctx is None:
@@ -1074,6 +1086,8 @@ class DaskEngine(StreamingEngine):
 
             worker_addresses = _get_worker_addresses(dask_client)
             nranks = len(worker_addresses)
+            cache_bytes = resolve_cucascade_cache_bytes(executor_options)
+            cucascade.check_single_rank(cache_bytes, nranks)
             root_worker = worker_addresses[0]
 
             # Phase 1: initialize root communicator on one worker.
@@ -1112,6 +1126,7 @@ class DaskEngine(StreamingEngine):
                 ],
                 kvikio_reactor_count=executor_options["kvikio_reactor_count"],
                 kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
+                cucascade_cache_bytes=cache_bytes,
             )
 
             dask_ctx = DaskContext(
@@ -1170,6 +1185,8 @@ class DaskEngine(StreamingEngine):
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
             )
         executor_options = resolve_kvikio_executor_options(executor_options)
+        cache_bytes = resolve_cucascade_cache_bytes(executor_options)
+        cucascade.check_single_rank(cache_bytes, self.nranks)
         engine_options = dict(engine_options or {})
         engine_options.setdefault("allow_gpu_sharing", self._allow_gpu_sharing)
         self._allow_gpu_sharing = bool(engine_options["allow_gpu_sharing"])
@@ -1195,6 +1212,7 @@ class DaskEngine(StreamingEngine):
                 ],
                 kvikio_reactor_count=executor_options["kvikio_reactor_count"],
                 kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
+                cucascade_cache_bytes=cache_bytes,
             ),
             rapidsmpf_options_as_bytes,
         )

@@ -272,7 +272,8 @@ class StreamingOptions:
         Category: executor.
     cucascade_cache_bytes
         Size, in bytes, of the host-memory cache for remote parquet reads
-        through cuCascade. 0 disables the cache. Only the SPMD engine supports it.
+        through cuCascade. 0 disables the cache. Only supported with a
+        single rank.
         Env: ``CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES``.
         Default: ``0``.
         Category: executor.

@@ -51,6 +51,10 @@ export CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES=$((100 * 1024**3))   # 100 G
 If the option is set and the extension is not installed, cudf-polars raises an error that says how
 to build it.
 
+The SPMD, Ray and Dask engines support the cache with a single rank, which creates it in the process
+that runs the rank. An engine with more than one rank refuses the option: each rank would pin its
+own cache, and that has not been measured.
+
 ## Testing
 
 ```bash

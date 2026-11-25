@@ -645,7 +645,6 @@ class SPMDEngine(StreamingEngine):
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
 
-        cucascade.configure_cucascade(executor_options["cucascade_cache_bytes"])
         self.rapidsmpf_options = resolve_rapidsmpf_options(rapidsmpf_options)
         mr_config: MemoryResourceConfig = engine_options.get(
             "memory_resource_config", MemoryResourceConfig.default()
@@ -669,6 +668,10 @@ class SPMDEngine(StreamingEngine):
                 comm.progress_thread.statistics, self.rapidsmpf_options
             )
         # else: caller-provided comm; the caller retains ownership
+        cucascade.check_single_rank(
+            executor_options["cucascade_cache_bytes"], comm.nranks
+        )
+        cucascade.configure_cucascade(executor_options["cucascade_cache_bytes"])
 
         self._base_mr: rmm.mr.DeviceMemoryResource = base_mr
         self._mr: RmmResourceAdaptor  # set after `Context` is built (below).
@@ -1072,6 +1075,8 @@ class SPMDEngine(StreamingEngine):
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
             )
         executor_options = resolve_kvikio_executor_options(executor_options)
+        cache_bytes = resolve_cucascade_cache_bytes(executor_options)
+        cucascade.check_single_rank(cache_bytes, self._comm.nranks)
         configure_kvikio(
             executor_options["kvikio_nthreads"],
             remote_io_backend=executor_options["kvikio_remote_io_backend"],
@@ -1080,6 +1085,7 @@ class SPMDEngine(StreamingEngine):
             reactor_count=executor_options["kvikio_reactor_count"],
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
+        cucascade.configure_cucascade(cache_bytes)
         engine_options = engine_options or {}
         new_quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
             "quent_context", existing_quent_context

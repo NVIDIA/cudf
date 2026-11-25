@@ -1247,7 +1247,8 @@ class StreamingExecutor:
         from host memory by the next. 0 (default) disables the cache and reads
         through kvikio. The cache is pinned when the engine is created. Requires
         the ``cudf_polars_cucascade`` extension and AWS credentials in the
-        environment. Only the SPMD engine supports it. This can be set via
+        environment. Only supported with a single rank, with any engine. This
+        can be set via
 
         - ``executor_options`` passed to ``polars.GPUEngine``
         - the ``CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES`` environment variable

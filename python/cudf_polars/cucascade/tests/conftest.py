@@ -6,6 +6,14 @@ import pytest
 from cudf_polars_cucascade import ScanCache, ScanCacheConfig
 
 
+def pytest_configure(config):
+    # As in cudf-polars's own tests/conftest.py: Ray leaks `/dev/null` handles and
+    # distributed leaves sockets open at shutdown, which would fail the engine tests
+    # under `filterwarnings = ["error"]`; Ray also uses a deprecated OpenTelemetry API.
+    config.addinivalue_line("filterwarnings", "ignore::ResourceWarning")
+    config.addinivalue_line("filterwarnings", "ignore::DeprecationWarning")
+
+
 @pytest.fixture
 def make_config():
     """Config for a small cache against an endpoint that nothing listens on."""

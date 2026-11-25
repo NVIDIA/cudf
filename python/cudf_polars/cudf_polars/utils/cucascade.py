@@ -20,7 +20,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 __all__ = [
+    "check_single_rank",
     "configure_cucascade",
+    "enabled",
     "register_layouts",
     "register_layouts_from_sources",
     "wrap_sources",
@@ -75,6 +77,33 @@ def _load_extension() -> types.ModuleType:
     return module
 
 
+def check_single_rank(cache_bytes: int, nranks: int) -> None:
+    """
+    Refuse the cache for an engine with more than one rank.
+
+    Each rank would pin its own cache, and whether a rank reads the same files
+    from one query to the next, which is what makes a cache pay off, has not been
+    measured.
+
+    Parameters
+    ----------
+    cache_bytes
+        The requested cache size in bytes.
+    nranks
+        Number of ranks of the engine.
+
+    Raises
+    ------
+    ValueError
+        If ``cache_bytes`` is nonzero and ``nranks`` is greater than one.
+    """
+    if cache_bytes > 0 and nranks > 1:
+        raise ValueError(
+            "cucascade_cache_bytes is only supported with a single rank, but this "
+            f"engine has {nranks} ranks. Set it to 0 to read without the cache."
+        )
+
+
 def configure_cucascade(cache_bytes: int) -> None:
     """
     Create the cuCascade cache for this process.
@@ -111,6 +140,11 @@ def configure_cucascade(cache_bytes: int) -> None:
                 session_token=os.environ.get("AWS_SESSION_TOKEN", ""),
             )
         )
+
+
+def enabled() -> bool:
+    """Whether this process has a cuCascade cache."""
+    return _cache is not None
 
 
 def _is_s3(path: str) -> bool:

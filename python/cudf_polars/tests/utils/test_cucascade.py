@@ -175,3 +175,17 @@ def test_register_layouts_skips_local_files(fake_cache, parquet_info):
     parquet_info.path = "/local/t.parquet"
     cucascade.register_layouts([parquet_info])
     assert fake_cache.layouts == {}
+
+
+@pytest.mark.parametrize("cache_bytes, nranks", [(0, 1), (0, 4), (1 << 30, 1)])
+def test_check_single_rank_allows(cache_bytes, nranks):
+    cucascade.check_single_rank(cache_bytes, nranks)
+
+
+def test_check_single_rank_refuses_the_cache_with_several_ranks():
+    with pytest.raises(ValueError, match="single rank"):
+        cucascade.check_single_rank(1 << 30, 2)
+
+
+def test_enabled(disabled):
+    assert not cucascade.enabled()

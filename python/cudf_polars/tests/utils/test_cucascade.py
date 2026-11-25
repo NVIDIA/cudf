@@ -300,6 +300,8 @@ def test_register_layouts_from_sources_disabled(disabled, parquet_path):
     cucascade.register_layouts_from_sources([parquet_path], [None])
 
 
+# The fake cache is patched into this process, so only engines that read here see it.
+@pytest.mark.engine_params(["in-memory", "spmd", "spmd-small"])
 def test_query_reads_through_the_cache(local_cache, parquet_path, engine):
     q = pl.scan_parquet(parquet_path).filter(pl.col("a") > 10).select("b")
     assert_gpu_result_equal(q, engine=engine)

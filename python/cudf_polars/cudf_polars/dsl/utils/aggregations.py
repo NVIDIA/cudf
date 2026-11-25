@@ -323,6 +323,24 @@ def decompose_single_agg(
         return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, (expr.Literal, expr.LiteralColumn)):
         return [], named_expr
+    if isinstance(agg, expr.UnaryFunction) and agg.name == "unique":
+        (maintain_order,) = agg.options
+        (child,) = agg.children
+        if context != ExecutionContext.GROUPBY or not is_top or maintain_order:
+            raise NotImplementedError(
+                "Grouped unique only supports a top-level groupby aggregation "
+                "with maintain_order=False"
+            )
+        if any(isinstance(node, expr.LiteralColumn) for node in traversal([child])):
+            raise NotImplementedError("Grouped unique with a literal column")
+        agg = expr.Agg(
+            DataType(pl.List(child.dtype.polars_type)),
+            "collect_set",
+            None,
+            context,
+            child,
+        )
+        named_expr = named_expr.reconstruct(agg)
     if isinstance(agg, expr.Agg):
         if agg.name == "quantile":
             # Second child the requested quantile (which is asserted

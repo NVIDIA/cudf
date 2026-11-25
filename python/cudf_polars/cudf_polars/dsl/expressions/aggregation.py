@@ -169,6 +169,12 @@ class Agg(Expr):
             req = None
         elif name == "implode":
             req = plc.aggregation.collect_list(plc.types.NullPolicy.INCLUDE)
+        elif name == "collect_set":
+            req = plc.aggregation.collect_set(
+                plc.types.NullPolicy.INCLUDE,
+                plc.types.NullEquality.EQUAL,
+                plc.types.NanEquality.ALL_EQUAL,
+            )
         elif name == "mean":
             req = plc.aggregation.mean()
         elif name == "sum":
@@ -255,6 +261,7 @@ class Agg(Expr):
             "item",
             "implode",
             "last",
+            "collect_set",
             "mean",
             "m2",
             "merge_m2",

@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 import polars as pl
+from polars.testing import assert_frame_equal
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataType
@@ -707,11 +708,52 @@ def test_groupby_literal_in_agg(engine: pl.GPUEngine, df, key, expr, request):
 
 @pytest.mark.parametrize(
     "expr",
-    [pl.col("int").unique(), pl.col("int").drop_nulls(), pl.col("int").cum_max()],
+    [pl.col("int").drop_nulls(), pl.col("int").cum_max()],
 )
 def test_groupby_unary_non_pointwise_raises(engine: pl.GPUEngine, df, expr):
     q = df.group_by("key1").agg(expr)
     assert_ir_translation_raises(q, engine, NotImplementedError)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_groupby_unique(engine: pl.GPUEngine, empty: bool) -> None:  # noqa: FBT001
+    df = pl.LazyFrame(
+        {
+            "key": [2, 1, 2, 1, 2, 1, 2, 3, 3],
+            "value": [5.0, None, float("nan"), 7, 5, None, float("nan"), None, None],
+        }
+    )
+    if empty:
+        df = df.clear()
+    q = df.group_by("key").agg(
+        pl.col("key").unique().alias("key_values"), pl.col("value").unique()
+    )
+
+    # The group order and the order within each unique list are unspecified.
+    sort_values = pl.col("value").list.sort()
+    assert_frame_equal(
+        q.collect(engine=engine).with_columns(sort_values).sort("key"),
+        q.collect().with_columns(sort_values).sort("key"),
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pl.col("int").unique(maintain_order=True),
+        pl.col("int").sum().unique(),
+        pl.col("int").unique().sum(),
+        pl.lit(pl.Series([1, 2])).unique(),
+    ],
+)
+def test_groupby_unique_unsupported(
+    in_memory_engine: pl.GPUEngine, df: pl.LazyFrame, value: pl.Expr
+) -> None:
+    assert_ir_translation_raises(
+        df.group_by("key1").agg(value.alias("value")),
+        in_memory_engine,
+        NotImplementedError,
+    )
 
 
 def test_groupby_agg_broadcast_raises(engine: pl.GPUEngine, df):

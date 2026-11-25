@@ -24,11 +24,11 @@ _warmup_join = (
     "tests/streaming/test_join.py::test_join[spmd-small-options1-False-left]"
 )
 _warmup_last = "tests/streaming/test_unique.py::test_unique[spmd-small-none-subset15-False]"
-_history_targets = {
-    "signal-history-aggregation": (
+_suspect_cases = {
+    "aggregation": (
         "tests/expressions/test_agg.py::test_agg[nulls-max-Int8-unsorted-spmd-small]",
     ),
-    "signal-history-shuffle": (_warmup_join, _warmup_last),
+    "shuffle": (_warmup_join, _warmup_last),
 }
 
 
@@ -125,6 +125,54 @@ def _install_fault_report(worker):
     return reporter
 
 
+def _install_context_probe(worker):
+    from cuda.bindings import driver
+
+    kind = _trial.rsplit("-", 1)[1]
+    cases = _suspect_cases[kind]
+    trace = _output / f"{worker}.contexts.log"
+
+    def probe(stream, site):
+        test = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
+        if test not in cases:
+            return
+        _, handle = stream.__cuda_stream__()
+        current_status, current = driver.cuCtxGetCurrent()
+        prefix = f"{time.time_ns()} tid={threading.get_native_id()} {site}"
+        with trace.open("a", buffering=1) as log:
+            # Keep the calling context even if reading the stream's owner faults.
+            log.write(
+                f"{prefix} stream={handle:#x} current={int(current):#x} "
+                f"current_status={current_status.name} {test}\n"
+            )
+            status, owner = driver.cuStreamGetCtx(driver.CUstream(handle))
+            log.write(
+                f"{prefix} owner={int(owner):#x} owner_status={status.name}\n"
+            )
+
+    if kind == "aggregation":
+        from cudf_polars.streaming.actor_graph import utils
+
+        evaluate = utils.evaluate_ir
+
+        def evaluate_ir(*args, **kwargs):
+            result = evaluate(*args, **kwargs)
+            probe(result.stream, "before-table-chunk")
+            return result
+
+        utils.evaluate_ir = evaluate_ir
+    else:
+        from cudf_polars.streaming.actor_graph.collectives import shuffle
+
+        partition = shuffle.py_partition_and_pack
+
+        def partition_and_pack(**kwargs):
+            probe(kwargs["stream"], "before-partition-and-pack")
+            return partition(**kwargs)
+
+        shuffle.py_partition_and_pack = partition_and_pack
+
+
 def pytest_sessionstart(session):
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     if not worker:
@@ -149,6 +197,8 @@ def pytest_sessionstart(session):
             watcher.start()
     elif _trial.startswith("signal-"):
         session._cudf_fault_reporter = _install_fault_report(worker)
+        if _trial.startswith("signal-context-"):
+            _install_context_probe(worker)
     elif _trial.startswith(("gdb-", "native-", "warmup-")):
         session._cudf_debugger = _attach_debugger(worker)
         if _trace:
@@ -215,7 +265,10 @@ def pytest_collection_modifyitems(config, items):
 @pytest.hookimpl(wrapper=True)
 def pytest_pyfunc_call(pyfuncitem):
     result = yield
-    if pyfuncitem.nodeid not in _history_targets.get(_trial, ()):
+    if not _trial.startswith(("signal-history-", "signal-context-")):
+        return result
+    kind = _trial.rsplit("-", 1)[1]
+    if pyfuncitem.nodeid not in _suspect_cases[kind]:
         return result
 
     # Keep collection and scheduling intact until the real case runs. Repeat

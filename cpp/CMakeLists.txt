@@ -40,6 +40,8 @@ option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
+option(CUDF_DOWNLOAD_ZSTD "Download and build Zstd from source" ON)
+mark_as_advanced(CUDF_DOWNLOAD_ZSTD)
 option(CUDF_LARGE_STRINGS_DISABLED "Build with large string support disabled" OFF)
 mark_as_advanced(CUDF_LARGE_STRINGS_DISABLED)
 option(

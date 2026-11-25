@@ -8,12 +8,13 @@
 # Use CPM to find or clone libzstd
 function(find_and_configure_zstd)
 
-  option(CUDF_DOWNLOAD_ZSTD "Download and build Zstd from source" ON)
-  set(CPM_DOWNLOAD_zstd ${CUDF_DOWNLOAD_ZSTD})
+  set(CPM_DOWNLOAD_zstd ON)
+  if(DEFINED CUDF_DOWNLOAD_ZSTD)
+    set(CPM_DOWNLOAD_zstd ${CUDF_DOWNLOAD_ZSTD})
+  endif()
 
   if(NOT CPM_DOWNLOAD_zstd)
     find_package(zstd 1.5.7 EXACT CONFIG REQUIRED)
-    # Conda exports a shared CMake target, but private embedding needs its matching archive.
     find_file(
       CUDF_ZSTD_STATIC_LIBRARY libzstd.a
       PATHS "${zstd_DIR}/../.."
@@ -21,7 +22,6 @@ function(find_and_configure_zstd)
     )
     message(STATUS "Using packaged Zstd archive: ${CUDF_ZSTD_STATIC_LIBRARY}")
     get_target_property(package_includes zstd::libzstd_shared INTERFACE_INCLUDE_DIRECTORIES)
-    find_package(Threads REQUIRED)
     add_library(
       cudf_zstd_tracing OBJECT
       "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../src/io/comp/zstd_tracing.cpp"

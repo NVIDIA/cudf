@@ -6,8 +6,8 @@ set -euo pipefail
 
 export RAPIDS_REPOSITORY=NVIDIA/cudf
 export RAPIDS_BASE_BRANCH=main
-export RAPIDS_REF_NAME=pull-request/25532
-export RAPIDS_SHA=4b383a45d42d6ce75dc96fb9c50be380c624a9a3
+RAPIDS_SHA=$(git -C replay-source rev-parse HEAD)
+export RAPIDS_SHA
 export CUDF_POLARS_DIAGNOSTICS_DIR="$PWD/artifacts/arm64-polars"
 export RAPIDS_TESTS_DIR="$CUDF_POLARS_DIAGNOSTICS_DIR/test-results"
 export RAPIDS_COVERAGE_DIR="$CUDF_POLARS_DIAGNOSTICS_DIR/coverage"
@@ -21,14 +21,25 @@ if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then
     export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov -W ignore::pytest_cov.CovDisabledWarning"
 fi
 
-# The original run's packages were rebuilt at the same source revision on retry.
+# Pin both the test source and the artifact set so a rebuild cannot silently
+# change the native binaries used for the aggregation comparison.
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-aggregation ]]; then
+    export RAPIDS_REF_NAME=pull-request/25384
+    export CUDF_POLARS_PACKAGE_RUN_ID=45661654812
+    export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/aggregation-arm64-explicit.txt"
+else
+    # The first shuffle failure's packages were rebuilt at the same source revision.
+    export RAPIDS_REF_NAME=pull-request/25532
+    export CUDF_POLARS_PACKAGE_RUN_ID=45518453978
+    export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/original-arm64-explicit.txt"
+fi
+
 rapids-download-from-github() {
-    GITHUB_RUN_ID=45518453978 command rapids-download-from-github "$@"
+    GITHUB_RUN_ID="$CUDF_POLARS_PACKAGE_RUN_ID" command rapids-download-from-github "$@"
 }
 export -f rapids-download-from-github
 
 # Avoid changing nightly dependencies when the replay crosses daily builds.
-export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/original-arm64-explicit.txt"
 rapids-mamba-retry() {
     local spec entry
     spec="$CUDF_POLARS_DIAGNOSTICS_DIR/requested-explicit.txt"

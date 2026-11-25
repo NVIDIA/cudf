@@ -101,6 +101,19 @@ def pytest_sessionstart(session):
         _trace_partition_and_pack(worker)
 
 
+@pytest.hookimpl(trylast=True)
+def pytest_sessionfinish(session):
+    debugger = getattr(session, "_cudf_debugger", None)
+    if debugger is not None and debugger.poll() is None:
+        # Keep the debugger attached through teardown of the session fixtures.
+        debugger.terminate()
+        try:
+            debugger.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            debugger.kill()
+            debugger.wait()
+
+
 def pytest_runtest_logstart(nodeid):
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     if worker:

@@ -17,7 +17,7 @@ export PYTHONPATH="$PWD/ci/arm64_polars_diagnostics${PYTHONPATH:+:$PYTHONPATH}"
 export PYTEST_PLUGINS=repro_diagnostics
 if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == stress-* ]]; then
     # The stress lanes run selected cases rather than the coverage suite.
-    export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov"
+    export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov -W ignore::pytest_cov.CovDisabledWarning"
 fi
 
 # The replay uses the package artifacts from the failing run even when this workflow is rerun.

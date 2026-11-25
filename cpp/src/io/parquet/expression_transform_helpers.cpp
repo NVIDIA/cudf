@@ -218,7 +218,9 @@ std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   auto col_index_it = _column_name_to_index.find(expr.get_column_name());
   CUDF_EXPECTS(col_index_it != _column_name_to_index.end(),
                "Column name in the filter expression not found in the "
-               "metadata of selected columns",
+               "metadata of selected columns. Note that only top-level "
+               "columns except structs and lists are supported in "
+               "Parquet filter expression",
                std::invalid_argument);
   auto col_index = col_index_it->second;
   _col_ref.emplace_back(col_index);
@@ -332,9 +334,12 @@ std::reference_wrapper<ast::expression const> names_from_expression::visit(
 {
   // Map the column index to its name
   auto const col_name_iter = _column_indices_to_names.find(expr.get_column_index());
-  CUDF_EXPECTS(col_name_iter != _column_indices_to_names.end(),
-               "Column index in the filter expression not found in the column indices to names map",
-               std::invalid_argument);
+  CUDF_EXPECTS(
+    col_name_iter != _column_indices_to_names.end(),
+    "Column index in the filter expression not found in the column indices to names map. Note that "
+    "only top-level columns except structs and lists are supported in "
+    "Parquet filter expression",
+    std::invalid_argument);
   auto const col_name = col_name_iter->second;
   // If the normalized column name is not in the skip_names, add it
   if (_skip_names.count(col_name) == 0) { _column_names.insert(col_name); }

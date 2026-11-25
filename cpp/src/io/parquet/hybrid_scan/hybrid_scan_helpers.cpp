@@ -723,7 +723,9 @@ std::reference_wrapper<ast::expression const> parquet_filter_normalizer::visit(
   auto const col_name_iter = _column_indices_to_names.find(expr.get_column_index());
   CUDF_EXPECTS(col_name_iter != _column_indices_to_names.end(),
                "Column index in the filter expression not found in the column indices to names "
-               "map",
+               "map. Note that "
+               "only top-level columns except structs and lists are supported in "
+               "Parquet filter expression",
                std::invalid_argument);
   auto const col_name = col_name_iter->second;
   auto col_index_it   = _column_name_to_index.find(col_name);

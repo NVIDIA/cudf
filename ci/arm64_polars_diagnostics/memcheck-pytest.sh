@@ -5,6 +5,26 @@
 set -euo pipefail
 
 compute-sanitizer --version
+sanitizer=(
+    timeout --signal=TERM --kill-after=15s 12m
+    compute-sanitizer --tool memcheck --error-exitcode 86 --launch-timeout 120
+)
+# Both crash paths call packed_size. Its transform, reduce, and scan kernels
+# are CUB template instantiations with these names in the archived cubin.
+packed_size_filters=(
+    --kernel-name kns=compute_splits
+    --kernel-name kns=buf_size_functor
+    --kernel-name kns=split_key_functor
+)
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-native-aggregation ]]; then
+    # The Python runs stalled during SPMD fixture startup. Exercise the same
+    # native packing path with a packaged streaming gtest.
+    exec "${sanitizer[@]}" "${packed_size_filters[@]}" \
+        --log-file "$CUDF_POLARS_DIAGNOSTICS_DIR/memcheck-native.log" \
+        "$CONDA_PREFIX/bin/gtests/libcudf_streaming/libcudf_streaming_single_tests" \
+        --gtest_filter=Partitions/NumOfPartitions.round_trip_with_reservations/13 \
+        --gtest_output="xml:$RAPIDS_TESTS_DIR/junit-packed-size.xml"
+fi
 cd "$(dirname "${BASH_SOURCE[0]}")/../python/cudf_polars"
 
 # The unfiltered run exhausted the job timeout during join. Check the shuffle
@@ -20,13 +40,7 @@ kernel_filters=(
 )
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-aggregation ]]; then
     cases=('tests/expressions/test_agg.py::test_agg[nulls-max-Int8-unsorted-spmd-small]')
-    # Both crash paths call packed_size. Its transform, reduce, and scan kernels
-    # are CUB template instantiations with these names in the archived cubin.
-    kernel_filters=(
-        --kernel-name kns=compute_splits
-        --kernel-name kns=buf_size_functor
-        --kernel-name kns=split_key_functor
-    )
+    kernel_filters=("${packed_size_filters[@]}")
 fi
 result=0
 for node in "${cases[@]}"; do
@@ -34,9 +48,7 @@ for node in "${cases[@]}"; do
     name=${name##*/}
     name=${name%.py}
     status=0
-    timeout --signal=TERM --kill-after=15s 12m \
-        compute-sanitizer --tool memcheck --error-exitcode 86 --launch-timeout 120 \
-        "${kernel_filters[@]}" \
+    "${sanitizer[@]}" "${kernel_filters[@]}" \
         --log-file "$CUDF_POLARS_DIAGNOSTICS_DIR/memcheck-$name.log" \
         python -m pytest -v --cache-clear -p no:benchmark \
         --junitxml="$RAPIDS_TESTS_DIR/junit-$name.xml" "$node" || status=$?

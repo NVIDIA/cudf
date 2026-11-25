@@ -49,6 +49,10 @@ rapids-mamba-retry() {
         entry=${entry/\{PYTHON_NOARCH_CHANNEL\}/file:\/\/${PYTHON_NOARCH_CHANNEL}}
         entry=${entry/\{CUDF_POLARS_QUENT_CHANNEL\}/file:\/\/${CUDF_POLARS_QUENT_CHANNEL}}
         printf '%s\n' "$entry"
+        if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-native-aggregation &&
+            "$entry" == */libcudf-streaming-*.conda ]]; then
+            printf '%s\n' "${entry/\/libcudf-streaming-/\/libcudf-streaming-tests-}"
+        fi
     done < "$CUDF_POLARS_EXPLICIT_ENV" > "$spec"
     conda create --yes --no-default-packages --name test --file "$spec"
     # Conda's explicit manifest omits the wheel installed by the original job.

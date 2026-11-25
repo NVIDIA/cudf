@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [memcheck-aggregation]
+        trial: [memcheck-native-aggregation]
     permissions:
       actions: read
       contents: read

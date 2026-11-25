@@ -35,16 +35,33 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Identify the physical GPU
+        id: gpu
+        env:
+          CUDF_POLARS_DIAGNOSTICS_TRIAL: ${{ matrix.trial }}
+        run: bash ci/arm64_polars_diagnostics/identify-gpu.sh
+      - name: Publish the replay GPU and initial health counters
+        if: steps.gpu.outputs.replay == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arm64-polars-preflight-${{ matrix.trial }}
+          path: |
+            artifacts/arm64-polars/gpus.csv
+            artifacts/arm64-polars/gpu-health-before.txt
+          if-no-files-found: error
       - name: Check out the reproducing source
+        if: steps.gpu.outputs.replay == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ed03e588cefe03804174c2141f4893d2f4f01833
           path: replay-source
           persist-credentials: false
       - name: Replay the Conda Polars job
+        if: steps.gpu.outputs.replay == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           CUDF_POLARS_DIAGNOSTICS_TRIAL: ${{ matrix.trial }}
+          CUDF_POLARS_REPEAT_REPLAY: ${{ steps.gpu.outputs.repeat }}
           RAPIDS_BUILD_TYPE: pull-request
           RAPIDS_CUDA_VERSION: '13.4.3'
           RAPIDS_DEPENDENCIES: latest

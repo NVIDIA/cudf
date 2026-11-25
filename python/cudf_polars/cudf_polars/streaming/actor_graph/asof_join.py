@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import warnings
 from contextlib import aclosing
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -45,6 +46,7 @@ from cudf_polars.streaming.actor_graph.utils import (
 from cudf_polars.streaming.join import _has_direct_asof_on
 from cudf_polars.streaming.utils import _concat
 from cudf_polars.utils.cuda_stream import join_cuda_streams, stream_ordered_after
+from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
@@ -109,11 +111,14 @@ class _AscendingOrder:
         ir_context: IRExecutionContext,
         *,
         validate: bool = True,
+        track_first: bool = False,
     ) -> None:
         """Initialize order checks across successive chunks."""
         self.ir_context = ir_context
+        self.first: tuple[plc.Table, Any] | None = None
         self.previous: tuple[plc.Table, Any] | None = None
         self.validate = validate
+        self.track_first = track_first
 
     @staticmethod
     def endpoint(table: plc.Table, row: int, stream: Any) -> plc.Table:
@@ -128,7 +133,7 @@ class _AscendingOrder:
         row_bytes = sum(
             column.device_buffer_size() for column in table.columns()
         ) // max(table.num_rows(), 1)
-        return max(1, 3 * row_bytes)
+        return max(1, 4 * row_bytes)
 
     def check(self, table: plc.Table, upstream: Any) -> tuple[plc.Table, Any] | None:
         """Observe this chunk and optionally validate its ascending order."""
@@ -163,6 +168,8 @@ class _AscendingOrder:
                         "argument in operation 'asof_join' is not sorted, "
                         "please sort the 'expr/series/column' first"
                     )
+            if self.track_first and self.first is None:
+                self.first = self.endpoint(table, 0, stream), stream
             self.previous = self.endpoint(table, table.num_rows() - 1, stream), stream
             return self.previous
 
@@ -190,6 +197,7 @@ class _AsofCursor:
         mode: Literal["time", "key", "prepared"],
         left_order_promised: bool,
         right_order_promised: bool,
+        check_global_left_order: bool,
     ) -> None:
         """Set up right chunks and state for probing left chunks."""
         self.context = context
@@ -198,6 +206,7 @@ class _AsofCursor:
         self.left_time = ir.left_on.name
         self.right_time = ir.right_on.name
         self.mode = mode
+        self.check_global_left_order = check_global_left_order
         self.left_indices = names_to_indices(
             (*ir.left_by, self.left_time) if mode == "key" else (self.left_time,),
             ir.children[0].schema,
@@ -220,7 +229,9 @@ class _AsofCursor:
         self.payload: DataFrame | None = None
         self.at_eof = False
         self.left_order = _AscendingOrder(
-            ir_context, validate=ir.options[3] and not left_order_promised
+            ir_context,
+            validate=ir.options[3] and not left_order_promised,
+            track_first=check_global_left_order,
         )
 
     @staticmethod
@@ -419,8 +430,7 @@ class _AsofCursor:
         if self.current is not None:
             self.predecessor = await self._last_right_rows(self.current)
             self.current = None
-            self.joiner = None
-            self.payload = None
+            await self.aclose()
         while True:
             chunk = await anext(self.right_chunks, None)
             if chunk is None:
@@ -473,6 +483,16 @@ class _AsofCursor:
                 self._prepare,
                 self.current,
             )
+
+    def _clear_prepared(self) -> None:
+        """Release the native joiner on a worker thread."""
+        self.joiner = None
+        self.payload = None
+
+    async def aclose(self) -> None:
+        """Release a prepared joiner, including after actor cancellation."""
+        if self.joiner is not None:
+            await self.ir_context.to_thread(self._clear_prepared)
 
     def _lower_bound(
         self, left: DataFrame, keys: plc.Table, positions: plc.Column | None
@@ -565,6 +585,93 @@ class _AsofCursor:
             self.ir_context,
         )
 
+    async def observe_left(
+        self, left_chunk: TableChunk
+    ) -> tuple[plc.Table | None, plc.Column | None]:
+        """Track non-null left keys for local and rank-boundary checks."""
+        if self.mode == "prepared":
+            return None, None
+        keys = self._keys(left_chunk.table_view(), self.left_indices)
+        positions: plc.Column | None = None
+        if keys.columns()[-1].null_count():
+            positions_size = (
+                2 * plc.types.size_of(plc.types.SIZE_TYPE) * left_chunk.shape[0]
+            )
+            keys, positions = await run_with_reservation(
+                self.context,
+                self.ir_context,
+                sum(column.device_buffer_size() for column in keys.columns())
+                + positions_size,
+                self._searchable_left_keys,
+                keys,
+                left_chunk.stream,
+            )
+        if self.left_order.validate or self.check_global_left_order:
+            await run_with_reservation(
+                self.context,
+                self.ir_context,
+                self.left_order.reservation_size(keys),
+                self.left_order.check,
+                keys,
+                left_chunk.stream,
+            )
+        return keys, positions
+
+    def _left_endpoint_chunk(self) -> TableChunk:
+        """Copy this rank's first and last non-null left keys."""
+        stream = self.ir_context.get_cuda_stream()
+        if self.left_order.first is None:
+            table = plc.Table(
+                [make_empty_column(self.ir.children[0].schema[self.left_time], stream)]
+            )
+        else:
+            first, first_stream = self.left_order.first
+            assert self.left_order.previous is not None
+            last, last_stream = self.left_order.previous
+            with stream_ordered_after(
+                self.ir_context.get_cuda_stream,
+                upstreams=(first_stream, last_stream),
+            ) as stream:
+                table = plc.concatenate.concatenate([first, last], stream=stream)
+        return TableChunk.from_pylibcudf_table(
+            table, stream, exclusive_view=True, br=self.context.br()
+        )
+
+    async def validate_global_left_order(
+        self, comm: Communicator, collective_id: int
+    ) -> None:
+        """Check rank endpoints after the left chunks have been emitted."""
+        if not self.check_global_left_order:
+            return
+        first = self.left_order.first
+        endpoint_bytes = (
+            self.left_order.reservation_size(first[0]) if first is not None else 1
+        )
+        local = await run_with_reservation(
+            self.context, self.ir_context, endpoint_bytes, self._left_endpoint_chunk
+        )
+        stream = self.ir_context.get_cuda_stream()
+        async with AllGatherManager(self.context, comm, collective_id) as allgather:
+            with allgather.inserting() as inserter:
+                await inserter.insert(comm.rank, local)
+            gathered = await allgather.extract_concatenated(
+                stream, ordered=True, ir_context=self.ir_context
+            )
+        if not await run_with_reservation(
+            self.context,
+            self.ir_context,
+            max(1, sum(column.device_buffer_size() for column in gathered.columns())),
+            plc.sorting.is_sorted,
+            gathered,
+            [plc.types.Order.ASCENDING],
+            [plc.types.NullOrder.BEFORE],
+            stream=stream,
+        ):
+            raise pl.exceptions.InvalidOperationError(
+                "argument in operation 'asof_join' is not sorted, "
+                "please sort the 'expr/series/column' first"
+            )
+
     async def probe(self, left_chunk: TableChunk) -> TableChunk:
         """
         Probe one left chunk, advancing right windows as needed.
@@ -572,34 +679,7 @@ class _AsofCursor:
         Keep the left chunk's row order and publish one owned output chunk.
         """
         ir = self.ir
-        search_keys: plc.Table | None = None
-        positions: plc.Column | None = None
-        if self.mode != "prepared":
-            keys = self._keys(left_chunk.table_view(), self.left_indices)
-            if keys.columns()[-1].null_count():
-                # Both the sequence and its filtered copy hold row positions.
-                positions_size = (
-                    2 * plc.types.size_of(plc.types.SIZE_TYPE) * left_chunk.shape[0]
-                )
-                keys, positions = await run_with_reservation(
-                    self.context,
-                    self.ir_context,
-                    sum(column.device_buffer_size() for column in keys.columns())
-                    + positions_size,
-                    self._searchable_left_keys,
-                    keys,
-                    left_chunk.stream,
-                )
-            search_keys = keys
-            if self.left_order.validate:
-                await run_with_reservation(
-                    self.context,
-                    self.ir_context,
-                    self.left_order.reservation_size(keys),
-                    self.left_order.check,
-                    keys,
-                    left_chunk.stream,
-                )
+        search_keys, positions = await self.observe_left(left_chunk)
         left = chunk_to_frame(left_chunk, ir.children[0])
         fragments: list[DataFrame] = []
         offset = 0
@@ -713,6 +793,12 @@ async def asof_join_actor(
         )
         assert _has_direct_asof_on(ir), "The asof-join actor requires direct keys."
         _, _, coalesce, check_sortedness = ir.options
+        if ir.right_by and check_sortedness and comm.rank == 0:
+            warnings.warn(
+                "Sortedness of columns cannot be checked when 'by' groups provided",
+                UserWarning,
+                stacklevel=2,
+            )
         discarded = set(ir.right_by)
         if coalesce and ir.left_on.name == ir.right_on.name:
             discarded.add(ir.right_on.name)
@@ -721,11 +807,23 @@ async def asof_join_actor(
         mode, left_order_promised, right_order_promised = _AsofCursor.select_order(
             ir, left_metadata, right_metadata, comm.nranks
         )
+        check_global_left_order = (
+            check_sortedness
+            and not ir.right_by
+            and comm.nranks > 1
+            and not left_metadata.duplicated
+            and not _AsofCursor.has_time_order(
+                left_metadata,
+                names_to_indices((ir.left_on.name,), ir.children[0].schema)[0],
+                RowOrderingScope.GLOBAL,
+            )
+        )
         if tracer is not None:
             tracer.decision = "passthrough" if skip_probe else f"asof_{mode}"
             if left_metadata.duplicated:
                 tracer.set_duplicated()
         right_store: ChunkStore | None = None
+        cursor: _AsofCursor | None = None
         try:
             if skip_probe:
                 while await ch_right.recv(context) is not None:
@@ -769,16 +867,21 @@ async def asof_join_actor(
                     mode=mode,
                     left_order_promised=left_order_promised,
                     right_order_promised=right_order_promised,
+                    check_global_left_order=check_global_left_order,
                 )
                 async with aclosing(right_source):
-                    if mode == "prepared":
+                    if mode == "prepared" and has_payload:
                         await cursor.prepare_grouped_right()
                     while (msg := await ch_left.recv(context)) is not None:
                         chunk = TableChunk.from_message(msg, br=context.br())
                         chunk, _ = await make_table_chunks_available_or_wait(
                             context, chunk, reserve_extra=0, net_memory_delta=0
                         )
-                        result = await cursor.probe(chunk)
+                        if has_payload:
+                            result = await cursor.probe(chunk)
+                        else:
+                            await cursor.observe_left(chunk)
+                            result = chunk
                         await send_chunk(
                             context,
                             ch_out,
@@ -790,10 +893,15 @@ async def asof_join_actor(
                     # A later disorder cannot change a completed match, but must fail
                     # the query rather than silently return a potentially wrong result.
                     await cursor.validate_remaining_right()
+                    await cursor.validate_global_left_order(comm, right_gather_id)
             await ch_out.drain(context)
         finally:
-            if right_store is not None:
-                right_store.clear()
+            try:
+                if cursor is not None:
+                    await cursor.aclose()
+            finally:
+                if right_store is not None:
+                    right_store.clear()
 
 
 @generate_ir_sub_network.register(AsofJoin)

@@ -167,18 +167,11 @@ def determine_fanout_nodes(
     - unbounded: whether the node needs unbounded fanout
     Only includes nodes that need fanout (i.e., have multiple consumers).
     """
-    # Determine which nodes need unbounded fanout
-    unbounded: set[IR] = set()
-
-    def _mark_children_unbounded(node: IR) -> None:
-        for child in node.children:
-            unbounded.add(child)
-
-    # Traverse the graph and identify nodes that need unbounded fanout
+    # Collect roots first so a shared descendant is marked even if an earlier
+    # branch visited it before discovering the need for unbounded fanout.
+    unbounded_roots: list[IR] = []
     for node in traversal([ir]):
-        if node in unbounded:
-            _mark_children_unbounded(node)
-        elif isinstance(
+        if isinstance(
             node, (Union, Join, AsofJoin, Over, HintSorted, PushdownFilterHint)
         ):
             # Union processes children sequentially; joins may broadcast an
@@ -186,7 +179,7 @@ def determine_fanout_nodes(
             # producing output; hints may buffer then replay. In every case
             # the input source needs unbounded fanout so other consumers don't
             # block it.
-            _mark_children_unbounded(node)
+            unbounded_roots.extend(node.children)
         elif len(node.children) > 1:
             # Check if this node is doing any broadcasting.
             # When we move to dynamic partitioning, we will need a
@@ -197,7 +190,9 @@ def determine_fanout_nodes(
             )
             if has_broadcast:
                 # Broadcasting operation - children need unbounded fanout
-                _mark_children_unbounded(node)
+                unbounded_roots.extend(node.children)
+
+    unbounded = set(traversal(unbounded_roots))
 
     # Build result dictionary: only include nodes with multiple consumers
     fanout_nodes: dict[IR, FanoutInfo] = {}

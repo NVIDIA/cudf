@@ -259,9 +259,12 @@ def test_asof_join_empty_right_chunks(streaming_engine_factory):
 
 @pytest.mark.engine_params(["spmd-small"])
 @pytest.mark.parametrize("check_sortedness", [False, True])
-def test_asof_join_no_right_payload(streaming_engine_factory, *, check_sortedness):
-    left = pl.LazyFrame({"time": [1, 2, 3]}).sort("time")
-    right_times = [1, 2] if check_sortedness else [3, 1, 2]
+def test_asof_join_no_right_payload(
+    streaming_engine_factory, monkeypatch, *, check_sortedness
+):
+    monkeypatch.setattr("cudf_polars.streaming.actor_graph.asof_join.CUDF_ROW_LIMIT", 2)
+    left = pl.LazyFrame({"time": [5]}).sort("time")
+    right_times = [1, 2, 3, 4] if check_sortedness else [3, 1, 2]
     right = pl.LazyFrame({"time": right_times})
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
     assert_gpu_result_equal(
@@ -272,12 +275,48 @@ def test_asof_join_no_right_payload(streaming_engine_factory, *, check_sortednes
 
 
 @pytest.mark.engine_params(["spmd-small"])
+@pytest.mark.parametrize("has_payload", [False, True])
+def test_asof_join_grouped_sortedness_warning(streaming_engine_factory, *, has_payload):
+    left = pl.LazyFrame({"time": [1, 2], "group": ["A", "A"]})
+    right = pl.LazyFrame(
+        {"time": [1, 2], "group": ["A", "A"]}
+        | ({"quote": [10, 20]} if has_payload else {})
+    )
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=1))
+    with pytest.warns(UserWarning, match="Sortedness of columns cannot be checked"):
+        left.join_asof(right, on="time", by="group").collect(engine=engine)
+
+
+@pytest.mark.engine_params(["ray"])
+def test_asof_join_checks_rank_boundary(streaming_engine_factory):
+    left = pl.LazyFrame({"time": [3, 4, 1, 2]})
+    right = pl.LazyFrame({"time": [1, 2, 3, 4], "quote": [10, 20, 30, 40]}).sort("time")
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
+        left.join_asof(right, on="time").collect(engine=engine)
+
+
+@pytest.mark.engine_params(["ray"])
+@pytest.mark.parametrize("left_times", [[], [1]])
+def test_asof_join_empty_rank(streaming_engine_factory, left_times):
+    left = pl.LazyFrame({"time": pl.Series(left_times, dtype=pl.Int64)})
+    right = pl.LazyFrame({"time": [1, 2], "quote": [10, 20]})
+    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=1))
+    assert_gpu_result_equal(
+        left.join_asof(right, on="time"), engine=engine, check_row_order=True
+    )
+
+
+@pytest.mark.engine_params(["spmd-small"])
 @pytest.mark.parametrize("check_sortedness", [False, True])
+@pytest.mark.parametrize("has_payload", [False, True])
 def test_asof_join_unused_right_validation(
-    streaming_engine_factory, *, check_sortedness
+    streaming_engine_factory, *, check_sortedness, has_payload
 ):
     left = pl.LazyFrame({"time": [1]})
-    right = pl.LazyFrame({"time": [1, 3, 2], "quote": [10, 30, 20]})
+    right = pl.LazyFrame(
+        {"time": [1, 3, 2]} | ({"quote": [10, 30, 20]} if has_payload else {})
+    )
     engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
     query = left.join_asof(right, on="time", check_sortedness=check_sortedness)
     if check_sortedness:
@@ -285,7 +324,8 @@ def test_asof_join_unused_right_validation(
             query.collect(engine=engine)
     else:
         assert_frame_equal(
-            query.collect(engine=engine), pl.DataFrame({"time": [1], "quote": [10]})
+            query.collect(engine=engine),
+            pl.DataFrame({"time": [1]} | ({"quote": [10]} if has_payload else {})),
         )
 
 

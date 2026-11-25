@@ -4221,11 +4221,15 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
   auto const structure       = cudf::test::structs_column_wrapper{{child}, parent_validity.begin()};
   auto const list =
     cudf::test::lists_column_wrapper<int32_t>{{{}, {}, {}, {4}}, parent_validity.begin()};
-  auto const input = cudf::table_view{{id, structure, list}};
+  auto other_child          = fixed_width_column_wrapper<int32_t>{5, 6, 7, 8};
+  auto const other_validity = std::array{true, true, true, false};
+  auto const other = cudf::test::structs_column_wrapper{{other_child}, other_validity.begin()};
+  auto const input = cudf::table_view{{id, structure, list, other}};
   auto metadata    = cudf::io::table_input_metadata{input};
   metadata.column_metadata[0].set_name("id");
   metadata.column_metadata[1].set_name("structure");
   metadata.column_metadata[2].set_name("list");
+  metadata.column_metadata[3].set_name("other");
 
   std::vector<char> buffer;
   auto const options =
@@ -4242,6 +4246,9 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
   auto cutoff               = cudf::numeric_scalar<int32_t>{25};
   auto const cutoff_literal = cudf::ast::literal{cutoff};
   auto const first_group    = operation{ast_operator::LESS, id_ref, cutoff_literal};
+  auto const other_ref      = column_name_reference{"other"};
+  auto const other_is_null  = operation{ast_operator::IS_NULL, other_ref};
+  auto const other_is_valid = operation{ast_operator::NOT, other_is_null};
 
   for (auto const* name : {"structure", "list"}) {
     SCOPED_TRACE(name);
@@ -4272,7 +4279,8 @@ TEST_F(ParquetReaderTest, FilterProjectedNestedNulls)
       check(is_null, {0, 2}, {10, 30}, 2, use_jit);
       check(is_valid, {1, 3}, {20, 40}, 2, use_jit);
     }
-    check(operation{ast_operator::LOGICAL_AND, is_null, first_group}, {0}, {10}, 1);
+    auto const null_in_first_group = operation{ast_operator::LOGICAL_AND, is_null, first_group};
+    check(operation{ast_operator::LOGICAL_AND, null_in_first_group, other_is_valid}, {0}, {10}, 1);
     check(operation{ast_operator::LOGICAL_OR, is_valid, first_group}, {0, 1, 3}, {10, 20, 40}, 2);
 
     auto const comparison      = operation{ast_operator::EQUAL, ref, cutoff_literal};

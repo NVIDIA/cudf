@@ -9,18 +9,15 @@
 
 #include <cudf/ast/detail/expression_transformer.hpp>
 #include <cudf/ast/expressions.hpp>
-#include <cudf/column/column.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
 #include <list>
-#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -254,16 +251,35 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
 };
 
 /**
- * @brief Prepares a filter for decoded rows by offsetting column references and
- * replacing nested null checks with references to boolean columns.
+ * @brief Converts a normalized Parquet filter expression into one evaluated on the decoded rows
+ *
+ * Offsets every column reference by `offset` to account for the prepended columns, and replaces
+ * `IS_NULL` on a nested column `i` with a reference to column `num_columns + i`, where
+ * `num_columns` is the number of input columns. The caller must append a null check column for
+ * every input column after the prepended ones, filling the slots flagged in `has_null_check` with
+ * `is_null` of the corresponding input column.
  */
-class row_filter : public ast::detail::expression_transformer {
+class row_filter_expression_converter : public ast::detail::expression_transformer {
  public:
-  row_filter(ast::expression const& expr,
-             table_view input,
-             size_type offset,
-             cuda::stream_ref stream,
-             cudf::memory_resources mr);
+  /**
+   * @brief Converted filter expression and the input columns that need a null check column
+   */
+  struct converted_expression {
+    ast::tree tree;  ///< Owns the nodes of `expr`
+    std::reference_wrapper<ast::expression const> expr;
+    std::vector<bool> has_null_check;  ///< Per input column after the prepended columns
+  };
+
+  /**
+   * @brief Constructs and converts the filter expression
+   *
+   * @param expr Normalized filter expression
+   * @param offset Number of prepended columns in the input table
+   * @param col_types Types of all input columns, including the prepended ones
+   */
+  row_filter_expression_converter(ast::expression const& expr,
+                                  size_type offset,
+                                  std::span<data_type const> col_types);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -287,24 +303,18 @@ class row_filter : public ast::detail::expression_transformer {
     ast::column_name_reference const& expr) override;
 
   /**
-   * @brief Returns the expression over the filter input table.
+   * @brief Releases the converted expression along with the input columns that need a null check
+   *
+   * @return Converted expression
    */
-  [[nodiscard]] ast::expression const& expression() const { return _expr.get(); }
-
-  /**
-   * @brief Returns the decoded columns followed by any materialized null checks.
-   */
-  [[nodiscard]] table_view const& input() const { return _input; }
+  [[nodiscard]] converted_expression release() &&;
 
  private:
-  table_view _input;
   size_type _offset;
-  cuda::stream_ref _stream;
-  cudf::memory_resources _mr;
+  std::span<data_type const> _col_types;
   ast::tree _tree;
-  std::reference_wrapper<ast::expression const> _expr;
-  std::unordered_map<size_type, size_type> _null_check_indices;
-  std::vector<std::unique_ptr<column>> _null_checks;
+  std::reference_wrapper<ast::expression const> _converted_expr;
+  std::vector<bool> _has_null_check;
 };
 
 /**
@@ -418,7 +428,7 @@ class parquet_expression_simplifier {
   /**
    * @brief Validates operands in `expr`
    */
-  void validate_operands(ast::expression const& expr, bool allow_nested = false) const;
+  void validate_operands(ast::expression const& expr) const;
 };
 
 /**

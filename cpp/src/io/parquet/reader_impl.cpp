@@ -1066,15 +1066,49 @@ column_selection_options reader_impl::make_column_selection_options(
 
 std::unique_ptr<column> reader_impl::compute_row_filter(table_view input) const
 {
+  auto const& expr = _expr_conv.get_converted_expr();
+  CUDF_EXPECTS(expr.has_value(), "Missing filter expression", std::logic_error);
+
   auto const num_prepended_cols = static_cast<size_type>(_options.prepend_source_index_column) +
                                   static_cast<size_type>(_options.prepend_row_index_column);
-  auto const expr = _expr_conv.get_converted_expr();
-  row_filter const filter{
-    expr.value().get(), std::move(input), num_prepended_cols, _stream, _mr.as_temporary()};
-  auto const mr      = _mr.get_temporary_mr();
-  auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
-  return use_jit ? cudf::compute_column_jit(filter.input(), filter.expression(), {}, _stream, mr)
-                 : cudf::detail::compute_column(filter.input(), filter.expression(), _stream, mr);
+
+  auto col_types = std::vector<data_type>{};
+  col_types.reserve(input.num_columns());
+  std::ranges::transform(
+    input, std::back_inserter(col_types), [](auto const& col) { return col.type(); });
+
+  // `tree` owns the nodes of `filter_expr` and must outlive its evaluation
+  [[maybe_unused]] auto const [tree, filter_expr, has_null_check] =
+    row_filter_expression_converter{expr->get(), num_prepended_cols, col_types}.release();
+
+  auto const evaluate = [&](table_view const& filter_input) {
+    auto const mr      = _mr.get_temporary_mr();
+    auto const use_jit = cudf::get_context().use_jit() or _options.use_jit_filter;
+    return use_jit ? cudf::compute_column_jit(filter_input, filter_expr.get(), {}, _stream, mr)
+                   : cudf::detail::compute_column(filter_input, filter_expr.get(), _stream, mr);
+  };
+
+  auto nested_cols = std::vector<column_view>{};
+  for (std::size_t col_idx = 0; col_idx < has_null_check.size(); ++col_idx) {
+    if (has_null_check[col_idx]) {
+      nested_cols.push_back(input.column(static_cast<size_type>(col_idx) + num_prepended_cols));
+    }
+  }
+  if (nested_cols.empty()) { return evaluate(input); }
+
+  auto const null_check_cols =
+    synthesize_null_check_columns(nested_cols, _stream, _mr.as_temporary());
+
+  // Append a null check column for each input column after the prepended ones. Columns without a
+  // null check are never referenced, so reuse the first null check column to fill their slots
+  auto filter_cols = std::vector<column_view>(input.begin(), input.end());
+  filter_cols.reserve(filter_cols.size() + has_null_check.size());
+  std::size_t null_check_idx = 0;
+  for (auto const needs_null_check : has_null_check) {
+    filter_cols.push_back(needs_null_check ? null_check_cols[null_check_idx++]->view()
+                                           : null_check_cols.front()->view());
+  }
+  return evaluate(table_view{filter_cols});
 }
 
 table_with_metadata reader_impl::finalize_output(read_mode mode,

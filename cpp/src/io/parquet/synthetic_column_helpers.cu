@@ -11,6 +11,7 @@
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/scalar/scalar.hpp>
+#include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -18,6 +19,7 @@
 #include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cub/device/device_for.cuh>
 #include <cub/device/device_transform.cuh>
 #include <cuda/iterator>
 #include <thrust/binary_search.h>
@@ -48,6 +50,31 @@ struct map_global_to_local_row_index {
           thrust::seq, global_row_offsets, global_row_offsets + num_row_groups, row_idx)) -
       1;  // Subtract 1 to get the index of the selected row group
     return row_idx - global_row_offsets[row_group_idx] + local_row_offsets[row_group_idx];
+  }
+};
+
+/**
+ * @brief Input null mask and output data of a null check column
+ */
+struct null_check_info {
+  bitmask_type const* null_mask;  ///< Input null mask, nullptr if the input has no nulls
+  size_type offset;               ///< Input column offset
+  bool* data;                     ///< Output column data
+};
+
+/**
+ * @brief Computes `is_null` for each row of each column
+ */
+struct compute_is_null {
+  null_check_info const* cols;
+  std::size_t num_rows;
+
+  __device__ void operator()(std::size_t idx) const noexcept
+  {
+    auto const& col    = cols[idx / num_rows];
+    auto const row_idx = static_cast<size_type>(idx % num_rows);
+    col.data[row_idx] =
+      col.null_mask != nullptr and not cudf::bit_is_set(col.null_mask, col.offset + row_idx);
   }
 };
 
@@ -179,6 +206,48 @@ std::unique_ptr<cudf::column> synthesize_row_group_index_column(
                                 cuda::make_constant_iterator(column_type{1}),
                                 output_view.begin<column_type>(),
                                 column_type{0});
+  return output;
+}
+
+std::vector<std::unique_ptr<cudf::column>> synthesize_null_check_columns(
+  std::span<cudf::column_view const> columns, cuda::stream_ref stream, cudf::memory_resources mr)
+{
+  if (columns.empty()) { return {}; }
+
+  auto const num_cols = columns.size();
+  auto const num_rows = columns.front().size();
+
+  // Allocate output columns
+  std::vector<std::unique_ptr<cudf::column>> output;
+  output.reserve(num_cols);
+  for (auto const& col : columns) {
+    CUDF_EXPECTS(col.size() == num_rows, "Column size mismatch", std::invalid_argument);
+    output.push_back(cudf::make_fixed_width_column(
+      data_type{type_id::BOOL8}, num_rows, mask_state::UNALLOCATED, stream, mr.get_output_mr()));
+  }
+  if (num_rows == 0) { return output; }
+
+  // Compute null checks for all columns in a single launch
+  {
+    auto host_cols = cudf::detail::make_empty_pinned_vector<null_check_info>(num_cols, stream);
+    for (std::size_t col_idx = 0; col_idx < num_cols; ++col_idx) {
+      auto const& col = columns[col_idx];
+      host_cols.push_back({col.has_nulls() ? col.null_mask() : nullptr,
+                           col.offset(),
+                           output[col_idx]->mutable_view().data<bool>()});
+    }
+
+    // Copy to device
+    auto const cols =
+      cudf::detail::make_device_buffer_async(host_cols, stream, mr.get_temporary_mr());
+
+    CUDF_CUDA_TRY(
+      cub::DeviceFor::Bulk(num_cols * static_cast<std::size_t>(num_rows),
+                           compute_is_null{cols.data(), static_cast<std::size_t>(num_rows)},
+                           stream.get()));
+    stream.sync();
+  }
+
   return output;
 }
 

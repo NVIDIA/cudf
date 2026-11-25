@@ -499,7 +499,15 @@ class reader_impl {
   }
 
   /**
-   * @brief Evaluates the filter against decoded rows, including any prepended index columns.
+   * @brief Evaluates the filter expression against the decoded rows
+   *
+   * Column references are offset by the number of prepended index columns, and `IS_NULL` on a
+   * nested column is evaluated via a synthesized null check column appended to `input`.
+   *
+   * @throws std::logic_error if there is no filter expression
+   *
+   * @param input Decoded columns, including any prepended index columns
+   * @return BOOL8 column, true for the rows that pass the filter
    */
   [[nodiscard]] std::unique_ptr<column> compute_row_filter(table_view input) const;
 

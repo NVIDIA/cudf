@@ -14,7 +14,6 @@
 #include <cudf/detail/transform.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/null_mask.hpp>
-#include <cudf/unary.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/traits.hpp>
 
@@ -369,23 +368,15 @@ std::vector<std::string> names_from_expression::to_vector() &&
           std::make_move_iterator(_column_names.end())};
 }
 
-row_filter::row_filter(ast::expression const& expr,
-                       table_view input,
-                       size_type offset,
-                       cuda::stream_ref stream,
-                       cudf::memory_resources mr)
-  : _input{std::move(input)}, _offset{offset}, _stream{stream}, _mr{std::move(mr)}, _expr{expr}
+row_filter_expression_converter::row_filter_expression_converter(
+  ast::expression const& expr, size_type offset, std::span<data_type const> col_types)
+  : _offset{offset}, _col_types{col_types}, _converted_expr{expr}
 {
-  _expr = expr.accept(*this);
-
-  if (not _null_checks.empty()) {
-    std::vector<column_view> columns(_input.begin(), _input.end());
-    columns.reserve(columns.size() + _null_checks.size());
-    for (auto const& result : _null_checks) {
-      columns.push_back(result->view());
-    }
-    _input = table_view{columns};
-  }
+  CUDF_EXPECTS(std::cmp_less_equal(offset, col_types.size()),
+               "Number of prepended columns exceeds the number of input columns",
+               std::invalid_argument);
+  _has_null_check.resize(col_types.size() - offset, false);
+  _converted_expr = expr.accept(*this);
 }
 
 std::optional<std::reference_wrapper<ast::expression const>>
@@ -394,29 +385,33 @@ parquet_filter_normalizer::get_converted_expr() const
   return _converted_expr;
 }
 
-std::reference_wrapper<ast::expression const> row_filter::visit(ast::literal const& expr)
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
+  ast::literal const& expr)
 {
   return expr;
 }
 
-std::reference_wrapper<ast::expression const> row_filter::visit(ast::column_reference const& expr)
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
+  ast::column_reference const& expr)
 {
   return _tree.push(
     ast::column_reference{expr.get_column_index() + _offset, expr.get_table_source()});
 }
 
-std::reference_wrapper<ast::expression const> row_filter::visit(ast::operation const& expr)
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
+  ast::operation const& expr)
 {
   if (expr.get_operator() == ast::ast_operator::IS_NULL) {
     auto const operand = extract_unary_operand(expr);
     if (operand.operand_type == operand_kind::COLUMN_REF) {
-      auto const col_index = operand.col_ref->get_column_index() + _offset;
-      auto const& col      = _input.column(col_index);
-      if (cudf::is_nested(col.type())) {
-        auto const [it, inserted] = _null_check_indices.try_emplace(
-          col_index, _input.num_columns() + static_cast<size_type>(_null_checks.size()));
-        if (inserted) { _null_checks.push_back(cudf::is_null(col, _stream, _mr)); }
-        return _tree.push(ast::column_reference{it->second});
+      auto const col_idx = operand.col_ref->get_column_index();
+      CUDF_EXPECTS(std::cmp_less(col_idx + _offset, _col_types.size()),
+                   "Column index in the filter expression is out of range",
+                   std::out_of_range);
+      if (cudf::is_nested(_col_types[col_idx + _offset])) {
+        _has_null_check[col_idx] = true;
+        return _tree.push(
+          ast::column_reference{static_cast<size_type>(_col_types.size()) + col_idx});
       }
     }
   }
@@ -427,9 +422,15 @@ std::reference_wrapper<ast::expression const> row_filter::visit(ast::operation c
   return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
 }
 
-std::reference_wrapper<ast::expression const> row_filter::visit(ast::column_name_reference const&)
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
+  ast::column_name_reference const&)
 {
   CUDF_FAIL("Column name references are not supported in the normalized Parquet filter");
+}
+
+row_filter_expression_converter::converted_expression row_filter_expression_converter::release() &&
+{
+  return {std::move(_tree), _converted_expr, std::move(_has_null_check)};
 }
 
 [[nodiscard]] std::unordered_map<cudf::size_type, std::string> map_column_indices_to_names(
@@ -550,21 +551,27 @@ void parquet_expression_simplifier::validate_column_reference(
                std::out_of_range);
 }
 
-void parquet_expression_simplifier::validate_operands(ast::expression const& expr,
-                                                      bool allow_nested) const
+void parquet_expression_simplifier::validate_operands(ast::expression const& expr) const
 {
   // Validate column references and traverse operations. Literals don't really need validation.
   if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&expr); col_ref != nullptr) {
     validate_column_reference(*col_ref);
     CUDF_EXPECTS(
-      allow_nested or not cudf::is_nested(_output_dtypes[col_ref->get_column_index()]),
+      not cudf::is_nested(_output_dtypes[col_ref->get_column_index()]),
       "Struct and list columns are only supported as IS_NULL operands in Parquet filters",
       std::invalid_argument);
   } else if (auto const* operation = dynamic_cast<ast::operation const*>(&expr);
              operation != nullptr) {
-    auto const permits_nested = operation->get_operator() == ast::ast_operator::IS_NULL;
+    // A nested column is only supported as the direct operand of IS_NULL
+    if (operation->get_operator() == ast::ast_operator::IS_NULL) {
+      auto const operand = extract_unary_operand(*operation);
+      if (operand.operand_type == operand_kind::COLUMN_REF) {
+        validate_column_reference(*operand.col_ref);
+        return;
+      }
+    }
     for (auto const& operand : operation->get_operands()) {
-      validate_operands(operand.get(), permits_nested);
+      validate_operands(operand.get());
     }
   } else if (dynamic_cast<ast::column_name_reference const*>(&expr) != nullptr) {
     // Column name references must not exist in the normalized filter expression

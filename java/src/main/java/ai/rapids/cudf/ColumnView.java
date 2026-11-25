@@ -1129,21 +1129,24 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Transform a vector using a custom function, producing a column of the given type.  Be careful
    * this is not simple to do.  You need to be positive you know what type of data you are
-   * processing and how the data is laid out.  Only fixed-width output types are supported.
-   * The type is not checked against the UDF; with PTX, the store must be exactly the width of
-   * outputType.  For DECIMAL outputs the CUDA output parameter is a
+   * processing and how the data is laid out.  Only fixed-width and STRING output types are
+   * supported.
+   * The type is not checked against the UDF; with PTX, a fixed-width store must be exactly the
+   * width of outputType.  For DECIMAL outputs the CUDA output parameter is a
    * {@code numeric::decimal32/64/128} pointer; only its unscaled value is stored, so the UDF must
    * produce it at outputType's scale.
+   * For STRING outputs the output parameter is a {@code cudf::string_view} pointer to device
+   * memory, e.g. a slice of a STRING input; its characters are copied into the result column.
    * @param udf This function will be applied to every element in the vector
    * @param isPtx is the code of the function ptx? true or C/C++ false.
    * @param outputType the type of the output column. The type of the UDF's output parameter
    *                   must match it.
-   * @throws IllegalArgumentException if outputType is not a fixed-width type
+   * @throws IllegalArgumentException if outputType is neither a fixed-width type nor STRING
    */
   public final ColumnVector transform(String udf, boolean isPtx, DType outputType) {
-    if (outputType.getSizeInBytes() == 0) {
+    if (outputType.getSizeInBytes() == 0 && !outputType.equals(DType.STRING)) {
       throw new IllegalArgumentException(
-          "transform only supports fixed-width output types, got " + outputType);
+          "transform only supports fixed-width and STRING output types, got " + outputType);
     }
     return new ColumnVector(transform(getNativeView(), udf, isPtx,
         outputType.getTypeId().getNativeId(), outputType.getScale()));

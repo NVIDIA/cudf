@@ -6,6 +6,7 @@
 #include "jit/abi_map.cuh"
 
 #include <cudf_test/cudf_gtest.hpp>
+#include <cudf_test/testing_main.hpp>
 
 #include <cudf/column/column_device_view.cuh>
 
@@ -77,3 +78,5 @@ TEST(AbiMapTest, Wrappers)
   expect_mapping<cudf_abi::optional<cudf_abi::span<cudf_abi::mutable_string_view>>,
                  cuda::std::optional<cuda::std::span<cudf::mutable_string_view>>>();
 }
+
+CUDF_TEST_PROGRAM_MAIN()

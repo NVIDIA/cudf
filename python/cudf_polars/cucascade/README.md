@@ -51,6 +51,12 @@ export CUDF_POLARS__EXECUTOR__CUCASCADE_CACHE_BYTES=$((100 * 1024**3))   # 100 G
 If the option is set and the extension is not installed, cudf-polars raises an error that says how
 to build it.
 
+The cache reads only `s3://` paths. It takes its credentials from `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN` once, when it is created: profiles and instance
+roles are not used, and an expiring session token is not refreshed. The region comes from
+`AWS_DEFAULT_REGION` or `AWS_REGION`, and `AWS_ENDPOINT_URL` points it at another S3-compatible
+store, as it does for the standard read path.
+
 The SPMD, Ray and Dask engines support the cache with a single rank, which creates it in the process
 that runs the rank. An engine with more than one rank refuses the option: each rank would pin its
 own cache, and that has not been measured.

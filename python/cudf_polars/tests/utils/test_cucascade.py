@@ -96,6 +96,61 @@ def test_extension_built_against_this_libcudf_is_accepted(monkeypatch):
     assert cucascade._load_extension() is current
 
 
+@pytest.fixture
+def recording_extension(disabled, monkeypatch):
+    """An extension whose ScanCache keeps the settings it is created with."""
+    running = cucascade._installed_cudf_version()
+    if running is None:
+        pytest.skip("the installed libcudf version is not known")
+    module = types.ModuleType("cudf_polars_cucascade")
+    module.built_against_cudf_version = (running[0], running[1], 0)
+    module.ScanCacheConfig = dict
+    module.ScanCache = lambda config: types.SimpleNamespace(config=config)
+    monkeypatch.setitem(sys.modules, "cudf_polars_cucascade", module)
+    for name in (
+        "AWS_ENDPOINT_URL",
+        "AWS_DEFAULT_REGION",
+        "AWS_REGION",
+        "AWS_SESSION_TOKEN",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secret")
+    return monkeypatch
+
+
+def test_cache_uses_the_regional_aws_endpoint(recording_extension):
+    recording_extension.setenv("AWS_REGION", "us-west-2")
+    cucascade.configure_cucascade(1 << 30)
+    assert cucascade._cache.config == {
+        "cache_bytes": 1 << 30,
+        "endpoint": "https://s3.us-west-2.amazonaws.com",
+        "region": "us-west-2",
+        "access_key": "key",
+        "secret_key": "secret",
+        "session_token": "",
+    }
+
+
+def test_cache_uses_aws_endpoint_url(recording_extension):
+    recording_extension.setenv("AWS_ENDPOINT_URL", "http://127.0.0.1:9000/")
+    recording_extension.setenv("AWS_SESSION_TOKEN", "token")
+    cucascade.configure_cucascade(1 << 30)
+    assert cucascade._cache.config["endpoint"] == "http://127.0.0.1:9000"
+    assert cucascade._cache.config["session_token"] == "token"
+
+
+@pytest.mark.parametrize(
+    "unset", [["AWS_ACCESS_KEY_ID"], ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"]]
+)
+def test_missing_credentials_are_named(recording_extension, unset):
+    for name in unset:
+        recording_extension.delenv(name)
+    with pytest.raises(ValueError, match=" and ".join(unset)):
+        cucascade.configure_cucascade(1 << 30)
+    assert cucascade._cache is None
+
+
 def test_installed_libcudf_version_does_not_need_the_pylibcudf_distribution_name(
     monkeypatch,
 ):

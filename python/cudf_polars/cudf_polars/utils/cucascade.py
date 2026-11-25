@@ -125,21 +125,47 @@ def configure_cucascade(cache_bytes: int) -> None:
         if _cache is not None:
             return
         module = _load_extension()
-        region = (
-            os.environ.get("AWS_DEFAULT_REGION")
-            or os.environ.get("AWS_REGION")
-            or "us-east-1"
-        )
         _cache = module.ScanCache(
-            module.ScanCacheConfig(
-                cache_bytes=cache_bytes,
-                endpoint=f"https://s3.{region}.amazonaws.com",
-                region=region,
-                access_key=os.environ["AWS_ACCESS_KEY_ID"],
-                secret_key=os.environ["AWS_SECRET_ACCESS_KEY"],
-                session_token=os.environ.get("AWS_SESSION_TOKEN", ""),
-            )
+            module.ScanCacheConfig(cache_bytes=cache_bytes, **_s3_settings())
         )
+
+
+def _s3_settings() -> dict[str, str]:
+    """
+    Endpoint, region and credentials for the cache's S3 requests, from the environment.
+
+    Only static credentials are read, once: an expiring ``AWS_SESSION_TOKEN`` is not
+    refreshed, and profiles and instance roles are not used.
+    """
+    missing = [
+        name
+        for name in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY")
+        if not os.environ.get(name)
+    ]
+    if missing:
+        raise ValueError(
+            "cucascade_cache_bytes is set, but the cache reads its S3 credentials from "
+            "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY and AWS_SESSION_TOKEN, and "
+            f"{' and '.join(missing)} {'is' if len(missing) == 1 else 'are'} not set. "
+            "Profiles and instance roles are not supported."
+        )
+    region = (
+        os.environ.get("AWS_DEFAULT_REGION")
+        or os.environ.get("AWS_REGION")
+        or "us-east-1"
+    )
+    # AWS_ENDPOINT_URL points at another S3-compatible store, as it does for kvikio's
+    # reads on the standard path; requests use path-style URLs.
+    endpoint = (
+        os.environ.get("AWS_ENDPOINT_URL") or f"https://s3.{region}.amazonaws.com"
+    )
+    return {
+        "endpoint": endpoint.rstrip("/"),
+        "region": region,
+        "access_key": os.environ["AWS_ACCESS_KEY_ID"],
+        "secret_key": os.environ["AWS_SECRET_ACCESS_KEY"],
+        "session_token": os.environ.get("AWS_SESSION_TOKEN", ""),
+    }
 
 
 def enabled() -> bool:

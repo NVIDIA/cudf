@@ -322,8 +322,9 @@ TYPED_TEST(FixedPointDivideDecimalTest, RescaledDividendWiderThanRep)
   auto constexpr max = max_digits<T>();
   auto const scale   = numeric::scale_type{0};
 
-  // max / 2.0 rescales max to max * 10, which only fits in a type wider than the dividend.
-  // The standard intermediate has no type wider than 128 bits, so that case is null.
+  // max / 2.0 rescales max to max * 10, which overflows the dividend's type. The standard
+  // intermediate holds it in an unsigned 64-bit or 128-bit integer, except for decimal128, where
+  // it overflows 128 bits and is null.
   auto const lhs      = fp_wrapper<T>{{max}, scale};
   auto const rhs      = fp_wrapper<T>{{20}, numeric::scale_type{-1}};
   auto const expected = fp_wrapper<T>{{max / 2 + 1}, scale};

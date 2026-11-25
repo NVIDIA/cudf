@@ -31,7 +31,7 @@ namespace CUDF_EXPORT cudf {
  * @brief Width of the intermediate value that `divide_decimal` rescales the dividend into.
  */
 enum class decimal_intermediate : int32_t {
-  STANDARD,  ///< The widest of the input and output types. Rows that overflow it are null.
+  STANDARD,  ///< 64 bits if all types are `DECIMAL32`, else 128 bits. Rows that overflow are null.
   WIDE       ///< 256 bits. Rows are null only for a zero divisor or a quotient that doesn't fit.
 };
 
@@ -51,8 +51,9 @@ enum class decimal_intermediate : int32_t {
  * - either input element is null,
  * - `rhs[i]` is zero,
  * - the rounded quotient has more digits than the precision of `output_type`, or
- * - `intermediate` is `decimal_intermediate::STANDARD` and `lhs[i]`, rescaled to give a quotient
- *   at the scale of `output_type`, does not fit in the widest of the three types.
+ * - `intermediate` is `decimal_intermediate::STANDARD` and the magnitude of `lhs[i]`, rescaled to
+ *   give a quotient at the scale of `output_type`, does not fit in an unsigned 64-bit integer if
+ *   `lhs`, `rhs` and `output_type` are all `DECIMAL32`, or an unsigned 128-bit integer otherwise.
  *
  * With `decimal_intermediate::WIDE`, the rescaled dividend is held in 256 bits, which is always
  * enough for any quotient that fits in `output_type`. Rows that would need it are slower than

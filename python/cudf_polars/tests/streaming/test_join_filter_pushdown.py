@@ -959,6 +959,21 @@ def test_prefilter_stops_at_sliced_asof_join(engine: SPMDEngine) -> None:
     assert_gpu_result_equal(query, engine=engine, check_row_order=False)
 
 
+def test_prefilter_stops_at_checked_asof_join(engine: SPMDEngine) -> None:
+    left = pl.LazyFrame({"time": [1, 2], "key": [1, 2]})
+    right = pl.LazyFrame({"time": [1, 2], "quote": [10, 20]})
+    query = left.join_asof(right, on="time").join(pl.LazyFrame({"key": [2]}), on="key")
+    root = translate_query(query, engine)
+
+    assert isinstance(root, Join)
+    asof = root.children[0]
+    assert isinstance(asof, AsofJoin)
+    facts = analyze_plan(root, StatsCollector())
+    assert tuple(filter_hint_pushdown_candidates(facts, asof, "key")) == (
+        (ColumnRef(asof, "key"), ()),
+    )
+
+
 def test_target_replacement_does_not_rewrite_shared_domain_side(
     engine: SPMDEngine,
 ) -> None:

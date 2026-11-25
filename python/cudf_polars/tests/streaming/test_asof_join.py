@@ -34,7 +34,9 @@ def test_asof_join_time_major_chunks(streaming_engine_factory, by):
         }
     ).sort("time", maintain_order=True)
     query = left.join_asof(right, on="time", by=by)
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(query, engine=engine, check_row_order=True)
 
 
@@ -57,7 +59,9 @@ def test_asof_join_grouped_key_order(streaming_engine_factory, nulls_last):
             "quote": [10, 20, 30, 40, 50, 60, 70, 99],
         }
     ).sort(["ticker", "time"], maintain_order=True, nulls_last=nulls_last)
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time", by_left="symbol", by_right="ticker"),
         engine=engine,
@@ -78,7 +82,9 @@ def test_asof_join_group_local_order(streaming_engine_factory):
             "quote": [10, 20, 30, 40],
         }
     )
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time", by="symbol"),
         engine=engine,
@@ -102,7 +108,9 @@ def test_asof_join_sparse_left(streaming_engine_factory):
         }
     ).sort("time")
     query = left.join_asof(right, on="time", by="symbol")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(query, engine=engine, check_row_order=True)
 
 
@@ -132,7 +140,9 @@ def test_asof_join_skips_unchecked_left_validation(streaming_engine_factory):
     left = pl.LazyFrame({"time": [3, 1, 4, 2]})
     right = pl.LazyFrame({"time": [1, 2, 3], "right": [100, 200, 300]})
     query = left.join_asof(right, on="time", check_sortedness=False)
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert query.collect(engine=engine)["time"].to_list() == [3, 1, 4, 2]
 
 
@@ -145,7 +155,9 @@ def test_asof_join_null_right_and_unused_tail(streaming_engine_factory):
             "quote": [99, 98, 10, 20, 30, 40, 50, 60],
         }
     )
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time"), engine=engine, check_row_order=True
     )
@@ -172,7 +184,9 @@ def test_asof_join_composite_by_and_slice(streaming_engine_factory):
         }
     ).sort("time")
     query = left.join_asof(right, on="time", by=["symbol", "venue"]).slice(1, 4)
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="silent")
+    )
     assert_gpu_result_equal(query, engine=engine, check_row_order=True)
 
 
@@ -183,7 +197,9 @@ def test_asof_join_nulls_last(streaming_engine_factory, *, check_sortedness):
     right = pl.LazyFrame({"time": [1, 2, None], "quote": [10, 20, 99]}).sort(
         "time", nulls_last=True
     )
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_frame_equal(
         left.join_asof(right, on="time", check_sortedness=check_sortedness).collect(
             engine=engine
@@ -209,7 +225,9 @@ def test_asof_join_interleaved_left_nulls(streaming_engine_factory, by):
     right = pl.LazyFrame(
         {"time": [1, 2, 4], "symbol": ["A", "B", "A"], "quote": [10, 20, 40]}
     ).sort("time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_frame_equal(
         left.join_asof(right, on="time", by=by).collect(engine=engine),
         left.set_sorted("time").join_asof(right, on="time", by=by).collect(),
@@ -234,7 +252,9 @@ def test_asof_join_key_major_interleaved_left_nulls(streaming_engine_factory):
             "quote": [10, 20, 30, 40],
         }
     ).sort(["symbol", "time"])
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time", by="symbol"),
         engine=engine,
@@ -251,7 +271,9 @@ def test_asof_join_empty_right_chunks(streaming_engine_factory):
             "quote": pl.Series([], dtype=pl.Int64),
         }
     ).sort("time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time"), engine=engine, check_row_order=True
     )
@@ -266,7 +288,9 @@ def test_asof_join_no_right_payload(
     left = pl.LazyFrame({"time": [5]}).sort("time")
     right_times = [1, 2, 3, 4] if check_sortedness else [3, 1, 2]
     right = pl.LazyFrame({"time": right_times})
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time", check_sortedness=check_sortedness),
         engine=engine,
@@ -282,7 +306,9 @@ def test_asof_join_grouped_sortedness_warning(streaming_engine_factory, *, has_p
         {"time": [1, 2], "group": ["A", "A"]}
         | ({"quote": [10, 20]} if has_payload else {})
     )
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=1))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, fallback_mode="raise")
+    )
     with pytest.warns(UserWarning, match="Sortedness of columns cannot be checked"):
         left.join_asof(right, on="time", by="group").collect(engine=engine)
 
@@ -291,7 +317,9 @@ def test_asof_join_grouped_sortedness_warning(streaming_engine_factory, *, has_p
 def test_asof_join_checks_rank_boundary(streaming_engine_factory):
     left = pl.LazyFrame({"time": [3, 4, 1, 2]})
     right = pl.LazyFrame({"time": [1, 2, 3, 4], "quote": [10, 20, 30, 40]}).sort("time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
         left.join_asof(right, on="time").collect(engine=engine)
 
@@ -301,7 +329,9 @@ def test_asof_join_checks_rank_boundary(streaming_engine_factory):
 def test_asof_join_empty_rank(streaming_engine_factory, left_times):
     left = pl.LazyFrame({"time": pl.Series(left_times, dtype=pl.Int64)})
     right = pl.LazyFrame({"time": [1, 2], "quote": [10, 20]})
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=1))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, fallback_mode="raise")
+    )
     assert_gpu_result_equal(
         left.join_asof(right, on="time"), engine=engine, check_row_order=True
     )
@@ -317,7 +347,9 @@ def test_asof_join_unused_right_validation(
     right = pl.LazyFrame(
         {"time": [1, 3, 2]} | ({"quote": [10, 30, 20]} if has_payload else {})
     )
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
     query = left.join_asof(right, on="time", check_sortedness=check_sortedness)
     if check_sortedness:
         with pytest.RaisesGroup(pl.exceptions.InvalidOperationError):
@@ -345,6 +377,8 @@ def test_asof_join_right_row_limit(
     if time_ordered:
         left = left.sort("time")
         right = right.sort("time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=1))
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=1, fallback_mode="raise")
+    )
     with pytest.RaisesGroup(NotImplementedError):
         left.join_asof(right, on="time", by="symbol").collect(engine=engine)

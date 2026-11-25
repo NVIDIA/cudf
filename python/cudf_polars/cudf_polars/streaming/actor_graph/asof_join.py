@@ -87,12 +87,11 @@ async def _gather_right(
     try:
         async with AllGatherManager(context, comm, collective_id) as allgather:
             with allgather.inserting() as inserter:
-                sequence_number = 0
                 while (msg := await channel.recv(context)) is not None:
                     await inserter.insert(
-                        sequence_number, TableChunk.from_message(msg, br=context.br())
+                        msg.sequence_number,
+                        TableChunk.from_message(msg, br=context.br()),
                     )
-                    sequence_number += 1
             for sequence_number, chunk in enumerate(
                 await allgather.extract_chunks(ordered=True)
             ):
@@ -410,17 +409,22 @@ class _AsofCursor:
                 current.stream,
             )
         else:
-            tail = current.slice((-1, 1))
             last_rows = await run_with_reservation(
                 self.context,
                 self.ir_context,
-                tail._size_bytes,
-                tail.table.copy,
-                stream=tail.stream,
+                current._size_bytes,
+                self._copy_last_right_row,
+                current,
             )
         return DataFrame.from_table(
             last_rows, current.column_names, current.dtypes, stream=current.stream
         )
+
+    @staticmethod
+    def _copy_last_right_row(current: DataFrame) -> plc.Table:
+        """Copy the final right row on a worker thread."""
+        tail = current.slice((-1, 1))
+        return tail.table.copy(stream=tail.stream)
 
     async def _advance(self) -> None:
         """Retain right rows that may match a later left window."""
@@ -520,24 +524,12 @@ class _AsofCursor:
             assert isinstance(split, int)
             return split
 
-    async def _probe_part(self, part: DataFrame) -> DataFrame:
-        """Probe a left slice against the current right window."""
-        await self._ensure_prepared()
+    def _probe_part_sync(self, left: DataFrame, offset: int, count: int) -> DataFrame:
+        """Slice and probe left rows on a worker thread."""
         assert self.joiner is not None
         assert self.payload is not None
-        # Estimate repeated payload rows and the gather map.
-        payload_rows = max(self.payload.num_rows, 1)
-        output_payload = (
-            self.payload._size_bytes * part.num_rows + payload_rows - 1
-        ) // payload_rows
-        return await run_with_reservation(
-            self.context,
-            self.ir_context,
-            part._size_bytes
-            + self.payload._size_bytes
-            + output_payload
-            + 8 * part.num_rows,
-            AsofJoin._probe_prepared,
+        part = left.slice((offset, count))
+        return AsofJoin._probe_prepared(
             part,
             self.payload,
             self.joiner,
@@ -545,6 +537,25 @@ class _AsofCursor:
             self.ir.left_by,
             self.ir.options[1],
             context=self.ir_context,
+        )
+
+    async def _probe_part(self, left: DataFrame, offset: int, count: int) -> DataFrame:
+        """Probe a left slice against the current right window."""
+        await self._ensure_prepared()
+        assert self.payload is not None
+        # Estimate repeated payload rows and the gather map.
+        payload_rows = max(self.payload.num_rows, 1)
+        output_payload = (
+            self.payload._size_bytes * count + payload_rows - 1
+        ) // payload_rows
+        return await run_with_reservation(
+            self.context,
+            self.ir_context,
+            left._size_bytes + self.payload._size_bytes + output_payload + 8 * count,
+            self._probe_part_sync,
+            left,
+            offset,
+            count,
         )
 
     async def _owned_result(self, fragments: list[DataFrame]) -> TableChunk:
@@ -709,8 +720,7 @@ class _AsofCursor:
                     if not count:
                         await self._advance()
                         continue
-                part = left.slice((offset, count))
-                fragments.append(await self._probe_part(part))
+                fragments.append(await self._probe_part(left, offset, count))
                 offset += count
             return await self._owned_result(fragments)
         finally:

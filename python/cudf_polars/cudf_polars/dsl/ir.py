@@ -3462,7 +3462,12 @@ class AsofJoin(IR):
         *,
         already_sorted: bool,
     ) -> tuple[plc.join.AsofJoin, DataFrame]:
-        """Prepare a right window for repeated as-of probes."""
+        """
+        Prepare a right window for repeated as-of probes.
+
+        ``right_on_col`` must be valid on ``right.stream``. Releasing the
+        returned native joiner synchronizes its construction stream.
+        """
         if already_sorted:
             joiner = plc.join.AsofJoin(
                 plc.Table([right.column_map[name].obj for name in right_by]),
@@ -3506,7 +3511,12 @@ class AsofJoin(IR):
         zlice: Zlice | None = None,
         context: IRExecutionContext,
     ) -> DataFrame:
-        """Probe a prepared right side and assemble the left-owned output."""
+        """
+        Probe a prepared right side and assemble the left-owned output.
+
+        ``left_on_col`` must be valid on ``left.stream``. This helper orders
+        its input streams but does not explicitly synchronize with the host.
+        """
         with context.stream_ordered_after(left, right_payload) as stream:
             gather_map = joiner.join(
                 plc.Table([left.column_map[name].obj for name in left_by]),

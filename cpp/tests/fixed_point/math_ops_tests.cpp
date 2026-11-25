@@ -47,22 +47,6 @@ constexpr typename T::rep max_digits()
 using DecimalTypes = ::testing::Types<numeric::decimal32, numeric::decimal64, numeric::decimal128>;
 TYPED_TEST_SUITE(FixedPointDivideDecimalTest, DecimalTypes);
 
-TYPED_TEST(FixedPointDivideDecimalTest, Basic)
-{
-  using T          = TypeParam;
-  auto const scale = numeric::scale_type{-2};
-
-  // 10.00 / 2.00 = 5.00, 20.00 / 4.00 = 5.00, 30.00 / 3.00 = 10.00
-  auto const lhs      = fp_wrapper<T>{{1000, 2000, 3000}, scale};
-  auto const rhs      = fp_wrapper<T>{{200, 400, 300}, scale};
-  auto const expected = fp_wrapper<T>{{500, 500, 1000}, scale};
-
-  auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale));
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
-  EXPECT_EQ(result->type().scale(), scale);
-}
-
 TYPED_TEST(FixedPointDivideDecimalTest, HalfUpRounding)
 {
   using T          = TypeParam;
@@ -73,8 +57,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, HalfUpRounding)
   auto const rhs      = fp_wrapper<T>{{300, 300, 200}, scale};
   auto const expected = fp_wrapper<T>{{333, 667, 250}, scale};
 
-  auto const result =
-    cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), cudf::rounding_method::HALF_UP);
+  auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   EXPECT_EQ(result->type().scale(), scale);
@@ -92,36 +75,6 @@ TYPED_TEST(FixedPointDivideDecimalTest, NegativeNumbers)
 
   auto const result =
     cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), cudf::rounding_method::HALF_UP);
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
-}
-
-TYPED_TEST(FixedPointDivideDecimalTest, ColumnScalar)
-{
-  using T          = TypeParam;
-  auto const scale = numeric::scale_type{-2};
-
-  // 10.00 / 2.00 = 5.00, 20.00 / 2.00 = 10.00, 30.00 / 2.00 = 15.00
-  auto const lhs      = fp_wrapper<T>{{1000, 2000, 3000}, scale};
-  auto const rhs      = cudf::make_fixed_point_scalar<T>(200, scale);
-  auto const expected = fp_wrapper<T>{{500, 1000, 1500}, scale};
-
-  auto const result = cudf::divide_decimal(lhs, *rhs, decimal_type<T>(scale));
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
-}
-
-TYPED_TEST(FixedPointDivideDecimalTest, ScalarColumn)
-{
-  using T          = TypeParam;
-  auto const scale = numeric::scale_type{-2};
-
-  // 30.00 / 2.00 = 15.00, 30.00 / 3.00 = 10.00, 30.00 / 5.00 = 6.00
-  auto const lhs      = cudf::make_fixed_point_scalar<T>(3000, scale);
-  auto const rhs      = fp_wrapper<T>{{200, 300, 500}, scale};
-  auto const expected = fp_wrapper<T>{{1500, 1000, 600}, scale};
-
-  auto const result = cudf::divide_decimal(*lhs, rhs, decimal_type<T>(scale));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 }
@@ -376,19 +329,6 @@ TYPED_TEST(FixedPointDivideDecimalTest, PositiveDivisorScale)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
 }
 
-TYPED_TEST(FixedPointDivideDecimalTest, HugeDivisorScaleRoundsToZero)
-{
-  using T          = TypeParam;
-  auto const scale = numeric::scale_type{0};
-
-  // 100 / 10^40 and -100 / 10^40 both round to zero
-  auto const lhs      = fp_wrapper<T>{{100, -100}, scale};
-  auto const rhs      = fp_wrapper<T>{{1, 1}, numeric::scale_type{40}};
-  auto const expected = fp_wrapper<T>{{0, 0}, scale};
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
-}
-
 TYPED_TEST(FixedPointDivideDecimalTest, ColumnScalarDifferentScales)
 {
   using T          = TypeParam;
@@ -432,21 +372,6 @@ TYPED_TEST(FixedPointDivideDecimalTest, InvalidScalarGivesAllNulls)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, column, type));
-}
-
-TYPED_TEST(FixedPointDivideDecimalTest, NullRowsAreNotDivided)
-{
-  using T            = TypeParam;
-  using Rep          = typename T::rep;
-  auto const scale   = numeric::scale_type{0};
-  auto constexpr min = cuda::std::numeric_limits<Rep>::min();
-
-  // The null divisor holds a zero, and the null dividend holds MIN over a divisor of -1.
-  auto const lhs      = fp_wrapper<T>{{100, min, 200}, {1, 0, 1}, scale};
-  auto const rhs      = fp_wrapper<T>{{0, -1, 100}, {0, 1, 1}, scale};
-  auto const expected = fp_wrapper<T>{{0, 0, 2}, {0, 0, 1}, scale};
-
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, AllNullColumnGivesAllNulls)

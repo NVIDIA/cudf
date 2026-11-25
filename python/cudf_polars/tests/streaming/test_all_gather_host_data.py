@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES.
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 """Tests for all_gather_host_data."""
@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import struct
+from types import SimpleNamespace
 
 import pytest
 
@@ -63,6 +64,10 @@ def test_gather_cluster_info(streaming_engine) -> None:
 
 def test_cluster_info_cuda_visible_devices(monkeypatch) -> None:
     """ClusterInfo.local() picks up CUDA_VISIBLE_DEVICES from the environment."""
+    # The device queries select devices from CUDA_VISIBLE_DEVICES, and
+    # devices 3 and 7 need not exist.
+    monkeypatch.setattr("cuda.core.Device", lambda: SimpleNamespace(uuid="GPU-0"))
+    monkeypatch.setattr("cudf_polars.engine.core.get_total_device_memory", lambda: None)
     monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "3,7")
     assert ClusterInfo.local().cuda_visible_devices == "3,7"
 

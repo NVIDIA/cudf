@@ -774,6 +774,64 @@ def test_parquet_reader_file_logical_type(datadir):
     assert_eq(cudf.DataFrame.from_arrow(expect), got)
 
 
+@pytest.mark.parametrize(
+    "filename, columns",
+    [
+        ("file_logical_type.parquet", None),
+        ("variant_multirow.parquet", None),
+        ("variant_nested_unshredded.parquet", None),
+        ("variant_nested_shredded.parquet", None),
+        # Skip the shredded `v.typed_value.{n,k}.value` leaves, which are still
+        # hashed as their parents aren't annotated VARIANT (see #25425)
+        (
+            "duckdb_variant_sample.parquet",
+            [
+                "id",
+                "v.metadata",
+                "v.value",
+                "v.typed_value.n.typed_value",
+                "v.typed_value.k.typed_value",
+            ],
+        ),
+    ],
+)
+def test_parquet_reader_logical_group_binary_not_categorized(
+    datadir, filename, columns
+):
+    # Binary children of FILE (`inline`) and VARIANT (`metadata`, `value`)
+    # groups stay `list<uint8>` when strings are converted to categories, while
+    # all other strings are read as INT32 hashes
+    import pylibcudf as plc
+
+    def read_types(convert_strings_to_categories):
+        source = plc.io.SourceInfo([str(datadir / filename)])
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(source)
+            .convert_strings_to_categories(convert_strings_to_categories)
+            .build()
+        )
+        if columns is not None:
+            options.set_column_names(columns)
+        return plc.io.parquet.read_parquet(options).tbl.to_arrow().schema.types
+
+    def categorized(typ):
+        if pa.types.is_string(typ) or pa.types.is_large_string(typ):
+            return pa.int32()
+        if pa.types.is_struct(typ):
+            return pa.struct([f.with_type(categorized(f.type)) for f in typ])
+        if pa.types.is_list(typ):
+            return pa.list_(
+                typ.value_field.with_type(categorized(typ.value_type))
+            )
+        if pa.types.is_large_list(typ):
+            return pa.large_list(
+                typ.value_field.with_type(categorized(typ.value_type))
+            )
+        return typ
+
+    assert read_types(True) == [categorized(t) for t in read_types(False)]
+
+
 @pytest.mark.parametrize("columns", [["a"], ["b", "a"], None])
 def test_parquet_reader_decimal128(datadir, columns):
     fname = datadir / "nested_decimal128_file.parquet"
@@ -3272,6 +3330,71 @@ def test_parquet_reader_binary_decimal(datadir):
     got = cudf.read_parquet(fname).to_pandas()
 
     assert_eq(expect, got)
+
+
+@pytest.mark.parametrize(
+    "decimal_width,literal_type,max_precision",
+    [
+        ("DECIMAL32", pa.decimal32, 9),
+        ("DECIMAL64", pa.decimal64, 18),
+        ("DECIMAL128", pa.decimal128, 38),
+    ],
+)
+def test_parquet_reader_binary_decimal_width(
+    datadir, decimal_width, literal_type, max_precision
+):
+    """BYTE_ARRAY decimals of precision 9, 15 and 35, written by parquet-mr,
+    read at `decimal_width` and pruned by their stats cast to it.
+    """
+    import pylibcudf as plc
+    from pylibcudf.expressions import (
+        ASTOperator,
+        ColumnNameReference,
+        Literal,
+        Operation,
+    )
+
+    fname = datadir / "binary_decimal.parquet"
+    expect = pq.read_table(fname)
+    type_id = getattr(plc.TypeId, decimal_width)
+
+    def read(filter_expr=None):
+        options = (
+            plc.io.parquet.ParquetReaderOptions.builder(
+                plc.io.SourceInfo([str(fname)])
+            )
+            .decimal_width(type_id)
+            .build()
+        )
+        if filter_expr is not None:
+            options.set_filter(filter_expr)
+        return plc.io.parquet.read_parquet(options)
+
+    got = read()
+    assert [col.type().id() for col in got.tbl.columns()] == [type_id] * 3
+    assert [col.to_pylist() for col in got.tbl.to_arrow().columns] == [
+        col.to_pylist() for col in expect.columns
+    ]
+
+    # A negative minimum is sign extended and a maximum is cast, so each
+    # comparison keeps or prunes the single row group
+    for name in expect.column_names:
+        values = expect[name].to_pylist()
+        scale = expect.schema.field(name).type.scale
+        for op, value, num_row_groups in [
+            (ASTOperator.EQUAL, max(values), 1),
+            (ASTOperator.GREATER, max(values), 0),
+            (ASTOperator.LESS, min(values), 0),
+        ]:
+            literal = pa.scalar(value, literal_type(max_precision, scale))
+            result = read(
+                Operation(
+                    op,
+                    ColumnNameReference(name),
+                    Literal(plc.Scalar.from_arrow(literal)),
+                )
+            )
+            assert result.num_row_groups_after_stats_filter == num_row_groups
 
 
 def test_parquet_reader_fixed_bin(datadir):

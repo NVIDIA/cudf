@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: cuDF issue triage preview
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    if: github.repository == 'NVIDIA/cudf'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Send private triage preview
+        env:
+          GH_TOKEN: ${{ secrets.ADD_TO_PROJECT_GITHUB_TOKEN }}
+          SLACK_BOT_TOKEN: ${{ secrets.NV_SLACK_CUDF_WORK_TRACKING_BOT_TOKEN }}
+        run: >-
+          python3 ci/repo_queue/triage.py --event "$GITHUB_EVENT_PATH"

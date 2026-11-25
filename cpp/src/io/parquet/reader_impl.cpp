@@ -6,7 +6,7 @@
 #include "reader_impl.hpp"
 
 #include "column_path_helpers.hpp"
-#include "error.hpp"
+#include "io/utilities/kernel_error.hpp"
 #include "runtime/context.hpp"
 #include "synthetic_column_helpers.hpp"
 
@@ -25,7 +25,6 @@
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/detail/utilities.hpp>
-#include <cudf/unary.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
@@ -45,46 +44,6 @@
 #include <utility>
 
 namespace cudf::io::parquet::detail {
-
-namespace {
-
-/**
- * @brief Recursively cast decimal columns, including nested ones, to the specified type
- *
- * @param col Column to cast
- * @param decimal_width Target decimal type id
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources used to allocate temporary and output device memory
- * @return The cast column
- */
-std::unique_ptr<column> cast_decimals_to_width(std::unique_ptr<column>&& col,
-                                               cudf::type_id decimal_width,
-                                               cuda::stream_ref stream,
-                                               cudf::memory_resources mr)
-{
-  auto const col_type = col->type();
-  if (cudf::is_fixed_point(col_type)) {
-    if (col_type.id() == decimal_width) { return col; }
-    return cudf::cast(
-      col->view(), data_type{decimal_width, col_type.scale()}, stream, mr.get_output_mr());
-  }
-  if (col_type.id() != type_id::LIST and col_type.id() != type_id::STRUCT) { return col; }
-
-  auto const size       = col->size();
-  auto const null_count = col->null_count();
-  auto contents         = col->release();
-  for (auto& child : contents.children) {
-    child = cast_decimals_to_width(std::move(child), decimal_width, stream, mr);
-  }
-  return std::make_unique<column>(col_type,
-                                  size,
-                                  std::move(*contents.data),
-                                  std::move(*contents.null_mask),
-                                  null_count,
-                                  std::move(contents.children));
-}
-
-}  // namespace
 
 void reader_impl::decode_page_data(read_mode mode, size_t skip_rows, size_t num_rows)
 {
@@ -992,12 +951,7 @@ std::optional<std::vector<std::string>> reader_impl::get_column_projection(
 bool reader_impl::is_intermediate_column(cudf::io::detail::inline_column_buffer const& buffer,
                                          std::optional<size_t> top_level_index) const
 {
-  auto const type = buffer.type;
-  // Check if we need to cast decimal columns
-  auto const will_cast_decimals = _options.decimal_width != type_id::EMPTY and
-                                  cudf::is_fixed_point(type) and
-                                  type.id() != _options.decimal_width;
-  auto const is_string = type.id() == type_id::STRING;
+  auto const is_string = buffer.type.id() == type_id::STRING;
   // Check if a top-level STRING buffer is returned as binary (LIST<UINT8>). See
   // output_column_schema
   auto const is_binary = is_string and top_level_index.has_value() and
@@ -1007,7 +961,7 @@ bool reader_impl::is_intermediate_column(cudf::io::detail::inline_column_buffer 
   // Check if we need to encode strings as dictionaries
   auto const will_dict_encode_strings =
     is_string and not is_binary and _options.output_dict_columns and top_level_index.has_value();
-  return will_cast_decimals or will_dict_encode_strings;
+  return will_dict_encode_strings;
 }
 
 std::optional<reader_column_schema> reader_impl::output_column_schema(size_t index) const
@@ -1026,17 +980,6 @@ std::optional<reader_column_schema> reader_impl::output_column_schema(size_t ind
   return _reader_column_schema.has_value()
            ? std::make_optional<reader_column_schema>((*_reader_column_schema)[index])
            : std::nullopt;
-}
-
-void reader_impl::apply_decimal_width_cast(std::vector<std::unique_ptr<column>>& out_columns,
-                                           cudf::memory_resources mr)
-{
-  // TODO: Instead of casting the columns after the read is done, we should
-  // be able to decode data directly into the target decimal type buffer.
-  if (_options.decimal_width == type_id::EMPTY) { return; }
-  for (auto& col : out_columns) {
-    col = cast_decimals_to_width(std::move(col), _options.decimal_width, _stream, mr);
-  }
 }
 
 column_selection_options reader_impl::make_column_selection_options(
@@ -1084,8 +1027,6 @@ table_with_metadata reader_impl::finalize_output(read_mode mode,
         io::detail::empty_like(_output_buffers[i], nullptr, _stream, buffer_mr));
     }
   }
-
-  apply_decimal_width_cast(out_columns, mr);
 
   // Check if a column is to be dictionary encoded
   auto const is_dict_encoded = [&](column_view const& col) {
@@ -1396,7 +1337,7 @@ parquet_column_schema walk_schema(aggregate_reader_metadata const* mt, int idx)
     children.push_back(walk_schema(mt, child_idx));
   }
 
-  auto const type_id   = to_type_id(sch, false, type_id::EMPTY, type_id::EMPTY);
+  auto const type_id = to_type_id(sch, mt->arrow_type(idx), false, type_id::EMPTY, type_id::EMPTY);
   auto const cudf_type = to_data_type(type_id, sch);
 
   return parquet_column_schema{

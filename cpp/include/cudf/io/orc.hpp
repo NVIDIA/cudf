@@ -6,9 +6,11 @@
 #pragma once
 
 #include <cudf/io/detail/orc.hpp>
+#include <cudf/io/orc_types.hpp>
 #include <cudf/io/types.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -82,7 +84,8 @@ class orc_reader_options {
   bool _use_index = true;
 
   // Whether to use numpy-compatible dtypes
-  bool _use_np_dtypes = true;
+  bool _use_np_dtypes              = true;
+  bool _convert_dates_to_proleptic = false;
   // Cast timestamp columns to a specific type
   data_type _timestamp_type{type_id::EMPTY};
 
@@ -166,6 +169,15 @@ class orc_reader_options {
    * @return `true` if numpy-compatible dtypes are used
    */
   [[nodiscard]] bool is_enabled_use_np_dtypes() const { return _use_np_dtypes; }
+
+  /**
+   * @brief Whether explicitly marked hybrid DATE values are converted to proleptic Gregorian.
+   * @return Whether DATE conversion is enabled
+   */
+  [[nodiscard]] bool is_enabled_convert_dates_to_proleptic() const
+  {
+    return _convert_dates_to_proleptic;
+  }
 
   /**
    * @brief Returns timestamp type to which timestamp column will be cast.
@@ -275,11 +287,26 @@ class orc_reader_options {
   void enable_use_np_dtypes(bool use) { _use_np_dtypes = use; }
 
   /**
+   * @brief Convert DATE values from explicitly marked JULIAN_GREGORIAN files to proleptic
+   * Gregorian.
+   *
+   * Disabled by default. Only DATE columns, including nested ones, are converted. Dates with no
+   * proleptic Gregorian equivalent cause a read error. Conversion precedes numpy dtype promotion.
+   *
+   * @param convert Whether to convert explicitly marked hybrid DATE values
+   */
+  void enable_convert_dates_to_proleptic(bool convert) { _convert_dates_to_proleptic = convert; }
+
+  /**
    * @brief Sets timestamp type to which timestamp column will be cast.
+   *
+   * TIMESTAMP_DAYS resolution is not supported; cast the output column to get it.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
    *
    * @param type Type of timestamp
    */
-  void set_timestamp_type(data_type type) { _timestamp_type = type; }
+  void set_timestamp_type(data_type type);
 
   /**
    * @brief Set columns that should be read as 128-bit Decimal
@@ -401,7 +428,19 @@ class orc_reader_options_builder {
   }
 
   /**
+   * @copydoc orc_reader_options::enable_convert_dates_to_proleptic
+   * @return this for chaining
+   */
+  orc_reader_options_builder& convert_dates_to_proleptic(bool convert)
+  {
+    options.enable_convert_dates_to_proleptic(convert);
+    return *this;
+  }
+
+  /**
    * @brief Sets timestamp type to which timestamp column will be cast.
+   *
+   * @throw std::invalid_argument if `type` is TIMESTAMP_DAYS or neither EMPTY nor a timestamp type
    *
    * @param type Type of timestamp
    * @return this for chaining
@@ -660,6 +699,8 @@ class orc_writer_options {
   bool _enable_dictionary_sort = true;
   // Timezone that the written timestamps are relative to, recorded in the stripe footers
   std::string _writer_timezone = "UTC";
+  // UNKNOWN_CALENDAR means the caller did not specify a calendar.
+  orc::CalendarKind _calendar_kind = orc::CalendarKind::UNKNOWN_CALENDAR;
 
   friend orc_writer_options_builder;
 
@@ -796,6 +837,12 @@ class orc_writer_options {
    */
   [[nodiscard]] std::string const& get_writer_timezone() const { return _writer_timezone; }
 
+  /**
+   * @brief Returns the requested writer calendar.
+   * @return Calendar kind, or UNKNOWN_CALENDAR if no calendar was specified
+   */
+  [[nodiscard]] orc::CalendarKind get_calendar_kind() const { return _calendar_kind; }
+
   // Setters
 
   /**
@@ -929,6 +976,32 @@ class orc_writer_options {
    * @param timezone Timezone name, for example "America/Los_Angeles"
    */
   void set_writer_timezone(std::string timezone) { _writer_timezone = std::move(timezone); }
+
+  /**
+   * @brief Sets the calendar recorded in the ORC file footer.
+   *
+   * `PROLEPTIC_GREGORIAN` is the default and retains libcudf's DATE and TIMESTAMP values.
+   * Legacy mode rebases DATE values, including nested values, before encoding and computing
+   * statistics. TIMESTAMP columns, dates in 1582-10-05 through 1582-10-14, and dates outside
+   * the int32 hybrid domain are rejected. Use convert_dates_to_proleptic when reading legacy
+   * output back into libcudf.
+   *
+   * By default, files without TIMESTAMP columns declare PROLEPTIC_GREGORIAN. For files with
+   * TIMESTAMP columns, the default omits the calendar field so readers retain their previous
+   * interpretation of the timestamps. An explicit PROLEPTIC_GREGORIAN requires any TIMESTAMP
+   * values to already be proleptic. A single calendar applies to the entire file, including DATE
+   * columns in a file that also contains TIMESTAMP columns.
+   *
+   * @param calendar_kind Calendar kind
+   * @throw cudf::logic_error if the calendar kind is unknown or invalid
+   */
+  void set_calendar_kind(orc::CalendarKind calendar_kind)
+  {
+    CUDF_EXPECTS(calendar_kind == orc::CalendarKind::PROLEPTIC_GREGORIAN or
+                   calendar_kind == orc::CalendarKind::JULIAN_GREGORIAN,
+                 "Unsupported ORC calendar kind");
+    _calendar_kind = calendar_kind;
+  }
 };
 
 /**
@@ -1092,6 +1165,16 @@ class orc_writer_options_builder {
   }
 
   /**
+   * @copydoc orc_writer_options::set_calendar_kind
+   * @return this for chaining
+   */
+  orc_writer_options_builder& calendar_kind(orc::CalendarKind calendar_kind)
+  {
+    options.set_calendar_kind(calendar_kind);
+    return *this;
+  }
+
+  /**
    * @brief move orc_writer_options member once it's built.
    */
   operator orc_writer_options&&() { return std::move(options); }
@@ -1160,6 +1243,8 @@ class chunked_orc_writer_options {
   bool _enable_dictionary_sort = true;
   // Timezone that the written timestamps are relative to, recorded in the stripe footers
   std::string _writer_timezone = "UTC";
+  // UNKNOWN_CALENDAR means the caller did not specify a calendar.
+  orc::CalendarKind _calendar_kind = orc::CalendarKind::UNKNOWN_CALENDAR;
 
   friend chunked_orc_writer_options_builder;
 
@@ -1274,6 +1359,11 @@ class chunked_orc_writer_options {
    */
   [[nodiscard]] std::string const& get_writer_timezone() const { return _writer_timezone; }
 
+  /**
+   * @copydoc orc_writer_options::get_calendar_kind
+   */
+  [[nodiscard]] orc::CalendarKind get_calendar_kind() const { return _calendar_kind; }
+
   // Setters
 
   /**
@@ -1381,6 +1471,17 @@ class chunked_orc_writer_options {
    * @copydoc orc_writer_options::set_writer_timezone
    */
   void set_writer_timezone(std::string timezone) { _writer_timezone = std::move(timezone); }
+
+  /**
+   * @copydoc orc_writer_options::set_calendar_kind
+   */
+  void set_calendar_kind(orc::CalendarKind calendar_kind)
+  {
+    CUDF_EXPECTS(calendar_kind == orc::CalendarKind::PROLEPTIC_GREGORIAN or
+                   calendar_kind == orc::CalendarKind::JULIAN_GREGORIAN,
+                 "Unsupported ORC calendar kind");
+    _calendar_kind = calendar_kind;
+  }
 };
 
 /**
@@ -1526,6 +1627,16 @@ class chunked_orc_writer_options_builder {
   chunked_orc_writer_options_builder& writer_timezone(std::string timezone)
   {
     options.set_writer_timezone(std::move(timezone));
+    return *this;
+  }
+
+  /**
+   * @copydoc chunked_orc_writer_options::set_calendar_kind
+   * @return this for chaining
+   */
+  chunked_orc_writer_options_builder& calendar_kind(orc::CalendarKind calendar_kind)
+  {
+    options.set_calendar_kind(calendar_kind);
     return *this;
   }
 

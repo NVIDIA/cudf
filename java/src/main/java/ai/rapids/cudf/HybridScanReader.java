@@ -594,7 +594,7 @@ public class HybridScanReader implements AutoCloseable {
     long[] addrs = bufferAddrs(columnChunkData);
     long[] lens = bufferLens(columnChunkData);
     long[] handles = materializeAllColumns(cleaner.nativeHandle, rowGroupIndices, addrs, lens);
-    return new Table(handles);
+    return Table.fromRowCountAndColumns(handles);
   }
 
   // ----------------------------------------------------------------------
@@ -663,7 +663,7 @@ public class HybridScanReader implements AutoCloseable {
   public Table materializeFilterColumnsChunk() {
     assertNotClosed();
     long[] handles = materializeFilterColumnsChunk(cleaner.nativeHandle);
-    return new Table(handles);
+    return Table.fromRowCountAndColumns(handles);
   }
 
   /**
@@ -734,7 +734,7 @@ public class HybridScanReader implements AutoCloseable {
     requireNonNullRowMask(rowMask);
     long[] handles = materializePayloadColumnsChunk(cleaner.nativeHandle,
         rowMask.getNativeView());
-    return new Table(handles);
+    return Table.fromRowCountAndColumns(handles);
   }
 
   /**
@@ -775,7 +775,7 @@ public class HybridScanReader implements AutoCloseable {
   public Table materializeAllColumnsChunk() {
     assertNotClosed();
     long[] handles = materializeAllColumnsChunk(cleaner.nativeHandle);
-    return new Table(handles);
+    return Table.fromRowCountAndColumns(handles);
   }
 
   /** @return {@code true} when a subsequent {@code materialize*Chunk} call would return data. */

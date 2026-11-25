@@ -29,8 +29,8 @@ HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [cudf_polars_quent] 
    cudf_polars_quent             - build the cudf-polars Quent bridge (debug build with maturin develop
                                    and update its stub, unless --release is given)
    dask_cudf                     - build the dask_cudf Python package
-   benchmarks                    - build libcudf and libcudf_streaming benchmarks
-   libcudf_streaming_benchmarks  - build libcudf_streaming benchmarks only
+   benchmarks                    - enable benchmarks for the selected libcudf and libcudf_streaming targets
+   libcudf_streaming_benchmarks   - build libcudf_streaming with benchmarks enabled
    tests                         - build tests
    libcudf_kafka                 - build the libcudf_kafka C++ code only
    cudf_kafka                    - build the cudf_kafka Python package
@@ -220,7 +220,7 @@ fi
 ################################################################################
 # Configure, build, and install libcudf
 
-if buildAll || hasArg libcudf || hasArg libcudf_streaming || hasArg pylibcudf || hasArg cudf ; then
+if buildAll || hasArg libcudf || hasArg libcudf_streaming || hasArg libcudf_streaming_benchmarks || hasArg pylibcudf || hasArg cudf; then
     if (( BUILD_ALL_GPU_ARCH == 0 )); then
         CUDF_CMAKE_CUDA_ARCHITECTURES="${CUDF_CMAKE_CUDA_ARCHITECTURES:-NATIVE}"
         if [[ "$CUDF_CMAKE_CUDA_ARCHITECTURES" == "NATIVE" ]]; then
@@ -322,7 +322,7 @@ if buildAll || hasArg cudf; then
 fi
 
 # Build libcudf_streaming library
-if buildAll || hasArg libcudf_streaming; then
+if buildAll || hasArg libcudf_streaming || hasArg libcudf_streaming_benchmarks; then
     cmake -S "$REPODIR/cpp/libcudf_streaming" -B "${STREAMING_LIB_BUILD_DIR}" \
           -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
           -DCMAKE_CUDA_ARCHITECTURES="${CUDF_CMAKE_CUDA_ARCHITECTURES}" \

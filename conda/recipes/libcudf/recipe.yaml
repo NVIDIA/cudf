@@ -449,7 +449,9 @@ outputs:
         by_name:
           - libcudf
           - cuda-version
+          - flatbuffers
           - libkvikio
+          - librdkafka
           - librmm
     about:
       homepage: ${{ load_from_file("python/libcudf/pyproject.toml").project.urls.Homepage }}

@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/cudf_gtest.hpp>
 
+#include <cudf/copying.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/round.hpp>
@@ -18,7 +19,10 @@
 #include <cuda/std/limits>
 
 #include <algorithm>
+#include <array>
+#include <cstdint>
 #include <memory>
+#include <optional>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -84,14 +88,26 @@ TYPED_TEST(FixedPointDivideDecimalTest, Nulls)
   using T          = TypeParam;
   auto const scale = numeric::scale_type{-2};
 
-  // 10.00 / 2.00 = 5.00, null / 3.00 = null, 30.00 / null = null, null / null = null
-  auto const lhs      = fp_wrapper<T>{{1000, 2000, 3000, 4000}, {1, 0, 1, 0}, scale};
-  auto const rhs      = fp_wrapper<T>{{200, 300, 400, 500}, {1, 1, 0, 0}, scale};
-  auto const expected = fp_wrapper<T>{{500, 0, 0, 0}, {1, 0, 0, 0}, scale};
+  // 10.00 / 2.00 = 5.00, null / 3.00 = null, 30.00 / null = null, null / null = null,
+  // 50.00 / 2.50 = 20.00
+  auto const lhs      = fp_wrapper<T>{{1000, 2000, 3000, 4000, 5000}, {1, 0, 1, 0, 1}, scale};
+  auto const rhs      = fp_wrapper<T>{{200, 300, 400, 500, 250}, {1, 1, 0, 0, 1}, scale};
+  auto const expected = fp_wrapper<T>{{500, 0, 0, 0, 2000}, {1, 0, 0, 0, 1}, scale};
 
   auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
+
+  // Sliced inputs, which have a nonzero offset
+  auto const lhs_slice = cudf::slice(lhs, {1, 5})[0];
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    cudf::slice(expected, {1, 5})[0],
+    *cudf::divide_decimal(lhs_slice, cudf::slice(rhs, {1, 5})[0], decimal_type<T>(scale)));
+
+  // null / 2.00 = null, 30.00 / 2.00 = 15.00, null / 2.00 = null, 50.00 / 2.00 = 25.00
+  auto const two = cudf::make_fixed_point_scalar<T>(200, scale);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<T>({0, 1500, 0, 2500}, {0, 1, 0, 1}, scale),
+                                 *cudf::divide_decimal(lhs_slice, *two, decimal_type<T>(scale)));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, EmptyColumns)
@@ -102,11 +118,15 @@ TYPED_TEST(FixedPointDivideDecimalTest, EmptyColumns)
   auto const lhs = fp_wrapper<T>{{}, scale};
   auto const rhs = fp_wrapper<T>{{}, scale};
 
-  auto const result =
-    cudf::divide_decimal(lhs, rhs, decimal_type<numeric::decimal64>(numeric::scale_type{-4}));
+  auto const type   = decimal_type<numeric::decimal64>(numeric::scale_type{-4});
+  auto const scalar = cudf::make_fixed_point_scalar<T>(100, scale);
 
-  EXPECT_EQ(result->size(), 0);
-  EXPECT_EQ(result->type(), decimal_type<numeric::decimal64>(numeric::scale_type{-4}));
+  for (auto const& result : {cudf::divide_decimal(lhs, rhs, type),
+                             cudf::divide_decimal(lhs, *scalar, type),
+                             cudf::divide_decimal(*scalar, rhs, type)}) {
+    EXPECT_EQ(result->size(), 0);
+    EXPECT_EQ(result->type(), type);
+  }
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, DifferentScales)
@@ -303,16 +323,16 @@ TYPED_TEST(FixedPointDivideDecimalTest, OutputScaleRescaleOverflow)
 {
   using T = TypeParam;
 
-  // Rescaling the dividend by 10^40 overflows every width, so the result is null.
-  // Rescaling the divisor by 10^40 makes the quotient round to zero.
-  auto const lhs = fp_wrapper<T>{{1, -1}, numeric::scale_type{0}};
-  auto const rhs = fp_wrapper<T>{{1, 1}, numeric::scale_type{0}};
+  // Rescaling the dividend by 10^40 overflows every width, so the result is null, except for a
+  // zero dividend. Rescaling the divisor by 10^40 makes the quotient round to zero.
+  auto const lhs = fp_wrapper<T>{{1, -1, 0}, numeric::scale_type{0}};
+  auto const rhs = fp_wrapper<T>{{1, 1, 1}, numeric::scale_type{0}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    fp_wrapper<T>({0, 0}, {0, 0}, numeric::scale_type{-40}),
+    fp_wrapper<T>({0, 0, 0}, {0, 0, 1}, numeric::scale_type{-40}),
     *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{-40})));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    fp_wrapper<T>({0, 0}, numeric::scale_type{40}),
+    fp_wrapper<T>({0, 0, 0}, numeric::scale_type{40}),
     *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{40})));
 }
 
@@ -348,10 +368,10 @@ TYPED_TEST(FixedPointDivideDecimalTest, ScalarColumnDifferentScales)
   using T          = TypeParam;
   auto const scale = numeric::scale_type{-1};
 
-  // 1.5 / 3 = 0.5, 1.5 / 4 = 0.375 -> 0.4
+  // 1.5 / 3 = 0.5, 1.5 / 4 = 0.375 -> 0.4, 1.5 / null = null, 1.5 / 0 = null
   auto const lhs      = cudf::make_fixed_point_scalar<T>(15, scale);
-  auto const rhs      = fp_wrapper<T>{{3, 4}, numeric::scale_type{0}};
-  auto const expected = fp_wrapper<T>{{5, 4}, scale};
+  auto const rhs      = fp_wrapper<T>{{3, 4, 5, 0}, {1, 1, 0, 1}, numeric::scale_type{0}};
+  auto const expected = fp_wrapper<T>{{5, 4, 0, 0}, {1, 1, 0, 0}, scale};
 
   auto const result = cudf::divide_decimal(*lhs, rhs, decimal_type<T>(scale));
 
@@ -359,17 +379,19 @@ TYPED_TEST(FixedPointDivideDecimalTest, ScalarColumnDifferentScales)
   EXPECT_EQ(result->type().scale(), -1);
 }
 
-TYPED_TEST(FixedPointDivideDecimalTest, InvalidScalarGivesAllNulls)
+TYPED_TEST(FixedPointDivideDecimalTest, InvalidOrZeroScalarGivesAllNulls)
 {
   using T          = TypeParam;
   auto const scale = numeric::scale_type{-2};
   auto const type  = decimal_type<T>(scale);
 
-  auto const column = fp_wrapper<T>{{100, 200}, scale};
-  auto scalar       = cudf::make_fixed_point_scalar<T>(0, scale);
-  scalar->set_valid_async(false);
+  auto const column   = fp_wrapper<T>{{100, 200}, scale};
+  auto scalar         = cudf::make_fixed_point_scalar<T>(0, scale);
   auto const expected = fp_wrapper<T>{{0, 0}, {0, 0}, scale};
 
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type));
+
+  scalar->set_valid_async(false);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, column, type));
 }
@@ -471,13 +493,15 @@ TEST(FixedPointDivideDecimalMixedWidthTest, NarrowerOutputPrecisionLimit)
 {
   using Rep = __int128_t;
 
-  // A decimal128 quotient with more than 9 digits does not fit in a decimal32 output.
+  // A decimal128 quotient with more than 9 digits does not fit in a decimal32 output, including
+  // one that only reaches 10 digits by rounding: (2 * max32 + 1) / 2 = max32 + 0.5.
   auto const max32 = max_digits<numeric::decimal32>();
-  auto const lhs   = fp_wrapper<numeric::decimal128>{{Rep{max32}, Rep{max32} + 1, Rep{1} << 100},
-                                                     numeric::scale_type{0}};
-  auto const rhs   = fp_wrapper<numeric::decimal128>{{1, 1, 1}, numeric::scale_type{0}};
-  auto const expected =
-    fp_wrapper<numeric::decimal32>{{max32, 0, 0}, {1, 0, 0}, numeric::scale_type{0}};
+  auto const lhs   = fp_wrapper<numeric::decimal128>{
+    {Rep{max32}, Rep{max32} + 1, Rep{1} << 100, 2 * Rep{max32} + 1, 2 * Rep{max32} - 1},
+    numeric::scale_type{0}};
+  auto const rhs      = fp_wrapper<numeric::decimal128>{{1, 1, 1, 2, 2}, numeric::scale_type{0}};
+  auto const expected = fp_wrapper<numeric::decimal32>{
+    {max32, 0, 0, 0, max32}, {1, 0, 0, 0, 1}, numeric::scale_type{0}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     expected,
@@ -517,7 +541,66 @@ __int128_t pow10_128(int32_t exponent)
 
 using dec128_wrapper = fp_wrapper<numeric::decimal128>;
 
-TYPED_TEST(FixedPointDivideDecimalTest, WideMatchesStandardWhereStandardIsValid)
+// `lhs * 10^exponent / rhs` computed exactly and rounded using `method`, or no value if `rhs` is
+// zero or the rounded quotient has more than `digits` digits
+std::optional<__int128_t> reference_quotient(
+  __int128_t lhs, __int128_t rhs, int32_t exponent, int32_t digits, cudf::rounding_method method)
+{
+  using U = __uint128_t;
+  if (rhs == 0) { return std::nullopt; }
+  auto const magnitude = [](__int128_t v) { return v < 0 ? U{0} - static_cast<U>(v) : U(v); };
+  // A 256-bit magnitude as little-endian 64-bit limbs
+  using wide_t        = std::array<uint64_t, 4>;
+  auto const to_wide  = [](U v) { return wide_t{uint64_t(v), uint64_t(v >> 64), 0, 0}; };
+  auto const times_10 = [](wide_t& v) {
+    U carry = 0;
+    for (auto& limb : v) {
+      auto const product = U{limb} * 10 + carry;
+      limb               = static_cast<uint64_t>(product);
+      carry              = product >> 64;
+    }
+    return carry == 0;
+  };
+
+  U quotient  = 0;
+  U remainder = 0;
+  U divisor   = magnitude(rhs);
+  if (exponent < 0) {
+    auto wide_divisor = to_wide(divisor);
+    for (; exponent < 0; ++exponent) {
+      if (!times_10(wide_divisor)) { return 0; }
+    }
+    // The dividend is at most 2^127, so a divisor of 2^128 or more rounds the quotient to 0
+    if (wide_divisor[2] != 0 || wide_divisor[3] != 0) { return 0; }
+    divisor   = U{wide_divisor[1]} << 64 | wide_divisor[0];
+    quotient  = magnitude(lhs) / divisor;
+    remainder = magnitude(lhs) % divisor;
+  } else {
+    auto dividend = to_wide(magnitude(lhs));
+    for (; exponent > 0; --exponent) {
+      if (!times_10(dividend)) { return std::nullopt; }
+    }
+    // Shift-subtract long division. The divisor is at most 2^127, so the remainder can't overflow.
+    for (int32_t bit = 255; bit >= 0; --bit) {
+      remainder      = remainder << 1 | ((dividend[bit / 64] >> (bit % 64)) & 1);
+      bool const set = remainder >= divisor;
+      if (set) { remainder -= divisor; }
+      // A quotient of 2^127 or more has more digits than any output can hold
+      if (set && bit >= 127) { return std::nullopt; }
+      quotient = quotient << 1 | U{set};
+    }
+  }
+
+  auto const rest       = divisor - remainder;
+  bool const round_away = method == cudf::rounding_method::HALF_EVEN
+                            ? remainder > rest || (remainder == rest && quotient % 2 != 0)
+                            : remainder >= rest;
+  if (quotient + round_away > U(pow10_128(digits) - 1)) { return std::nullopt; }
+  auto const value = static_cast<__int128_t>(quotient + round_away);
+  return (lhs < 0) != (rhs < 0) ? -value : value;
+}
+
+TYPED_TEST(FixedPointDivideDecimalTest, MatchesReference)
 {
   using T                = TypeParam;
   using Rep              = typename T::rep;
@@ -526,7 +609,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, WideMatchesStandardWhereStandardIsValid)
   auto constexpr rep_min = cuda::std::numeric_limits<Rep>::min();
 
   std::vector<Rep> const dividends{0, 1, -7, 123, max / 7, -(max / 3), max, -max, rep_max, rep_min};
-  std::vector<Rep> const divisors{1, -3, 7, 20, max / 1000 + 1, -max, rep_min};
+  std::vector<Rep> const divisors{1, -3, 7, 20, max / 1000 + 1, -max, rep_max, rep_min};
   std::vector<Rep> lhs_data;
   std::vector<Rep> rhs_data;
   for (auto const dividend : dividends) {
@@ -542,21 +625,30 @@ TYPED_TEST(FixedPointDivideDecimalTest, WideMatchesStandardWhereStandardIsValid)
     return mask.empty() || cudf::bit_is_set(mask.data(), i);
   };
 
-  // Exponents from -40 to 45, through the wide path's multi-step rescaling
+  // Exponents from -40 to 80, through the wide path's multi-step rescaling. Rows of the standard
+  // intermediate may be null where the reference isn't, but must otherwise match it.
   auto wide_only = 0;
-  for (int32_t scale = 40; scale >= -45; --scale) {
-    auto const type     = decimal_type<T>(numeric::scale_type{scale});
-    auto const standard = cudf::divide_decimal(lhs, rhs, type, cudf::rounding_method::HALF_EVEN);
-    auto const wide     = divide_wide(lhs, rhs, type, cudf::rounding_method::HALF_EVEN);
-    auto const [standard_data, standard_mask] = cudf::test::to_host<T>(*standard);
-    auto const [wide_data, wide_mask]         = cudf::test::to_host<T>(*wide);
-    for (cudf::size_type i = 0; i < standard->size(); ++i) {
-      if (is_valid(standard_mask, i)) {
-        EXPECT_TRUE(is_valid(wide_mask, i)) << "scale " << scale << ", row " << i;
-        EXPECT_EQ(standard_data[i].value(), wide_data[i].value())
+  for (auto const method : {cudf::rounding_method::HALF_UP, cudf::rounding_method::HALF_EVEN}) {
+    for (int32_t scale = 40; scale >= -80; --scale) {
+      auto const type                           = decimal_type<T>(numeric::scale_type{scale});
+      auto const standard                       = cudf::divide_decimal(lhs, rhs, type, method);
+      auto const wide                           = divide_wide(lhs, rhs, type, method);
+      auto const [standard_data, standard_mask] = cudf::test::to_host<T>(*standard);
+      auto const [wide_data, wide_mask]         = cudf::test::to_host<T>(*wide);
+      for (cudf::size_type i = 0; i < standard->size(); ++i) {
+        auto const expected = reference_quotient(
+          lhs_data[i], rhs_data[i], -scale, cuda::std::numeric_limits<Rep>::digits10, method);
+        ASSERT_EQ(expected.has_value(), is_valid(wide_mask, i))
           << "scale " << scale << ", row " << i;
-      } else if (is_valid(wide_mask, i)) {
-        ++wide_only;
+        if (expected.has_value()) {
+          EXPECT_EQ(*expected, wide_data[i].value()) << "scale " << scale << ", row " << i;
+        }
+        if (is_valid(standard_mask, i)) {
+          ASSERT_TRUE(expected.has_value()) << "scale " << scale << ", row " << i;
+          EXPECT_EQ(*expected, standard_data[i].value()) << "scale " << scale << ", row " << i;
+        } else if (expected.has_value()) {
+          ++wide_only;
+        }
       }
     }
   }
@@ -712,6 +804,73 @@ TEST(FixedPointDivideDecimalWideTest, NarrowerOperands)
   auto const type11 = decimal_type<numeric::decimal32>(numeric::scale_type{-11});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<numeric::decimal32>({0}, {0}, numeric::scale_type{-11}),
                                  *divide_wide(lhs32, rhs32, type11));
+}
+
+TEST(FixedPointDivideDecimalWideTest, NarrowerOutput)
+{
+  using Rep            = __int128_t;
+  auto constexpr max64 = max_digits<numeric::decimal64>();
+
+  // 3 * 10^37 * 10^e / (3 * 10^37) = 10^e, which fits in a decimal64 output up to e = 17 and in a
+  // decimal32 output up to e = 8
+  auto const lhs = dec128_wrapper{{3 * pow10_128(37), -3 * pow10_128(37)}, numeric::scale_type{0}};
+  auto const rhs = dec128_wrapper{{3 * pow10_128(37), 3 * pow10_128(37)}, numeric::scale_type{0}};
+  auto const check = [&]<typename OutT>(int32_t exponent, bool fits) {
+    auto const scale    = numeric::scale_type{-exponent};
+    auto const type     = decimal_type<OutT>(scale);
+    auto const quotient = static_cast<typename OutT::rep>(pow10_128(exponent));
+    auto const all_null = fp_wrapper<OutT>({0, 0}, {0, 0}, scale);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, rhs, type));
+    if (fits) {
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<OutT>({quotient, -quotient}, scale),
+                                     *divide_wide(lhs, rhs, type));
+    } else {
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *divide_wide(lhs, rhs, type));
+    }
+  };
+  check.template operator()<numeric::decimal64>(17, true);
+  check.template operator()<numeric::decimal64>(18, false);
+  check.template operator()<numeric::decimal32>(8, true);
+  check.template operator()<numeric::decimal32>(9, false);
+
+  // A decimal64 dividend with a decimal128 divisor: max64 * 10^25 / (3 * 10^25) = max64 / 3
+  auto const lhs64 = fp_wrapper<numeric::decimal64>{{max64}, numeric::scale_type{0}};
+  auto const rhs25 = dec128_wrapper{{3 * pow10_128(25)}, numeric::scale_type{0}};
+  auto const type  = decimal_type<numeric::decimal64>(numeric::scale_type{-25});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    fp_wrapper<numeric::decimal64>({Rep{max64 / 3}}, numeric::scale_type{-25}),
+    *divide_wide(lhs64, rhs25, type));
+}
+
+TEST(FixedPointDivideDecimalWideTest, RemainderHighWordEqualsDivisorHighWord)
+{
+  using Rep = __int128_t;
+
+  // Shifted left by 27 so that its top bit is set, this divisor's low 64 bits exceed its high 64
+  // bits. Each dividend, rescaled by 10^19, gives a quotient whose low 64 bits are all ones or just
+  // past them. The second step of the long division then starts with a remainder whose high 64
+  // bits equal the divisor's.
+  auto const divisor = (Rep{1} << 100) + (Rep{1} << 37) - 1;
+  auto const lhs     = dec128_wrapper{
+        {Rep{467'680'523'945} * pow10_128(19) + Rep{8'889'338'670'116'162'763},
+         Rep{467'680'523'945} * pow10_128(19) + Rep{8'889'338'720'822'186'772},
+         -(Rep{1'961'596'163'030'433'522} * pow10_128(19) + Rep{4'670'961'687'435'625'799}),
+         Rep{1'961'596'163'030'433'522} * pow10_128(19) + Rep{4'670'961'738'141'649'808}},
+    numeric::scale_type{0}};
+  auto const rhs = dec128_wrapper{{divisor, divisor, divisor, divisor}, numeric::scale_type{0}};
+  // Remainders of 0.3 and 0.7 of the divisor, rounding down and up
+  auto const expected =
+    dec128_wrapper{{Rep{3} * pow10_128(19) + Rep{6'893'488'147'419'103'231},
+                    Rep{3} * pow10_128(19) + Rep{6'893'488'147'419'103'232},
+                    -(Rep{15'474'265} * pow10_128(19) + Rep{2'484'625'124'038'803'455}),
+                    Rep{15'474'265} * pow10_128(19) + Rep{2'484'625'124'038'803'456}},
+                   numeric::scale_type{-19}};
+  auto const type = decimal_type<numeric::decimal128>(numeric::scale_type{-19});
+
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
+                                 *divide_wide(lhs, rhs, type, cudf::rounding_method::HALF_UP));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
+                                 *divide_wide(lhs, rhs, type, cudf::rounding_method::HALF_EVEN));
 }
 
 TEST(FixedPointDivideDecimalErrorTest, InvalidInputs)

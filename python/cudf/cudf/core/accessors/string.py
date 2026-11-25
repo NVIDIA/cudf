@@ -5,13 +5,11 @@ from __future__ import annotations
 
 import re
 import warnings
-from functools import cache
 from typing import TYPE_CHECKING, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
 import pyarrow as pa
-import pyarrow.compute as pc
 from packaging.version import Version
 
 import pylibcudf as plc
@@ -27,6 +25,7 @@ from cudf.core.accessors.base_accessor import BaseAccessor
 from cudf.core.accessors.lists import ListMethods
 from cudf.core.column.column import ColumnBase, as_column, column_empty
 from cudf.core.dtypes import ListDtype
+from cudf.errors import MixedTypeError
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
     can_convert_to_column,
@@ -49,57 +48,6 @@ def _is_supported_regex_flags(flags: int) -> bool:
     return flags == 0 or (
         (flags & all_flags) != 0 and (flags & ~all_flags) == 0
     )
-
-
-def _regex_literal_replacement(
-    replacement: str, arrow_regex: bool
-) -> str | None:
-    if "\\" not in replacement:
-        return replacement
-    if arrow_regex:
-        if re.fullmatch(r"(?:[^\\]|\\\\)*", replacement):
-            return replacement.replace(r"\\", "\\")
-        return None
-    try:
-        # An empty pattern has no groups, so this only expands literal escapes.
-        return re.sub("", replacement, "", count=1)
-    except (re.error, IndexError):
-        return None
-
-
-@cache
-def _arrow_digit_pattern() -> str:
-    # Arrow and Python can ship different versions of the Unicode character
-    # database. Build the constant character class from Arrow's table so
-    # libcudf evaluates user strings with the same classification.
-    codepoints: list[int] = []
-    for start, stop in ((0, 0xD800), (0xE000, 0x110000)):
-        points = np.arange(start, stop, dtype="<u4")
-        # Build Arrow's buffers in bulk to avoid creating a Python string
-        # object for each Unicode scalar value.
-        encoded = points.tobytes().decode("utf-32-le").encode()
-        widths = 1 + (points >= 0x80) + (points >= 0x800) + (points >= 0x10000)
-        offsets = np.empty(len(points) + 1, dtype=np.int32)
-        offsets[0] = 0
-        np.cumsum(widths, dtype=np.int32, out=offsets[1:])
-        chars = pa.Array.from_buffers(
-            pa.string(),
-            len(points),
-            [None, pa.py_buffer(offsets), pa.py_buffer(encoded)],
-        )
-        classified = pc.utf8_is_digit(chars).to_numpy(zero_copy_only=False)
-        codepoints.extend((start + np.flatnonzero(classified)).tolist())
-    ranges = []
-    first = last = codepoints[0]
-    for point in codepoints[1:]:
-        if point != last + 1:
-            ranges.append(
-                chr(first) if first == last else f"{chr(first)}-{chr(last)}"
-            )
-            first = point
-        last = point
-    ranges.append(chr(first) if first == last else f"{chr(first)}-{chr(last)}")
-    return f"[^{''.join(ranges)}]"
 
 
 def _massage_string_arg(
@@ -140,7 +88,6 @@ class StringMethods(BaseAccessor):
     """
 
     _column: StringColumn
-    _categorical: bool
 
     def __init__(self, parent: Series | Index):
         value_type = (
@@ -149,8 +96,6 @@ class StringMethods(BaseAccessor):
             else parent.dtype
         )
         # Convert categorical with string categories to string dtype
-        categorical = isinstance(value_type, cudf.CategoricalDtype)
-        object.__setattr__(self, "_categorical", categorical)
         if isinstance(value_type, cudf.CategoricalDtype) and is_string_dtype(
             value_type.categories.dtype
         ):
@@ -202,17 +147,33 @@ class StringMethods(BaseAccessor):
                 )
         return self._return_or_inplace(new_col)
 
-    def _list_input(self) -> StringColumn:
+    def _pandas_arrow_strings(self) -> bool:
         dtype = self._column.dtype
-        if (
-            self._categorical
-            and isinstance(dtype, pd.StringDtype)
+        return (
+            isinstance(dtype, pd.StringDtype)
+            and dtype.storage == "pyarrow"
             and cudf.get_option("mode.pandas_compatible")
-        ):
-            return self._column.as_string_column(
-                pd.StringDtype(storage=dtype.storage, na_value=np.nan)
+        )
+
+    def _check_pandas_end_anchor(self, pat: str) -> None:
+        if (
+            "$" in pat
+            and self._pandas_arrow_strings()
+            and any(
+                match[1]
+                for match in re.finditer(r"\\.|\[(?:\\.|[^\\\]])*\]|(\$)", pat)
             )
-        return self._column
+        ):
+            raise NotImplementedError("Arrow regex end anchors require pandas")
+
+    def _check_pandas_list_result(self) -> None:
+        if isinstance(self._column.dtype, pd.StringDtype) and cudf.get_option(
+            "mode.pandas_compatible"
+        ):
+            # Keep Python lists and their original missing-value sentinel.
+            raise MixedTypeError(
+                "Pandas string operations return object lists"
+            )
 
     def htoi(self) -> Series | Index:
         """
@@ -770,25 +731,16 @@ class StringMethods(BaseAccessor):
             return cudf.DataFrame(named_data)
         return self._return_or_inplace(named_data, expand=True)
 
-    def _remove_named_capture_groups(
-        self, pat: str, *, strict_end: bool = False
-    ) -> str:
+    def _remove_named_capture_groups(self, pat: str) -> str:
         r"""
         Remove named capture declarations while preserving regex literals.
 
         libcudf expects unnamed groups and does not support named backreferences.
         """
-        compiled = re.compile(pat)
-        strict_end = strict_end and "$" in pat
-        if not compiled.groupindex and not strict_end:
+        if not re.compile(pat).groupindex:
             return pat
 
         result = []
-        multiline = bool(compiled.flags & re.MULTILINE)
-        verbose = bool(compiled.flags & re.VERBOSE)
-        group_modes: list[tuple[bool, bool]] = []
-        scoped_flags = re.compile(r"\(\?([aiLmsux]*)(?:-([imsx]+))?:")
-        inline_comment = re.compile(r"\(\?#(?:\\.|[^\\)])*\)")
         class_start = -1
         position = 0
         while position < len(pat):
@@ -808,58 +760,18 @@ class StringMethods(BaseAccessor):
                 class_start = (
                     position + 1 + (pat[position + 1 : position + 2] == "^")
                 )
-            elif char == "#" and verbose:
-                end = pat.find("\n", position)
-                end = len(pat) if end == -1 else end + 1
-                result.append(pat[position:end])
-                position = end
-                continue
             elif pat.startswith("(?P=", position):
                 raise NotImplementedError(
                     "Named backreferences are not supported"
                 )
             elif pat.startswith("(?P<", position):
-                group_modes.append((multiline, verbose))
                 result.append("(")
                 position = pat.index(">", position + 4) + 1
                 continue
-            elif char == "(":
-                if comment := inline_comment.match(pat, position):
-                    result.append(comment[0])
-                    position = comment.end()
-                    continue
-                group_modes.append((multiline, verbose))
-                if flags := scoped_flags.match(pat, position):
-                    added, removed = flags[1], flags[2] or ""
-                    multiline = (
-                        multiline or "m" in added
-                    ) and "m" not in removed
-                    verbose = (verbose or "x" in added) and "x" not in removed
-                    result.append(flags[0])
-                    position = flags.end()
-                    continue
-                result.append(char)
-            elif char == ")":
-                multiline, verbose = group_modes.pop()
-                result.append(char)
-            elif char == "$" and strict_end and not multiline:
-                result.append(r"\Z")
             else:
                 result.append(char)
             position += 1
         return "".join(result)
-
-    def _uses_arrow_regex(self, pat: str, flags: int) -> bool:
-        dtype = self._column.dtype
-        # pandas uses Python's regex engine for flags and lookarounds.
-        return (
-            not flags
-            and isinstance(dtype, pd.StringDtype)
-            and dtype.storage == "pyarrow"
-            and not any(
-                token in pat for token in ("(?=", "(?!", "(?<=", "(?<!")
-            )
-        )
 
     def contains(
         self,
@@ -1010,10 +922,8 @@ class StringMethods(BaseAccessor):
 
         if is_scalar(pat):
             if regex:
-                pattern = cast("str", pat)
-                pat = self._remove_named_capture_groups(
-                    pattern, strict_end=self._uses_arrow_regex(pattern, flags)
-                )
+                self._check_pandas_end_anchor(cast("str", pat))
+                pat = self._remove_named_capture_groups(pat)  # type: ignore[arg-type]
                 result_col = self._column.contains_re(pat, flags)
             else:
                 if case is False:
@@ -1255,7 +1165,6 @@ class StringMethods(BaseAccessor):
             return self._return_or_inplace(result)
 
         # If 'pat' is re.Pattern then get the pattern string from it
-        compiled_pattern = isinstance(pat, re.Pattern)
         if regex and isinstance(pat, re.Pattern):
             pat = pat.pattern
 
@@ -1264,23 +1173,16 @@ class StringMethods(BaseAccessor):
 
         # Pandas forces non-regex replace when pat is a single-character
         if regex is True and len(pat) > 0:
-            pattern = cast("str", pat)
-            arrow_regex = not compiled_pattern and self._uses_arrow_regex(
-                pattern, flags
+            self._check_pandas_end_anchor(cast("str", pat))
+            if self._pandas_arrow_strings() and re.search(r"\\[0-9]", repl):
+                raise NotImplementedError(
+                    "Arrow replacement backreferences require pandas"
+                )
+            result = self._column.replace_re(
+                pat,  # type: ignore[arg-type]
+                repl,
+                n,
             )
-            literal = _regex_literal_replacement(repl, arrow_regex)
-            if literal is None:
-                result = self._replace_regex_template(
-                    pattern, repl, n, arrow_regex
-                )
-            else:
-                result = self._column.replace_re(
-                    self._remove_named_capture_groups(
-                        pattern, strict_end=arrow_regex
-                    ),
-                    literal,
-                    n,
-                )
         else:
             result = self._column.replace_str(
                 pat,  # type: ignore[arg-type]
@@ -1288,36 +1190,6 @@ class StringMethods(BaseAccessor):
                 n,
             )
         return self._return_or_inplace(result)
-
-    def _replace_regex_template(
-        self, pat: str, repl: str, n: int, arrow_regex: bool
-    ) -> StringColumn:
-        # The backreference kernel replaces all matches and accepts numbered
-        # references in ${n} form with no escape syntax for literal tokens.
-        groups = re.compile(pat).groups
-        if n != -1 or re.search(r"\$\{\d+\}", repl):
-            raise NotImplementedError("Unsupported regex replacement template")
-        ref = re.compile(r"\\([1-9])" if arrow_regex else r"\\([1-9][0-9]?)")
-        template = []
-        pos = 0
-        while (start := repl.find("\\", pos)) != -1:
-            template.append(repl[pos:start])
-            match = ref.match(repl, start)
-            if (
-                match is None
-                or int(match[1]) > groups
-                or (not arrow_regex and re.match(r"\\[0-7]{3}", repl[start:]))
-            ):
-                raise NotImplementedError(
-                    "Unsupported regex replacement escape"
-                )
-            template.append("${" + match[1] + "}")
-            pos = match.end()
-        template.append(repl[pos:])
-        return self._column.replace_with_backrefs(
-            self._remove_named_capture_groups(pat, strict_end=arrow_regex),
-            "".join(template),
-        )
 
     def replace_with_backrefs(self, pat: str, repl: str) -> Series | Index:
         r"""
@@ -1883,25 +1755,15 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
-        dtype = self._column.dtype
-        result: ColumnBase
-        if (
-            _ARROW_HAS_UNICODE_DIGIT
-            and isinstance(dtype, pd.StringDtype)
-            and dtype.storage == "pyarrow"
-            and not self._column.is_ascii()
-        ):
-            # Searching for a non-digit can stop at the first mismatch.
-            result = ~self._column.contains_re(_arrow_digit_pattern(), 0) & (
-                self._column.count_bytes() > 0
+        if _ARROW_HAS_UNICODE_DIGIT and self._pandas_arrow_strings():
+            raise NotImplementedError(
+                "Arrow Unicode digit classification requires pandas"
             )
-            if dtype.na_value is np.nan:
-                result = result.fillna(False)
-        else:
-            result = self._column.all_characters_of_type(
+        return self._return_boolean(
+            self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.DIGIT
             )
-        return self._return_boolean(result)
+        )
 
     def isnumeric(self) -> Series | Index:
         """
@@ -2680,17 +2542,7 @@ class StringMethods(BaseAccessor):
         dtype: str
         """
         if isinstance(self._column.dtype, ListDtype):
-            result = ListMethods(self._parent).get(i)
-            if self._column.dtype._pandas_string_result and cudf.get_option(
-                "mode.pandas_compatible"
-            ):
-                if result._column.has_nulls():
-                    raise NotImplementedError(
-                        "Object results with distinct missing-value sentinels "
-                        "are unsupported"
-                    )
-                return result.astype(object)
-            return result
+            return ListMethods(self._parent).get(i)
         str_lens = self.len()
         if i < 0:
             next_index = i - 1
@@ -2935,11 +2787,11 @@ class StringMethods(BaseAccessor):
                 else:
                     result_table = data
         else:
-            column = self._list_input()
+            self._check_pandas_list_result()
             if regex is True:
-                result_table = column.split_record_re(pat, n)
+                result_table = self._column.split_record_re(pat, n)
             else:
-                result_table = column.split_record(
+                result_table = self._column.split_record(
                     plc.Scalar.from_py(
                         pat, dtype=plc.DataType(plc.TypeId.STRING)
                     ),
@@ -3115,11 +2967,11 @@ class StringMethods(BaseAccessor):
                 else:
                     result_table = data
         else:
-            column = self._list_input()
+            self._check_pandas_list_result()
             if regex is True:
-                result_table = column.rsplit_record_re(pat, n)
+                result_table = self._column.rsplit_record_re(pat, n)
             else:
-                result_table = column.rsplit_record(
+                result_table = self._column.rsplit_record(
                     plc.Scalar.from_py(
                         pat, dtype=plc.DataType(plc.TypeId.STRING)
                     ),
@@ -3938,17 +3790,15 @@ class StringMethods(BaseAccessor):
             raise NotImplementedError(
                 "unsupported value for `flags` parameter"
             )
-        pat = self._remove_named_capture_groups(
-            pat, strict_end=self._uses_arrow_regex(pat, flags)
-        )
-        result: ColumnBase = self._column.count_re(pat, flags)
+        self._check_pandas_end_anchor(pat)
         if self._column.dtype == np.dtype("object") and cudf.get_option(
             "mode.pandas_compatible"
         ):
-            result = result.astype(
-                np.dtype("float64" if result.has_nulls() else "int64")
+            raise NotImplementedError(
+                "Pandas object string counts require pandas"
             )
-        return self._return_integer(result)
+        pat = self._remove_named_capture_groups(pat)
+        return self._return_integer(self._column.count_re(pat, flags))
 
     def _findall(
         self,
@@ -3967,11 +3817,7 @@ class StringMethods(BaseAccessor):
             )
         pat = self._remove_named_capture_groups(pat)  # type: ignore[arg-type]
         return self._return_or_inplace(
-            (
-                self._list_input()
-                if method is plc.strings.findall.findall
-                else self._column
-            ).findall(method, pat, flags)
+            self._column.findall(method, pat, flags)
         )
 
     def findall(self, pat: str, flags: int = 0) -> Series | Index:
@@ -4039,6 +3885,7 @@ class StringMethods(BaseAccessor):
             The `flags` parameter currently only supports re.DOTALL,
             re.MULTILINE and re.IGNORECASE.
         """
+        self._check_pandas_list_result()
         return self._findall(plc.strings.findall.findall, pat, flags)
 
     def find_re(self, pat: str, flags: int = 0) -> Series | Index:
@@ -4707,23 +4554,21 @@ class StringMethods(BaseAccessor):
             raise NotImplementedError(
                 "unsupported value for `flags` parameter"
             )
-        pat = self._remove_named_capture_groups(
-            pat, strict_end=self._uses_arrow_regex(pat, flags)
-        )
+        self._check_pandas_end_anchor(pat)
+        if (
+            na is no_default
+            and self._column.dtype == np.dtype("object")
+            and self._column.has_nulls()
+            and cudf.get_option("mode.pandas_compatible")
+        ):
+            raise MixedTypeError(
+                "Pandas match can return booleans and nulls in object results"
+            )
+        pat = self._remove_named_capture_groups(pat)
         result = self._column.matches_re(pat, flags)
         if na is not no_default:
             result = result.fillna(na)
-        elif self._column._PANDAS_NA_VALUE is np.nan:
-            result = result.fillna(False)
-        elif (
-            cudf.get_option("mode.pandas_compatible")
-            and self._column.dtype == np.dtype("object")
-            and result.has_nulls()
-        ):
-            raise NotImplementedError(
-                "Object results containing both booleans and nulls are unsupported"
-            )
-        elif self._column._PANDAS_NA_VALUE is None:
+        elif self._column._PANDAS_NA_VALUE in {np.nan, None}:
             result = result.fillna(False)
         return self._return_boolean(result)
 

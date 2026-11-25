@@ -281,17 +281,7 @@ class ListColumn(ColumnBase):
         elif nullable:
             raise NotImplementedError(f"{nullable=} is not implemented.")
         else:
-            values = self.to_arrow().tolist()
-            if (
-                isinstance(self.dtype, ListDtype)
-                and self.dtype._pandas_string_result
-                and isinstance(self.element_type, pd.StringDtype)
-            ):
-                na_value = self.element_type.na_value
-                values = [
-                    na_value if value is None else value for value in values
-                ]
-            return pd.Index(values, dtype="object")
+            return pd.Index(self.to_arrow().tolist(), dtype="object")
 
     def count_elements(self) -> ColumnBase:
         return PylibcudfFunction(

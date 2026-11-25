@@ -45,7 +45,8 @@ outputs:
 
           test_targets=()
           if [[ "$BUILD_CPP_TESTS" == true ]]; then
-            test_targets+=(tests)
+            # Conda PR builds provide MPI/UCXX benchmark coverage for libcudf_streaming.
+            test_targets+=(tests libcudf_streaming_benchmarks)
           fi
           if [[ "$BUILD_CPP_BENCHMARKS" == true ]]; then
             test_targets+=(benchmarks)

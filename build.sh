@@ -18,8 +18,8 @@ ARGS=$*
 # script, and that this script resides in the repo dir!
 REPODIR=$(cd "$(dirname "$0")"; pwd)
 
-VALIDARGS="clean libcudf pylibcudf cudf cudf_polars cudf_polars_quent dask_cudf benchmarks tests libcudf_kafka cudf_kafka custreamz libcudf_streaming cudf_streaming -v -g -n --pydevelop --release -l --allgpuarch --disable_nvtx --opensource_nvcomp  --hide_depr_warn --ptds -h --build_metrics --incl_cache_stats --disable_large_strings"
-HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [cudf_polars_quent] [dask_cudf] [benchmarks] [tests] [libcudf_kafka] [cudf_kafka] [custreamz] [libcudf_streaming] [cudf_streaming] [-v] [-g] [-n] [--release] [-h] [--cmake-args=\\\"<args>\\\"]
+VALIDARGS="clean libcudf pylibcudf cudf cudf_polars cudf_polars_quent dask_cudf benchmarks libcudf_streaming_benchmarks tests libcudf_kafka cudf_kafka custreamz libcudf_streaming cudf_streaming -v -g -n --pydevelop --release -l --allgpuarch --disable_nvtx --opensource_nvcomp  --hide_depr_warn --ptds -h --build_metrics --incl_cache_stats --disable_large_strings"
+HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [cudf_polars_quent] [dask_cudf] [benchmarks] [libcudf_streaming_benchmarks] [tests] [libcudf_kafka] [cudf_kafka] [custreamz] [libcudf_streaming] [cudf_streaming] [-v] [-g] [-n] [--release] [-h] [--cmake-args=\\\"<args>\\\"]
    clean                         - remove all existing build artifacts and configuration (start
                                    over)
    libcudf                       - build the cudf C++ code only
@@ -29,7 +29,8 @@ HELP="$0 [clean] [libcudf] [pylibcudf] [cudf] [cudf_polars] [cudf_polars_quent] 
    cudf_polars_quent             - build the cudf-polars Quent bridge (debug build with maturin develop
                                    and update its stub, unless --release is given)
    dask_cudf                     - build the dask_cudf Python package
-   benchmarks                    - build benchmarks
+   benchmarks                    - build libcudf and libcudf_streaming benchmarks
+   libcudf_streaming_benchmarks  - build libcudf_streaming benchmarks only
    tests                         - build tests
    libcudf_kafka                 - build the libcudf_kafka C++ code only
    cudf_kafka                    - build the cudf_kafka Python package
@@ -80,6 +81,7 @@ VERBOSE_FLAG=""
 BUILD_TYPE=Release
 INSTALL_TARGET=install
 BUILD_BENCHMARKS=OFF
+BUILD_STREAMING_BENCHMARKS=OFF
 BUILD_ALL_GPU_ARCH=0
 BUILD_NVTX=ON
 BUILD_TESTS=OFF
@@ -165,6 +167,9 @@ if hasArg --allgpuarch; then
 fi
 if hasArg benchmarks; then
     BUILD_BENCHMARKS=ON
+fi
+if hasArg benchmarks || hasArg libcudf_streaming_benchmarks; then
+    BUILD_STREAMING_BENCHMARKS=ON
 fi
 if hasArg tests; then
     BUILD_TESTS=ON
@@ -322,7 +327,7 @@ if buildAll || hasArg libcudf_streaming; then
           -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
           -DCMAKE_CUDA_ARCHITECTURES="${CUDF_CMAKE_CUDA_ARCHITECTURES}" \
           -DBUILD_TESTS=${BUILD_TESTS} \
-          -DBUILD_BENCHMARKS=${BUILD_BENCHMARKS} \
+          -DBUILD_BENCHMARKS=${BUILD_STREAMING_BENCHMARKS} \
           -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
           "${EXTRA_CMAKE_ARGS[@]}"
 

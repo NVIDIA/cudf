@@ -51,6 +51,22 @@ def _is_supported_regex_flags(flags: int) -> bool:
     )
 
 
+def _regex_literal_replacement(
+    replacement: str, arrow_regex: bool
+) -> str | None:
+    if "\\" not in replacement:
+        return replacement
+    if arrow_regex:
+        if re.fullmatch(r"(?:[^\\]|\\\\)*", replacement):
+            return replacement.replace(r"\\", "\\")
+        return None
+    try:
+        # An empty pattern has no groups, so this only expands literal escapes.
+        return re.sub("", replacement, "", count=1)
+    except (re.error, IndexError):
+        return None
+
+
 @cache
 def _arrow_digit_pattern() -> str:
     # Arrow and Python can ship different versions of the Unicode character
@@ -58,13 +74,21 @@ def _arrow_digit_pattern() -> str:
     # libcudf evaluates user strings with the same classification.
     codepoints: list[int] = []
     for start, stop in ((0, 0xD800), (0xE000, 0x110000)):
-        for offset in range(start, stop, 0x10000):
-            chars = pa.array(
-                map(chr, range(offset, min(offset + 0x10000, stop))),
-                type=pa.string(),
-            )
-            classified = pc.utf8_is_digit(chars).to_numpy(zero_copy_only=False)
-            codepoints.extend((offset + np.flatnonzero(classified)).tolist())
+        points = np.arange(start, stop, dtype="<u4")
+        # Build Arrow's buffers in bulk to avoid creating a Python string
+        # object for each Unicode scalar value.
+        encoded = points.tobytes().decode("utf-32-le").encode()
+        widths = 1 + (points >= 0x80) + (points >= 0x800) + (points >= 0x10000)
+        offsets = np.empty(len(points) + 1, dtype=np.int32)
+        offsets[0] = 0
+        np.cumsum(widths, dtype=np.int32, out=offsets[1:])
+        chars = pa.Array.from_buffers(
+            pa.string(),
+            len(points),
+            [None, pa.py_buffer(offsets), pa.py_buffer(encoded)],
+        )
+        classified = pc.utf8_is_digit(chars).to_numpy(zero_copy_only=False)
+        codepoints.extend((start + np.flatnonzero(classified)).tolist())
     ranges = []
     first = last = codepoints[0]
     for point in codepoints[1:]:
@@ -75,7 +99,7 @@ def _arrow_digit_pattern() -> str:
             first = point
         last = point
     ranges.append(chr(first) if first == last else f"{chr(first)}-{chr(last)}")
-    return rf"^[{''.join(ranges)}]+\Z"
+    return f"[^{''.join(ranges)}]"
 
 
 def _massage_string_arg(
@@ -180,7 +204,11 @@ class StringMethods(BaseAccessor):
 
     def _list_input(self) -> StringColumn:
         dtype = self._column.dtype
-        if self._categorical and isinstance(dtype, pd.StringDtype):
+        if (
+            self._categorical
+            and isinstance(dtype, pd.StringDtype)
+            and cudf.get_option("mode.pandas_compatible")
+        ):
             return self._column.as_string_column(
                 pd.StringDtype(storage=dtype.storage, na_value=np.nan)
             )
@@ -750,10 +778,17 @@ class StringMethods(BaseAccessor):
 
         libcudf expects unnamed groups and does not support named backreferences.
         """
-        if not re.compile(pat).groupindex and not (strict_end and "$" in pat):
+        compiled = re.compile(pat)
+        strict_end = strict_end and "$" in pat
+        if not compiled.groupindex and not strict_end:
             return pat
 
         result = []
+        multiline = bool(compiled.flags & re.MULTILINE)
+        verbose = bool(compiled.flags & re.VERBOSE)
+        group_modes: list[tuple[bool, bool]] = []
+        scoped_flags = re.compile(r"\(\?([aiLmsux]*)(?:-([imsx]+))?:")
+        inline_comment = re.compile(r"\(\?#(?:\\.|[^\\)])*\)")
         class_start = -1
         position = 0
         while position < len(pat):
@@ -773,15 +808,41 @@ class StringMethods(BaseAccessor):
                 class_start = (
                     position + 1 + (pat[position + 1 : position + 2] == "^")
                 )
+            elif char == "#" and verbose:
+                end = pat.find("\n", position)
+                end = len(pat) if end == -1 else end + 1
+                result.append(pat[position:end])
+                position = end
+                continue
             elif pat.startswith("(?P=", position):
                 raise NotImplementedError(
                     "Named backreferences are not supported"
                 )
             elif pat.startswith("(?P<", position):
+                group_modes.append((multiline, verbose))
                 result.append("(")
                 position = pat.index(">", position + 4) + 1
                 continue
-            elif char == "$" and strict_end:
+            elif char == "(":
+                if comment := inline_comment.match(pat, position):
+                    result.append(comment[0])
+                    position = comment.end()
+                    continue
+                group_modes.append((multiline, verbose))
+                if flags := scoped_flags.match(pat, position):
+                    added, removed = flags[1], flags[2] or ""
+                    multiline = (
+                        multiline or "m" in added
+                    ) and "m" not in removed
+                    verbose = (verbose or "x" in added) and "x" not in removed
+                    result.append(flags[0])
+                    position = flags.end()
+                    continue
+                result.append(char)
+            elif char == ")":
+                multiline, verbose = group_modes.pop()
+                result.append(char)
+            elif char == "$" and strict_end and not multiline:
                 result.append(r"\Z")
             else:
                 result.append(char)
@@ -1207,7 +1268,8 @@ class StringMethods(BaseAccessor):
             arrow_regex = not compiled_pattern and self._uses_arrow_regex(
                 pattern, flags
             )
-            if "\\" in repl:
+            literal = _regex_literal_replacement(repl, arrow_regex)
+            if literal is None:
                 result = self._replace_regex_template(
                     pattern, repl, n, arrow_regex
                 )
@@ -1216,7 +1278,7 @@ class StringMethods(BaseAccessor):
                     self._remove_named_capture_groups(
                         pattern, strict_end=arrow_regex
                     ),
-                    repl,
+                    literal,
                     n,
                 )
         else:
@@ -1827,8 +1889,12 @@ class StringMethods(BaseAccessor):
             _ARROW_HAS_UNICODE_DIGIT
             and isinstance(dtype, pd.StringDtype)
             and dtype.storage == "pyarrow"
+            and not self._column.is_ascii()
         ):
-            result = self._column.matches_re(_arrow_digit_pattern(), 0)
+            # Searching for a non-digit can stop at the first mismatch.
+            result = ~self._column.contains_re(_arrow_digit_pattern(), 0) & (
+                self._column.count_bytes() > 0
+            )
             if dtype.na_value is np.nan:
                 result = result.fillna(False)
         else:
@@ -2615,11 +2681,10 @@ class StringMethods(BaseAccessor):
         """
         if isinstance(self._column.dtype, ListDtype):
             result = ListMethods(self._parent).get(i)
-            if self._column.dtype._pandas_string_result:
-                if (
-                    cudf.get_option("mode.pandas_compatible")
-                    and result._column.has_nulls()
-                ):
+            if self._column.dtype._pandas_string_result and cudf.get_option(
+                "mode.pandas_compatible"
+            ):
+                if result._column.has_nulls():
                     raise NotImplementedError(
                         "Object results with distinct missing-value sentinels "
                         "are unsupported"
@@ -3877,7 +3942,9 @@ class StringMethods(BaseAccessor):
             pat, strict_end=self._uses_arrow_regex(pat, flags)
         )
         result: ColumnBase = self._column.count_re(pat, flags)
-        if self._column.dtype == np.dtype("object"):
+        if self._column.dtype == np.dtype("object") and cudf.get_option(
+            "mode.pandas_compatible"
+        ):
             result = result.astype(
                 np.dtype("float64" if result.has_nulls() else "int64")
             )
@@ -4656,6 +4723,8 @@ class StringMethods(BaseAccessor):
             raise NotImplementedError(
                 "Object results containing both booleans and nulls are unsupported"
             )
+        elif self._column._PANDAS_NA_VALUE is None:
+            result = result.fillna(False)
         return self._return_boolean(result)
 
     def url_decode(self) -> Series | Index:

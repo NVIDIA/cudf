@@ -109,7 +109,8 @@ def test_string_list_result_pandas_conversion(storage, na_value, method, args):
         dtype=pd.StringDtype(storage=storage, na_value=na_value),
     )
     expected = getattr(ps.str, method)(*args)
-    result = getattr(cudf.from_pandas(ps).str, method)(*args)
+    with cudf.option_context("mode.pandas_compatible", True):
+        result = getattr(cudf.from_pandas(ps).str, method)(*args)
     assert_eq(result.to_pandas(), expected)
     assert result.to_pandas().iloc[1] is na_value
 
@@ -125,6 +126,44 @@ def test_arrow_string_regex_replacement_backreferences():
     expected = ps.str.replace(*args, regex=True)
     result = cudf.from_pandas(ps).str.replace(*args, regex=True)
     assert_eq(result.to_pandas(), expected)
+
+
+@pytest.mark.parametrize("pattern", [r"(?m)a$", r"(?m:a$)|b$"])
+@pytest.mark.parametrize("method", ["contains", "match", "count", "replace"])
+def test_arrow_string_inline_multiline_end_anchor(pattern, method):
+    ps = pd.Series(["a\nb", "a\n", "b\n"], dtype="string[pyarrow]")
+    gs = cudf.from_pandas(ps)
+    args = (pattern, "X") if method == "replace" else (pattern,)
+    kwargs = {"regex": True} if method == "replace" else {}
+    assert_eq(
+        getattr(gs.str, method)(*args, **kwargs),
+        getattr(ps.str, method)(*args, **kwargs),
+    )
+
+
+@pytest.mark.parametrize("replacement", [r"\&", r"\.", r"\\", r"\n"])
+def test_python_string_regex_replacement_literal_escapes(replacement):
+    ps = pd.Series(["a", "aa", None], dtype="string[python]")
+    gs = cudf.from_pandas(ps)
+    assert_eq(
+        gs.str.replace("a", replacement, regex=True),
+        ps.str.replace("a", replacement, regex=True),
+    )
+
+
+def test_native_string_split_result_dtypes():
+    arrow = cudf.Series(["a-b", None], dtype="string[pyarrow]")
+    assert isinstance(arrow.str.split("-").dtype, pd.ArrowDtype)
+
+    python = cudf.Series(["a-b", None], dtype="string[python]")
+    result = python.str.split("-").str.get(0)
+    assert result.dtype == python.dtype
+    assert result.to_pandas().iloc[1] is pd.NA
+
+
+def test_native_object_string_match_default_null():
+    series = cudf.Series(["a", None], dtype=object)
+    assert series.str.match("a").to_pandas().tolist() == [True, False]
 
 
 def test_arrow_string_unicode_isdigit():

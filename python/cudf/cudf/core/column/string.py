@@ -34,6 +34,7 @@ from cudf.core.mixins import Scannable
 from cudf.errors import MixedTypeError
 from cudf.utils.dtypes import (
     cudf_dtype_to_pa_type,
+    dtype_from_pylibcudf_column,
     dtype_to_pylibcudf_type,
     get_dtype_of_same_kind,
     is_pandas_nullable_extension_dtype,
@@ -1312,6 +1313,7 @@ class StringColumn(ColumnBase, Scannable):
         return (
             cudf.ListDtype(self.dtype, _pandas_string_result=True)
             if isinstance(self.dtype, pd.StringDtype)
+            and cudf.get_option("mode.pandas_compatible")
             else get_dtype_of_same_kind(self.dtype, cudf.ListDtype(self.dtype))
         )
 
@@ -1499,6 +1501,23 @@ class StringColumn(ColumnBase, Scannable):
                 pylibcudf_result_dtype_policy,
             ).execute_with_args(self),
         )
+
+    def is_ascii(self) -> bool:
+        with self.access(mode="read", scope="internal"):
+            chars = self.plc_column.data()
+            if chars is None or not chars.size:
+                return True
+            if chars.size > np.iinfo(np.int32).max:
+                return False
+            # The span can include bytes outside a sliced view. These can
+            # disable the fast path, but cannot make non-ASCII input pass it.
+            dtype = plc.DataType(plc.TypeId.UINT8)
+            byte_column = plc.Column(dtype, chars.size, chars, None, 0, 0, [])
+            maximum = plc.reduce.reduce(
+                byte_column, plc.aggregation.max(), dtype
+            ).to_py()
+            assert isinstance(maximum, int)
+            return maximum < 128
 
     def join_strings(self, separator: str, na_rep: str | None) -> Self:
         with self.access(mode="read", scope="internal"):
@@ -1858,11 +1877,16 @@ class StringColumn(ColumnBase, Scannable):
                     pat, plc_flags_from_re_flags(flags)
                 ),
             )
-            dtype = (
-                self._list_result_dtype()
-                if method is plc.strings.findall.findall
-                else get_dtype_of_same_kind(self.dtype, np.dtype("int32"))
-            )
+            if (
+                method is plc.strings.findall.findall
+                and isinstance(self.dtype, pd.StringDtype)
+                and cudf.get_option("mode.pandas_compatible")
+            ):
+                dtype = self._list_result_dtype()
+            else:
+                dtype = get_dtype_of_same_kind(
+                    self.dtype, dtype_from_pylibcudf_column(plc_result)
+                )
             res = ColumnBase.create(plc_result, dtype)
             return cast("Self", res)
 

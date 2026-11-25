@@ -10,7 +10,7 @@ nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv > "$evidence/
 
 # Repeat on the GPU associated with the failure being replayed.
 target_gpu=GPU-ffa4d437-0552-ea7a-0e5d-0fe4bf4fd918
-if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-aggregation ]]; then
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-aggregation ]]; then
     target_gpu=GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
 fi
 gpu_inventory=$(< "$evidence/gpus.csv")

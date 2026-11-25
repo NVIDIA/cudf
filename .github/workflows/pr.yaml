@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [gdb-aggregation, memcheck]
+        trial: [memcheck-aggregation]
     permissions:
       actions: read
       contents: read
@@ -53,7 +53,7 @@ jobs:
         if: steps.gpu.outputs.replay == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ matrix.trial == 'gdb-aggregation' && 'd9ea4287c649fc0d6fcd6bdd2f4670373f3406a2' || '4b383a45d42d6ce75dc96fb9c50be380c624a9a3' }}
+          ref: ${{ endsWith(matrix.trial, '-aggregation') && 'd9ea4287c649fc0d6fcd6bdd2f4670373f3406a2' || '4b383a45d42d6ce75dc96fb9c50be380c624a9a3' }}
           path: replay-source
           persist-credentials: false
       - name: Replay the Conda Polars job

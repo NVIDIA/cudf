@@ -23,7 +23,7 @@ fi
 
 # Pin both the test source and the artifact set so a rebuild cannot silently
 # change the native binaries used for the aggregation comparison.
-if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == gdb-aggregation ]]; then
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-aggregation ]]; then
     export RAPIDS_REF_NAME=pull-request/25384
     export CUDF_POLARS_PACKAGE_RUN_ID=45661654812
     export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/aggregation-arm64-explicit.txt"
@@ -56,7 +56,7 @@ rapids-mamba-retry() {
 }
 export -f rapids-mamba-retry
 
-if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck ]]; then
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck* ]]; then
     cp ci/arm64_polars_diagnostics/memcheck-pytest.sh replay-source/ci/run_cudf_polars_pytests.sh
 elif [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then
     # Resolve the exact packages once and run fresh pytest processes on the same GPU.

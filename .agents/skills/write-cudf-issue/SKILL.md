@@ -29,7 +29,7 @@ Write enough for a maintainer to act or join the discussion. A small bug may nee
 
 ## Scope of an issue
 
-State what is in scope, how to verify the result and when the issue is done, so a maintainer can decide who should take it and whoever does can start without more questions. Do not assign the issue or ask for an agent to pick it up; maintainers decide who works on it and whether an agent should.
+State what is in scope, how to verify the result and when the issue is done, so a maintainer can decide who should take it and whoever does can start without more questions. Unless the user asks for an assignee, do not assign the issue or ask for an agent to pick it up; maintainers decide who works on it and whether an agent should.
 
 Default to one issue. A checklist inside it is enough for steps that depend on each other or cannot merge separately. Suggest a story with sub-issues only when the pieces can each be fixed, reviewed and merged on their own and differ in cause, area or likely owner, or when the work is a plan with phases and a shared completion criterion. Each sub-issue then needs its own scope and way to verify it, so it can be taken without reading the story. Show the proposed split to the user and file nothing until they approve it. Many small issues cost every reader a notification, so do not split work that one issue describes well.
 

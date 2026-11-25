@@ -396,12 +396,14 @@ public final class Table implements AutoCloseable {
                                        String filePath, long address, long length,
                                        boolean usingNumPyTypes, int timeUnit,
                                        String[] decimal128Columns,
-                                       boolean ignoreTimezoneInStripeFooter) throws CudfException;
+                                       boolean ignoreTimezoneInStripeFooter,
+                                       boolean convertDatesToProleptic) throws CudfException;
 
   private static native long[] readORCFromDataSource(String[] filterColumnNames,
                                                      boolean usingNumPyTypes, int timeUnit,
                                                      String[] decimal128Columns,
                                                      boolean ignoreTimezoneInStripeFooter,
+                                                     boolean convertDatesToProleptic,
                                                      long dataSourceHandle) throws CudfException;
 
   /**
@@ -417,6 +419,7 @@ public final class Table implements AutoCloseable {
    *                        the columns
    * @param isMapValues     true if a column is a map
    * @param writerTimezone  timezone that the written timestamps are relative to
+   * @param calendarKind    native calendar kind recorded in the ORC footer
    * @param filename        local output path
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -431,6 +434,7 @@ public final class Table implements AutoCloseable {
                                                boolean[] isMapValues,
                                                int stripeSizeRows,
                                                String writerTimezone,
+                                               int calendarKind,
                                                String filename) throws CudfException;
 
   /**
@@ -446,6 +450,7 @@ public final class Table implements AutoCloseable {
    *                        the columns
    * @param isMapValues     true if a column is a map
    * @param writerTimezone  timezone that the written timestamps are relative to
+   * @param calendarKind    native calendar kind recorded in the ORC footer
    * @param consumer        consumer of host buffers produced.
    * @return a handle that is used in later calls to writeORCChunk and writeORCEnd.
    */
@@ -460,6 +465,7 @@ public final class Table implements AutoCloseable {
                                                  boolean[] isMapValues,
                                                  int stripeSizeRows,
                                                  String writerTimezone,
+                                                 int calendarKind,
                                                  HostBufferConsumer consumer,
                                                  HostMemoryAllocator hostMemoryAllocator
                                                  ) throws CudfException;
@@ -1576,7 +1582,8 @@ public final class Table implements AutoCloseable {
     return fromRowCountAndColumns(readORC(opts.getIncludeColumnNames(),
         path.getAbsolutePath(), 0, 0,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
-        opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter()));
+        opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter(),
+        opts.convertDatesToProleptic()));
   }
 
   /**
@@ -1645,7 +1652,8 @@ public final class Table implements AutoCloseable {
     return fromRowCountAndColumns(readORC(opts.getIncludeColumnNames(),
         null, buffer.getAddress() + offset, len,
         opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
-        opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter()));
+        opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter(),
+        opts.convertDatesToProleptic()));
   }
 
   public static Table readORC(ORCOptions opts, DataSource ds) {
@@ -1654,7 +1662,7 @@ public final class Table implements AutoCloseable {
       return fromRowCountAndColumns(readORCFromDataSource(opts.getIncludeColumnNames(),
               opts.usingNumPyTypes(), opts.timeUnit().typeId.getNativeId(),
               opts.getDecimal128Columns(), opts.ignoreTimezoneInStripeFooter(),
-              dataSourceHandle));
+              opts.convertDatesToProleptic(), dataSourceHandle));
     } finally {
       DataSourceHelper.destroyWrapperDataSource(dataSourceHandle);
     }
@@ -1755,6 +1763,7 @@ public final class Table implements AutoCloseable {
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
           options.getWriterTimezone(),
+          options.getNativeCalendarKind(),
           outputFile.getAbsolutePath()));
       this.consumer = null;
     }
@@ -1772,6 +1781,7 @@ public final class Table implements AutoCloseable {
           options.getFlatIsMap(),
           options.getStripeSizeRows(),
           options.getWriterTimezone(),
+          options.getNativeCalendarKind(),
           consumer, hostMemoryAllocator));
       this.consumer = consumer;
     }

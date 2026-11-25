@@ -80,7 +80,8 @@ void protobuf_reader::read(Footer& s, size_t maxlen)
                        field_reader(6, s.numberOfRows),
                        raw_field_reader(7, s.statistics),
                        field_reader(8, s.rowIndexStride),
-                       field_reader(9, s.writer));
+                       field_reader(9, s.writer),
+                       field_reader(11, s.calendar));
   function_builder(s, maxlen, op);
 }
 
@@ -320,6 +321,7 @@ size_t protobuf_writer::write(Footer const& s)
   w.field_repeated_struct_blob(7, s.statistics);
   w.field_uint(8, s.rowIndexStride);
   if (s.writer) w.field_uint(9, *s.writer);
+  if (s.calendar) w.field_uint(11, static_cast<uint32_t>(*s.calendar));
   return w.value();
 }
 

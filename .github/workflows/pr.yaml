@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        trial: [memcheck-native-aggregation]
+        trial: [signal-shuffle, signal-aggregation]
     permissions:
       actions: read
       contents: read

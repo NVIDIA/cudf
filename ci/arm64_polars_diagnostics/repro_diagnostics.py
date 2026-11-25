@@ -14,7 +14,7 @@ import pytest
 
 _output = Path(os.environ["CUDF_POLARS_DIAGNOSTICS_DIR"])
 _trial = os.environ["CUDF_POLARS_DIAGNOSTICS_TRIAL"]
-_trace = not _trial.startswith(("gdb-", "plain-"))
+_trace = not _trial.startswith(("gdb-", "plain-", "signal-"))
 _warmup_first = (
     "tests/expressions/test_agg.py::"
     "test_n_unique_sorted[spmd-small-data0-Int64-False-True-True-False]"
@@ -105,6 +105,19 @@ def _trace_partition_and_pack(worker):
     shuffle.py_partition_and_pack = partition_and_pack
 
 
+def _install_fault_report(worker):
+    reporter = ctypes.CDLL(
+        os.environ["CUDF_POLARS_FAULT_LIBRARY"], use_errno=True
+    )
+    path = _output / f"{worker}.fault.log"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    if reporter.install_fault_report(ctypes.c_int(fd)) != 0:
+        error = ctypes.get_errno()
+        os.close(fd)
+        raise OSError(error, os.strerror(error), str(path))
+    return reporter
+
+
 def pytest_sessionstart(session):
     worker = os.environ.get("PYTEST_XDIST_WORKER")
     if not worker:
@@ -112,7 +125,7 @@ def pytest_sessionstart(session):
             subprocess.run(
                 ["conda", "list", "--explicit"], stdout=packages, check=True
             )
-        if _trial.startswith(("gdb-", "plain-")):
+        if _trial.startswith(("gdb-", "plain-", "signal-")):
             from watch_gpu_events import watch_gpu_events
 
             stopped = threading.Event()
@@ -127,6 +140,8 @@ def pytest_sessionstart(session):
             )
             session._cudf_gpu_watcher = (stopped, watcher)
             watcher.start()
+    elif _trial.startswith("signal-"):
+        session._cudf_fault_reporter = _install_fault_report(worker)
     elif _trial.startswith(("gdb-", "native-", "warmup-")):
         session._cudf_debugger = _attach_debugger(worker)
         if _trace:

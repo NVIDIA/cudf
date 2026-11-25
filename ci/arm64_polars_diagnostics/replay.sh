@@ -16,6 +16,12 @@ export CUDF_POLARS_GPU_UUID
 
 export PYTHONPATH="$PWD/ci/arm64_polars_diagnostics${PYTHONPATH:+:$PYTHONPATH}"
 export PYTEST_PLUGINS=repro_diagnostics
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
+    CUDF_POLARS_FAULT_LIBRARY=$(mktemp /tmp/cudf-polars-fault.XXXXXX.so)
+    export CUDF_POLARS_FAULT_LIBRARY
+    cc -std=c11 -Wall -Wextra -O2 -fPIC -shared \
+        ci/arm64_polars_diagnostics/fault_address.c -o "$CUDF_POLARS_FAULT_LIBRARY"
+fi
 if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then
     # Coverage gates do not apply to the selected worker history.
     export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov -W ignore::pytest_cov.CovDisabledWarning"

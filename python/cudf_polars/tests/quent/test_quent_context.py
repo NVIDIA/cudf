@@ -556,7 +556,7 @@ def test_emit_evaluate_failure() -> None:
         worker_resources=MagicMock(),
         worker_handle=MagicMock(),
         buffer_resource=None,
-        reservation_ingestor=None,
+        reservation_ingestor=MagicMock(),
         reservation_context_registry=ReservationContextRegistry(),
     )
     runtime.session._evaluations = {

@@ -237,7 +237,7 @@ class QuentWorkerRuntime:
     worker_resources: WorkerResources
     worker_handle: quent_bindings.WorkerInitHandle | None
     buffer_resource: BufferResource | None
-    reservation_ingestor: ReservationDeltaIngestor | None
+    reservation_ingestor: ReservationDeltaIngestor
     reservation_context_registry: ReservationContextRegistry
     _reservation_events_lock: threading.Lock = dataclasses.field(
         default_factory=threading.Lock, init=False
@@ -572,7 +572,6 @@ class QuentWorkerRuntime:
             )
             self.worker_handle = None
             self.buffer_resource = None
-            self.reservation_ingestor = None
 
         steps: list[Callable[[], object]] = []
         if worker_handle is not None:

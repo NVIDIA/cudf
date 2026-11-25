@@ -139,7 +139,7 @@ def test_quent_worker_cleanup_continues_after_handle_failure() -> None:
         worker_resources=MagicMock(),
         worker_handle=worker_handle,
         buffer_resource=None,
-        reservation_ingestor=None,
+        reservation_ingestor=MagicMock(),
         reservation_context_registry=ReservationContextRegistry(),
     )
 

@@ -53,18 +53,6 @@ def test_scalar_subquery_is_broadcast(engine: pl.GPUEngine, frames):
     assert_gpu_result_equal(q, engine=engine)
 
 
-@pytest.mark.parametrize("order", ["ASC NULLS FIRST", "DESC NULLS LAST"])
-@pytest.mark.parametrize("empty", [False, True])
-def test_row_number_over(engine: pl.GPUEngine, order, empty):
-    frame = pl.LazyFrame({"g": [1, None, 1, None, 1, 1], "a": [2, 3, None, 1, 2, 0]})
-    if empty:
-        frame = frame.head(0)
-    q = frame.sql(
-        f"SELECT row_number() OVER (PARTITION BY g ORDER BY a {order}) AS r FROM self"
-    )
-    assert_gpu_result_equal(q, engine=engine)
-
-
 def test_left_join_on_constant_key(engine: pl.GPUEngine, frames):
     q = sql(frames, "SELECT g, k FROM t LEFT JOIN u ON w > 15 ORDER BY g, k")
     assert_gpu_result_equal(q, engine=engine)
@@ -113,4 +101,16 @@ def test_decimal_mul(engine: pl.GPUEngine, query):
         },
         schema={"price": pl.Decimal(15, 2), "discount": pl.Decimal(15, 2)},
     ).sql(query)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("order", ["ASC NULLS FIRST", "DESC NULLS LAST"])
+@pytest.mark.parametrize("empty", [False, True])
+def test_row_number_over(engine: pl.GPUEngine, order, empty):
+    frame = pl.LazyFrame({"g": [1, None, 1, None, 1, 1], "a": [2, 3, None, 1, 2, 0]})
+    if empty:
+        frame = frame.head(0)
+    q = frame.sql(
+        f"SELECT row_number() OVER (PARTITION BY g ORDER BY a {order}) AS r FROM self"
+    )
     assert_gpu_result_equal(q, engine=engine)

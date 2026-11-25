@@ -479,7 +479,7 @@ TEST_F(DecompressionScratchSizesTest, MatchesPerElement)
       }
     }
   }
-  for (auto const [host, policy] : {std::pair{"ON", "STABLE"}, std::pair{"OFF", "OFF"}}) {
+  for (auto const& [host, policy] : {std::pair{"ON", "STABLE"}, std::pair{"OFF", "OFF"}}) {
     // Host decompression forced on, or nvCOMP disabled: only the Brotli kernel needs scratch space
     tmp_env_var const host_decomp{host_decomp_env_var, host};
     tmp_env_var const nvcomp_policy{nvcomp_policy_env_var, policy};

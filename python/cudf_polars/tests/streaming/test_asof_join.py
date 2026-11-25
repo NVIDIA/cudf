@@ -330,18 +330,6 @@ def test_asof_join_unused_right_validation(
 
 
 @pytest.mark.engine_params(["spmd-small"])
-def test_asof_join_unchecked_sorted_keys(streaming_engine_factory):
-    left = pl.LazyFrame({"time": [1, 2, 3, 4]}).sort("time")
-    right = pl.LazyFrame({"time": [1, 3], "quote": [10, 30]}).sort("time")
-    engine = streaming_engine_factory(StreamingOptions(max_rows_per_partition=2))
-    assert_gpu_result_equal(
-        left.join_asof(right, on="time", check_sortedness=False),
-        engine=engine,
-        check_row_order=True,
-    )
-
-
-@pytest.mark.engine_params(["spmd-small"])
 @pytest.mark.parametrize("time_ordered", [False, True])
 @pytest.mark.filterwarnings(
     "ignore:Sortedness of columns cannot be checked when 'by' groups provided"

@@ -135,7 +135,7 @@ class _AscendingOrder:
         ) // max(table.num_rows(), 1)
         return max(1, 4 * row_bytes)
 
-    def check(self, table: plc.Table, upstream: Any) -> tuple[plc.Table, Any] | None:
+    def check(self, table: plc.Table, upstream: Any) -> None:
         """Observe this chunk and optionally validate its ascending order."""
         if not table.num_rows():
             return None
@@ -171,7 +171,6 @@ class _AscendingOrder:
             if self.track_first and self.first is None:
                 self.first = self.endpoint(table, 0, stream), stream
             self.previous = self.endpoint(table, table.num_rows() - 1, stream), stream
-            return self.previous
 
 
 class _AsofCursor:
@@ -223,8 +222,6 @@ class _AsofCursor:
         self.right_order = _AscendingOrder(
             ir_context, validate=ir.options[3] and not right_order_promised
         )
-        self.maximum: plc.Table | None = None
-        self.maximum_stream: Any = None
         self.joiner: plc.join.AsofJoin | None = None
         self.payload: DataFrame | None = None
         self.at_eof = False
@@ -435,13 +432,12 @@ class _AsofCursor:
             chunk = await anext(self.right_chunks, None)
             if chunk is None:
                 self.at_eof = True
-                self.maximum = None
                 return
             right_chunk = await self._non_null_right_chunk(chunk)
             if right_chunk is None:
                 continue
             keys = self._keys(right_chunk.table_view(), self.right_indices)
-            maximum = await run_with_reservation(
+            await run_with_reservation(
                 self.context,
                 self.ir_context,
                 self.right_order.reservation_size(keys),
@@ -449,8 +445,6 @@ class _AsofCursor:
                 keys,
                 right_chunk.stream,
             )
-            assert maximum is not None
-            self.maximum, self.maximum_stream = maximum
             right = chunk_to_frame(right_chunk, self.ir.children[1])
             if self.predecessor is not None:
                 if self.predecessor.num_rows + right.num_rows > CUDF_ROW_LIMIT:
@@ -498,16 +492,17 @@ class _AsofCursor:
         self, left: DataFrame, keys: plc.Table, positions: plc.Column | None
     ) -> int:
         """Find the original row where left keys reach the right-window maximum."""
-        assert self.maximum is not None
+        assert self.right_order.previous is not None
+        maximum, maximum_stream = self.right_order.previous
         if not keys.num_rows():
             return left.num_rows
         with stream_ordered_after(
             self.ir_context.get_cuda_stream,
-            upstreams=(left.stream, self.maximum_stream),
+            upstreams=(left.stream, maximum_stream),
         ) as stream:
             end = plc.search.lower_bound(
                 keys,
-                self.maximum,
+                maximum,
                 [plc.types.Order.ASCENDING] * len(self.left_indices),
                 [plc.types.NullOrder.BEFORE] * len(self.left_indices),
                 stream=stream,
@@ -700,7 +695,6 @@ class _AsofCursor:
                             self.current = self.predecessor
                     count = left.num_rows - offset
                 else:
-                    assert self.maximum is not None
                     assert search_keys is not None
                     end = await run_with_reservation(
                         self.context,

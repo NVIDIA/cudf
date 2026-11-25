@@ -49,6 +49,8 @@ cdef class ColumnInMetadata:
 
     cpdef ColumnInMetadata set_list_column_as_map(self)
 
+    cpdef ColumnInMetadata set_struct_column_as_file(self)
+
     cpdef ColumnInMetadata set_int96_timestamps(self, bool req)
 
     cpdef ColumnInMetadata set_decimal_precision(self, uint8_t precision)

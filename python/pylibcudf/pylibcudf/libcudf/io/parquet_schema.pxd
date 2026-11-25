@@ -31,7 +31,12 @@ cdef extern from "cudf/io/parquet_schema.hpp" namespace "cudf::io::parquet" nogi
         UNKNOWN
         JSON
         BSON
+        UUID
+        FLOAT16
         VARIANT
+        GEOMETRY
+        GEOGRAPHY
+        FILE
 
     cpdef enum class TimeUnit "cudf::io::parquet::TimeUnit::Type" (uint8_t):
         UNDEFINED

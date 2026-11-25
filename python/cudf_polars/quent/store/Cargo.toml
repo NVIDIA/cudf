@@ -1,0 +1,21 @@
+[package]
+name = "cudf-polars-quent-store"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[features]
+default = ["filesystem"]
+filesystem = ["quent-store/io-ndjson"]
+
+[dependencies]
+quent-analyzer.workspace = true
+quent-events = { workspace = true, features = ["serde"] }
+quent-store = { workspace = true, features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+smallvec = "1"
+
+[build-dependencies]
+quent-store-build.workspace = true
+quent-yaml.workspace = true
+sha2 = "0.11"

@@ -121,6 +121,7 @@ struct Footer {
   std::vector<col_stats_blob> statistics;  // Column statistics blobs
   uint32_t rowIndexStride = 0;             // the maximum number of rows in each index entry
   std::optional<uint32_t> writer;          // Writer code
+  std::optional<CalendarKind> calendar;    // Calendar used to encode dates and timestamps
 };
 
 struct Stream {
@@ -230,7 +231,7 @@ int constexpr encode_field_number(int field_number) noexcept
 /**
  * @brief Class for parsing Orc's Protocol Buffers encoded metadata
  */
-class protobuf_reader {
+class CUDF_EXPORT protobuf_reader {
  public:
   protobuf_reader(uint8_t const* base, size_t len) : m_base(base), m_cur(base), m_end(base + len) {}
 

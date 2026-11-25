@@ -1,10 +1,12 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
 
 #include <cudf/types.hpp>
+
+#include <cuda/std/optional>
 
 /**
  * @file
@@ -198,6 +200,34 @@ CUDF_HOST_DEVICE constexpr cudf::char_utf8 codepoint_to_utf8(uint32_t unchr)
     utf8 |= 0xF080'8080u;
   }
   return utf8;
+}
+
+/**
+ * @brief Returns true if the code-point is a valid Unicode scalar value.
+ *
+ * Valid values are in [U+0000, U+10FFFF] excluding the surrogates [U+D800, U+DFFF].
+ *
+ * @param unchr Character code-point to check
+ * @return true if the code-point can be encoded as UTF-8
+ */
+CUDF_HOST_DEVICE constexpr bool is_valid_codepoint(uint32_t unchr)
+{
+  return unchr < 0xD800 || (unchr > 0xDFFF && unchr <= 0x10'FFFF);
+}
+
+/**
+ * @brief Returns the next valid code-point after the given one.
+ *
+ * The surrogates [U+D800, U+DFFF] are skipped so U+D7FF is followed by U+E000.
+ *
+ * @param unchr Character code-point
+ * @return Next valid code-point or nullopt if `unchr` is U+10FFFF or larger
+ */
+CUDF_HOST_DEVICE constexpr cuda::std::optional<uint32_t> next_codepoint(uint32_t unchr)
+{
+  if (unchr >= 0x10'FFFF) { return cuda::std::nullopt; }
+  auto const next = unchr + 1;
+  return (next >= 0xD800 && next <= 0xDFFF) ? 0xE000u : next;
 }
 
 }  // namespace strings::detail

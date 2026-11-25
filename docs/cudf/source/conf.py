@@ -575,6 +575,7 @@ _all_namespaces = _generate_namespaces(
             "ast::expression",
             "io::text",
         },
+        "cudf::io": {"orc"},
         "numeric": {},
         "nvtext": {},
     }

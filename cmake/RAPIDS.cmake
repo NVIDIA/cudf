@@ -8,7 +8,7 @@
 # This is the preferred entry point for projects using rapids-cmake
 #
 # Enforce the minimum required CMake version for all users
-cmake_minimum_required(VERSION 4.0 FATAL_ERROR)
+cmake_minimum_required(VERSION 4.3 FATAL_ERROR)
 
 # Allow users to control which version is used
 if(NOT (rapids-cmake-branch OR rapids-cmake-version))

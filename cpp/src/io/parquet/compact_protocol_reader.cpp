@@ -1188,4 +1188,10 @@ void decode_footer_and_init_schema(std::span<uint8_t const> footer_bytes, FileMe
   CUDF_EXPECTS(not reader.overread(), overread_message);
 }
 
+void init_schema(FileMetaData* metadata)
+{
+  CompactProtocolReader reader{nullptr, 0};
+  CUDF_EXPECTS(reader.InitSchema(metadata), cannot_init_schema_message);
+}
+
 }  // namespace cudf::io::parquet::detail

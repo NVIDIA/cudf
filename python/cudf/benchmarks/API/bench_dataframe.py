@@ -62,6 +62,19 @@ def bench_construction_with_mapping(
 
 
 @pytest.mark.parametrize("num_rows", NUM_ROWS)
+@pytest.mark.parametrize("num_mapping_columns", [100, 1000])
+@pytest.mark.parametrize("num_selected_columns", [10, 50])
+def bench_construction_selected_mapping_columns(
+    benchmark, num_rows, num_mapping_columns, num_selected_columns
+):
+    values = cudf.Series(cupy.arange(num_rows, dtype="int64"))
+    mapping = {f"column_{i}": values for i in range(num_mapping_columns)}
+    columns = list(mapping)[:: num_mapping_columns // num_selected_columns]
+
+    benchmark(cudf.DataFrame, mapping, columns=columns)
+
+
+@pytest.mark.parametrize("num_rows", NUM_ROWS)
 @pytest.mark.parametrize("num_cols", NUM_COLS)
 @pytest.mark.parametrize("order", ["C", "F"])
 @pytest.mark.parametrize(

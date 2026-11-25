@@ -166,7 +166,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ParquetChunkedReader_readChunk(
     cudf::jni::auto_set_device(env);
     auto const reader_ptr = reinterpret_cast<cudf::io::chunked_parquet_reader* const>(handle);
     auto chunk            = reader_ptr->read_chunk();
-    return chunk.tbl ? cudf::jni::convert_table_for_return(env, chunk.tbl) : nullptr;
+    return chunk.tbl ? cudf::jni::convert_table_with_row_count_for_return(env, chunk.tbl) : nullptr;
   }
   JNI_CATCH(env, nullptr);
 }
@@ -209,7 +209,8 @@ jlong create_chunked_orc_reader(JNIEnv* env,
                                 jboolean using_numpy_Types,
                                 jint unit,
                                 jobjectArray dec128_col_names,
-                                jboolean ignoreTimezoneInStripeFooter)
+                                jboolean ignoreTimezoneInStripeFooter,
+                                jboolean convert_dates_to_proleptic)
 {
   JNI_NULL_CHECK(env, buffer, "buffer is null", 0);
   if (buffer_length <= 0) {
@@ -233,6 +234,7 @@ jlong create_chunked_orc_reader(JNIEnv* env,
                              .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
                              .decimal128_columns(n_dec128_col_names.as_cpp_vector())
                              .ignore_timezone_in_stripe_footer(ignoreTimezoneInStripeFooter)
+                             .convert_dates_to_proleptic(convert_dates_to_proleptic)
                              .build();
 
     if (output_granularity) {
@@ -264,7 +266,8 @@ Java_ai_rapids_cudf_ORCChunkedReader_createReader(JNIEnv* env,
                                                   jboolean using_numpy_Types,
                                                   jint unit,
                                                   jobjectArray dec128_col_names,
-                                                  jboolean ignoreTimezoneInStripeFooter)
+                                                  jboolean ignoreTimezoneInStripeFooter,
+                                                  jboolean convert_dates_to_proleptic)
 {
   return create_chunked_orc_reader(env,
                                    chunk_read_limit,
@@ -276,7 +279,8 @@ Java_ai_rapids_cudf_ORCChunkedReader_createReader(JNIEnv* env,
                                    using_numpy_Types,
                                    unit,
                                    dec128_col_names,
-                                   ignoreTimezoneInStripeFooter);
+                                   ignoreTimezoneInStripeFooter,
+                                   convert_dates_to_proleptic);
 }
 
 // This function should take all the parameters that `Table.readORC` takes,
@@ -293,7 +297,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ORCChunkedReader_createReaderWithOut
   jboolean using_numpy_Types,
   jint unit,
   jobjectArray dec128_col_names,
-  jboolean ignoreTimezoneInStripeFooter)
+  jboolean ignoreTimezoneInStripeFooter,
+  jboolean convert_dates_to_proleptic)
 {
   return create_chunked_orc_reader(env,
                                    chunk_read_limit,
@@ -305,7 +310,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ORCChunkedReader_createReaderWithOut
                                    using_numpy_Types,
                                    unit,
                                    dec128_col_names,
-                                   ignoreTimezoneInStripeFooter);
+                                   ignoreTimezoneInStripeFooter,
+                                   convert_dates_to_proleptic);
 }
 
 JNIEXPORT jboolean JNICALL Java_ai_rapids_cudf_ORCChunkedReader_hasNext(JNIEnv* env,
@@ -334,7 +340,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ORCChunkedReader_readChunk(JNIE
     cudf::jni::auto_set_device(env);
     auto const reader_ptr = reinterpret_cast<cudf::io::chunked_orc_reader* const>(handle);
     auto chunk            = reader_ptr->read_chunk();
-    return chunk.tbl ? cudf::jni::convert_table_for_return(env, chunk.tbl) : nullptr;
+    return chunk.tbl ? cudf::jni::convert_table_with_row_count_for_return(env, chunk.tbl) : nullptr;
   }
   JNI_CATCH(env, nullptr);
 }

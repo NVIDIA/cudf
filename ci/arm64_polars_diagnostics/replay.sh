@@ -40,6 +40,8 @@ rapids-mamba-retry() {
         printf '%s\n' "$entry"
     done < "$CUDF_POLARS_EXPLICIT_ENV" > "$spec"
     conda create --yes --no-default-packages --name test --file "$spec"
+    # Conda's explicit manifest omits the wheel installed by the original job.
+    conda run --no-capture-output --name test python -m pip install --no-deps 'polars-iceberg==0.1.1'
 }
 export -f rapids-mamba-retry
 

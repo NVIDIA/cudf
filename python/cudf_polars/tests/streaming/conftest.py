@@ -4,15 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import os
-import tarfile
-import urllib.request
 import warnings
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+import polars as pl
 from polars.testing import assert_frame_equal
 
 from cudf_polars.engine.options import StreamingOptions
@@ -24,18 +21,13 @@ from cudf_polars.streaming.benchmarks.utils import (
     RunOptions,
     ValidationMethod,
     _add_dataset_args,
+    get_data,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
-    import polars as pl
-
-# The SQL queries of https://github.com/pola-rs/polars-2.0-benchmark, which has
-# no license to vendor them under. Fetched at this revision, or read from the
-# directory in TPC_SQL_DIR, which holds the ``tpch`` and ``tpcds`` directories.
-TPC_SQL_REVISION = "313d104e2d871c9a36229417ac06c8668ff842ae"
-TPC_SQL_URL = f"https://codeload.github.com/pola-rs/polars-2.0-benchmark/tar.gz/{TPC_SQL_REVISION}"
+    from cudf_polars.streaming.benchmarks.utils import RunConfig
 
 # Warnings about partitioning rather than fallback to the CPU.
 TPC_SQL_ALLOWED_WARNINGS = (
@@ -147,32 +139,21 @@ def tpc_spmd_engine(
 
 
 @pytest.fixture(scope="session")
-def tpc_sql_directory(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Directory with the ``tpch`` and ``tpcds`` SQL query files."""
-    if (path := os.environ.get("TPC_SQL_DIR")) is not None:
-        return Path(path)
-    root = tmp_path_factory.mktemp("tpc_sql")
-    try:
-        with (
-            urllib.request.urlopen(TPC_SQL_URL, timeout=300) as response,
-            tarfile.open(fileobj=response, mode="r|gz") as archive,
-        ):
-            for member in archive:
-                parts = Path(member.name).parts
-                # <repository>/queries/sql/<suite>/<query>.sql
-                if len(parts) != 5 or parts[1:3] != ("queries", "sql"):
-                    continue
-                if not member.isfile() or not parts[4].endswith(".sql"):
-                    continue
-                target = root / parts[3] / parts[4]
-                target.parent.mkdir(exist_ok=True)
-                target.write_bytes(archive.extractfile(member).read())  # type: ignore[union-attr]
-    except OSError as e:
-        raise RuntimeError(
-            f"Could not fetch the SQL queries from {TPC_SQL_URL}. Download them "
-            "and set TPC_SQL_DIR to a directory with `tpch` and `tpcds` inside."
-        ) from e
-    return root
+def tpc_sql_frame() -> Callable[[Any, list[str], int, RunConfig], pl.LazyFrame]:
+    """Plan the DuckDB-dialect SQL of a benchmark query with ``polars.SQLContext``."""
+
+    def plan(
+        queries: Any, table_names: list[str], q_id: int, run_config: RunConfig
+    ) -> pl.LazyFrame:
+        context = pl.SQLContext(
+            {
+                table: get_data(run_config.dataset_path, table, run_config.suffix)
+                for table in table_names
+            }
+        )
+        return context.execute(getattr(queries, f"q{q_id}")(run_config))
+
+    return plan
 
 
 @pytest.fixture(scope="session")

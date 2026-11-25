@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 
+import static ai.rapids.cudf.ast.References.reachabilityFence;
+
 /**
  * A reusable AST JIT program specialized to an input schema.
  * Construction lowers the expressions and retrieves their JIT kernel. Subsequent calls reuse that
@@ -104,8 +106,8 @@ public final class AstJitProgram implements AutoCloseable {
     try {
       return new AstJitProgram(create(expressionArgs.nativeHandles, tableHandle));
     } finally {
-      CompiledExpression.reachabilityFence(schemaTable);
-      CompiledExpression.reachabilityFence(expressionArgs.expressionRefs);
+      reachabilityFence(schemaTable);
+      reachabilityFence(expressionArgs.expressionRefs);
     }
   }
 
@@ -134,8 +136,8 @@ public final class AstJitProgram implements AutoCloseable {
     try {
       return new Table(computeTableNative(programHandle, tableHandle));
     } finally {
-      CompiledExpression.reachabilityFence(this);
-      CompiledExpression.reachabilityFence(table);
+      reachabilityFence(this);
+      reachabilityFence(table);
     }
   }
 

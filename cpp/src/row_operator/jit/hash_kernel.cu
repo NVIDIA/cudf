@@ -11,13 +11,12 @@
 
 extern "C" {
 
-__global__ void cudf_kernel_entry(cudf_abi::column_device_view const* columns,
+__global__ void cudf_kernel_entry(cudf_abi::column_device_view const* __restrict__ columns,
                                   cudf_abi::size_type num_rows,
                                   cudf_abi::uint64_t seed,
-                                  bool has_nulls,
-                                  void* low,
-                                  void* high)
+                                  void* __restrict__ low,
+                                  void* __restrict__ high)
 {
-  CUDF_KERNEL_INSTANCE(columns, num_rows, seed, has_nulls, low, high);
+  CUDF_KERNEL_INSTANCE(columns, num_rows, seed, low, high);
 }
 }

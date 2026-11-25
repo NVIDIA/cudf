@@ -10,6 +10,7 @@
 #include <cudf/column/column_child_offsets.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing.hpp>
 #include <cudf/hashing/detail/hashing.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -24,9 +25,11 @@
 #include <cudf_fragments.hpp>
 #include <rtcx/rtcx.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <format>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -52,6 +55,32 @@ std::span<uint8_t const> get_hash_fragment(algorithm alg)
       CUDF_FAIL(std::format("Unsupported hash algorithm: {}", static_cast<int>(alg)),
                 std::invalid_argument);
   }
+}
+
+std::string reflect_hash_kernel(algorithm alg,
+                                table_view const& input,
+                                bool has_nulls,
+                                bool single_row_per_thread)
+{
+  auto const seed_chaining =
+    alg == algorithm::spark_murmurhash3_x86_32 || alg == algorithm::murmurhash3_x64_128;
+
+  CUDF_EXPECTS(
+    input.num_columns() > 0, "Row hashing requires at least one column", std::invalid_argument);
+
+  std::vector<std::string> parameters{reflect_hash_output(alg),
+                                      rtcx::reflect(seed_chaining),
+                                      rtcx::reflect(has_nulls),
+                                      rtcx::reflect(single_row_per_thread)};
+
+  for (auto const index : std::views::iota(size_type{0}, input.num_columns())) {
+    parameters.push_back(
+      rtcx::reflect_template(std::format("cudf::row_operators::{}", to_string(alg)),
+                             std::to_string(index),
+                             reflect_layout(input.column(index))));
+  }
+
+  return rtcx::reflect_template("cudf::row_operators::hash_kernel", parameters);
 }
 
 kernel get_kernel(algorithm alg, std::string const& instance)
@@ -82,21 +111,27 @@ void launch(kernel const& operation,
             column_device_view const* columns,
             size_type num_rows,
             uint64_t seed,
-            bool nullable,
+            bool single_row_per_thread,
             void* low,
             void* high,
             cuda::stream_ref stream)
 {
-  auto const config = operation.max_occupancy_config(0, 0);
+  // Choose a block size for maximum occupancy, capped at 256 threads for the one-row-per-thread
+  // path. A zero cap lets the grid-stride path consider all supported block sizes.
+  auto const config = operation.max_occupancy_config(0, single_row_per_thread ? 256 : 0);
+  // With one row per thread, launch enough threads to cover every row. Otherwise, launch only
+  // enough blocks to fill the GPU; each thread processes more rows through its grid-stride loop.
+  auto const blocks = single_row_per_thread
+                        ? detail::grid_1d{num_rows, config.block_size}.num_blocks
+                        : config.min_grid_size;
 
-  operation.launch_with({config.min_grid_size},
+  operation.launch_with({static_cast<uint32_t>(blocks)},
                         {config.block_size},
                         0,
                         stream,
                         columns,
                         num_rows,
                         seed,
-                        nullable,
                         low,
                         high);
 }
@@ -177,13 +212,22 @@ std::vector<std::unique_ptr<column>> hash_column(algorithm alg,
     return outputs;
   }
 
-  auto const instance     = reflect_hash_kernel(alg, input);
-  auto const operation    = get_kernel(alg, instance);
-  auto [storage, columns] = create_column_device_views<column_device_view>(input, stream, mr);
+  // Spark skips null elements within nested values when chaining the seed, so child validity
+  // matters even when all parent rows are valid. Other algorithms use the top-level null flag.
   auto const nullable =
     alg == algorithm::spark_murmurhash3_x86_32 ? has_nested_nulls(input) : has_nulls(input);
 
-  launch(operation, columns, input.num_rows(), seed, nullable, d_low, d_high, stream);
+  // Variable-length and dictionary inputs use a full row grid to keep indirect accesses local.
+  // Plain fixed-width inputs retain an occupancy-sized grid with a grid-stride loop.
+  auto const single_row_per_thread = std::ranges::any_of(input, [](auto const& column) {
+    auto const type = column.type().id();
+    return type == type_id::STRING || type == type_id::LIST || type == type_id::DICTIONARY32;
+  });
+  auto const instance     = reflect_hash_kernel(alg, input, nullable, single_row_per_thread);
+  auto const operation    = get_kernel(alg, instance);
+  auto [storage, columns] = create_column_device_views<column_device_view>(input, stream, mr);
+
+  launch(operation, columns, input.num_rows(), seed, single_row_per_thread, d_low, d_high, stream);
 
   return outputs;
 }

@@ -79,18 +79,4 @@ enum class algorithm : uint8_t {
  */
 [[nodiscard]] std::string reflect_hasher(algorithm alg, column_view const& column, size_type index);
 
-/**
- * @brief Reflects a hash kernel with an output policy and one typed hasher per column.
- *
- * Spark MurmurHash and MurmurHash3 x64 128 chain seeds between columns. Other algorithms combine
- * independently seeded column hashes. An empty schema has no first hasher and is rejected.
- *
- * @param alg Hash algorithm
- * @param input Input schema
- * @return Fully qualified hash kernel template instantiation
- * @throws cudf::data_type_error If a column layout or value type is unsupported
- * @throws std::invalid_argument If the algorithm is unsupported or there are no columns
- */
-[[nodiscard]] std::string reflect_hash_kernel(algorithm alg, table_view const& input);
-
 }  // namespace cudf::row_operators

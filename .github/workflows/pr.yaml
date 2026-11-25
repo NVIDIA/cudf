@@ -20,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - probe-01
+          - driver-reference
           - probe-02
           - probe-03
           - probe-04

@@ -19,8 +19,17 @@ dask_gpus=(
     GPU-bb45021e-c845-0adf-d508-f0a6a6995a1f
     "$shuffle_gpu"
 )
-if [[ "$trial" == probe-* ]]; then
-    for gpu in "${dask_gpus[@]}"; do
+driver_gpus=(
+    "${dask_gpus[@]}"
+    GPU-0a09faf2-4209-1445-fcce-4d121c0d7c98
+    GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
+    GPU-c546a04e-2234-c700-68f5-02cc3997c685
+)
+if [[ "$trial" == driver-reference ]]; then
+    # Verify the alternate userspace driver in CI even if no known GPU is assigned.
+    trial=signal-driver-dask-datetime
+elif [[ "$trial" == probe-* ]]; then
+    for gpu in "${driver_gpus[@]}"; do
         if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
             trial=signal-driver-dask-datetime
             break
@@ -36,12 +45,16 @@ elif [[ "$trial" == *-dask-datetime ]]; then
     target_gpus=("${dask_gpus[@]}")
 fi
 repeat=false
-for target_gpu in "${target_gpus[@]}"; do
-    if [[ "$gpu_inventory" == *"${target_gpu},"* ]]; then
-        repeat=true
-        break
-    fi
-done
+if [[ "$trial" == signal-driver-dask-datetime ]]; then
+    repeat=true
+else
+    for target_gpu in "${target_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"${target_gpu},"* ]]; then
+            repeat=true
+            break
+        fi
+    done
+fi
 if [[ "$repeat" == false &&
     ( "$trial" == probe-* ||
         "$trial" == gdb-[0-9][0-9] ||

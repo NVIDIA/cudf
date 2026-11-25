@@ -25,7 +25,10 @@ driver_gpus=(
     GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
     GPU-c546a04e-2234-c700-68f5-02cc3997c685
 )
-if [[ "$trial" == driver-reference ]]; then
+if [[ "$trial" == shuffle-probe-* && "$gpu_inventory" == *"$shuffle_gpu,"* ]]; then
+    # Preserve the archived test schedule while capturing a native stack on recurrence.
+    trial=signal-target-frozen-shuffle
+elif [[ "$trial" == driver-reference ]]; then
     # Verify the alternate userspace driver in CI even if no known GPU is assigned.
     trial=signal-driver-dask-datetime
 elif [[ "$trial" == probe-* ]]; then
@@ -57,6 +60,7 @@ else
 fi
 if [[ "$repeat" == false &&
     ( "$trial" == probe-* ||
+        "$trial" == shuffle-probe-* ||
         "$trial" == gdb-[0-9][0-9] ||
         "$trial" == plain-[0-9][0-9] ||
         "$trial" == signal-target-*-aggregation ||

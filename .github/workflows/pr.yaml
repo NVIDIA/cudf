@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-driver-compare
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-archived-shuffle
   cancel-in-progress: true
 
 jobs:
@@ -20,18 +20,18 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - driver-reference
-          - probe-02
-          - probe-03
-          - probe-04
-          - probe-05
-          - probe-06
-          - probe-07
-          - probe-08
-          - probe-09
-          - probe-10
-          - probe-11
-          - probe-12
+          - shuffle-probe-01
+          - shuffle-probe-02
+          - shuffle-probe-03
+          - shuffle-probe-04
+          - shuffle-probe-05
+          - shuffle-probe-06
+          - shuffle-probe-07
+          - shuffle-probe-08
+          - shuffle-probe-09
+          - shuffle-probe-10
+          - shuffle-probe-11
+          - shuffle-probe-12
     permissions:
       actions: read
       contents: read

@@ -5,11 +5,9 @@
 
 #pragma once
 
-#include <cudf/utilities/config.hpp>
-
 #include <cuda/std/cassert>
 
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 #include <cuda_runtime.h>
 #endif
 

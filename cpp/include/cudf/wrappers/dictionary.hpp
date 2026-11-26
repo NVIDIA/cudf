@@ -6,11 +6,10 @@
 #pragma once
 
 #include <cudf/types.hpp>
-#include <cudf/utilities/config.hpp>
 
 #include <cuda/std/limits>
 
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 #include <cuda_runtime.h>
 #endif
 

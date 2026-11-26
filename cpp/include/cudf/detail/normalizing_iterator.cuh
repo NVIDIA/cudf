@@ -5,9 +5,7 @@
 
 #pragma once
 
-#include <cudf/utilities/config.hpp>
-
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 
 #include <cudf/utilities/type_dispatcher.hpp>
 
@@ -219,7 +217,7 @@ struct alignas(16) base_normalator {
   };
 
  protected:
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 
   /**
    * @brief Constructor assigns width and type member variables for base class.

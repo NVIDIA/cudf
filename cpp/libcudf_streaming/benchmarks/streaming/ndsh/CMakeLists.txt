@@ -50,9 +50,6 @@ endforeach()
 # Compile the CUDA UDFs once into an LTO fatbin and embed the module in the shared NDSH library.
 include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/thirdparty/get_rtcx.cmake")
 include("${CUDF_STREAMING_SOURCE_DIR}/../cmake/Modules/AddFragment.cmake")
-get_target_property(cudf_compile_definitions cudf::cudf INTERFACE_COMPILE_DEFINITIONS)
-list(FILTER cudf_compile_definitions INCLUDE REGEX "^CUDF_LTO_ARCHITECTURE=")
-string(REPLACE "CUDF_LTO_ARCHITECTURE=" "" CUDF_LTO_ARCHITECTURE "${cudf_compile_definitions}")
 rtcx_add_embed(streaming_ndsh_fragments)
 add_fragment(
   streaming_ndsh_fragments FRAGMENT ndsh_udfs SOURCE fragments.cu LINK_LIBRARIES cudf::cudf

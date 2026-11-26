@@ -30,11 +30,10 @@
 #include <cudf/detail/utilities/assert.cuh>
 #include <cudf/fixed_point/temporary.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/config.hpp>
 
 #include <cuda/cmath>
 
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 #include <cudf/utilities/error.hpp>
 
 #include <cmath>

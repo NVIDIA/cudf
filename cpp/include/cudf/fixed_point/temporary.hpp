@@ -6,13 +6,12 @@
 #pragma once
 
 #include <cudf/types.hpp>
-#include <cudf/utilities/config.hpp>
 
 #include <cuda/cmath>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
 
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 #include <algorithm>
 #include <string>
 #endif
@@ -20,7 +19,7 @@
 namespace CUDF_EXPORT numeric {
 namespace detail {
 
-#if !CUDF_RUNTIME_COMPILATION
+#ifndef __CUDACC_RTC__
 
 template <typename T>
 auto to_string(T value) -> std::string

@@ -179,11 +179,11 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
       }
     }
     std::vector<std::size_t> copy_sizes(sources.size(), sizeof(size_type));
-    auto const status = cudf::detail::memcpy_batch_async(
+    auto const copy_status = cudf::detail::memcpy_batch_async(
       destinations.data(), sources.data(), copy_sizes.data(), sources.size(), stream);
     // Drain even a partially submitted batch before checking its status or releasing destinations.
     cudf::detail::sync_stream(stream);
-    CUDF_CUDA_TRY(status);
+    CUDF_CUDA_TRY(copy_status);
     for (size_type i = 0; i < columns; ++i) {
       auto const index = std::size_t{2} * i;
       auto const first = input.column(i).offset() == 0 ? 0 : boundaries.data()[index];

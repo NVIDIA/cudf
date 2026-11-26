@@ -77,7 +77,7 @@ struct decimal32_decimal64_null_logic {
     auto const lhs = i / 3 == 2 ? cuda::std::optional<decimal32>{}
                                 : cuda::std::optional{decimal32{i / 3, scale_type{-2}}};
     auto const rhs = i % 3 == 2 ? cuda::std::optional<decimal64>{}
-                                : cuda::std::optional{decimal64{i % 3, scale_type{1}}};
+                                : cuda::std::optional{decimal64{10 * (i % 3), scale_type{1}}};
     using cuda::std::nullopt;
     cuda::std::optional<bool> const expected_and[] = {
       false, false, false, false, true, nullopt, false, nullopt, nullopt};

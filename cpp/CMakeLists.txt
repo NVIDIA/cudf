@@ -40,13 +40,8 @@ option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
 mark_as_advanced(CUDF_BUILD_TESTUTIL)
-option(CUDF_USE_PRIVATE_TEST_LIBRARIES "Share code between internal test and benchmark binaries" ON)
-mark_as_advanced(CUDF_USE_PRIVATE_TEST_LIBRARIES)
 set(CUDF_PRIVATE_TEST_LIBRARIES OFF)
-if(CUDF_USE_PRIVATE_TEST_LIBRARIES
-   AND BUILD_SHARED_LIBS
-   AND CMAKE_SYSTEM_NAME STREQUAL "Linux"
-)
+if(BUILD_SHARED_LIBS AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   set(CUDF_PRIVATE_TEST_LIBRARIES ON)
 endif()
 option(CUDF_LARGE_STRINGS_DISABLED "Build with large string support disabled" OFF)

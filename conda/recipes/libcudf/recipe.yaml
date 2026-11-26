@@ -369,8 +369,6 @@ outputs:
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"
-        missing_dso_allowlist:
-          - "libnvidia-ml.so.1"
     requirements:
       build:
         - cmake ${{ cmake_version }}
@@ -422,6 +420,7 @@ outputs:
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"
+        # NVBench can link NVML, which GPU runners get from the NVIDIA driver.
         missing_dso_allowlist:
           - "libnvidia-ml.so.1"
     requirements:

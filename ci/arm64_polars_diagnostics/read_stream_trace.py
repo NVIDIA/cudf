@@ -17,7 +17,7 @@ def rows(path):
     result = []
     for i, entry in enumerate(RECORD.iter_unpack(path.read_bytes())):
         *fields, api = entry
-        if fields[0] and (fields[0] - 1) % (1 << 18) == i:
+        if 0 < fields[0] < (1 << 63) and (fields[0] - 1) % (1 << 18) == i:
             result.append((*fields, api.rstrip(b"\0").decode("ascii")))
     return sorted(result)
 

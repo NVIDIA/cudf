@@ -143,7 +143,7 @@ def _install_fault_report(worker):
         )
         cupti = os.fsencode(candidates[0] if candidates else "libcupti.so.13")
         trace = _output / f"{worker}.stream.bin"
-        trace_fd = os.open(trace, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        trace_fd = os.open(trace, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
         status = reporter.install_stream_trace(
             trace_fd, ctypes.c_char_p(cupti)
         )

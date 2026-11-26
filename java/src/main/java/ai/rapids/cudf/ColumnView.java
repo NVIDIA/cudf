@@ -1175,7 +1175,7 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * with {@code stringOffsets}.
    * <p>
    * With {@code stringOffsets}, the UDF writes the characters of each row directly into the
-   * result column.  The output parameter is a {@code cuda::std::span<char>} pointer, set to
+   * result column.  The output parameter is a {@code cudf::mutable_string_view} pointer, set to
    * the row's slot in the result's characters, sized according to the offsets.  The characters
    * are uninitialized; the UDF must write all of them.  The offsets are typically computed by a
    * preceding transform producing the output size of each row.  The offsets must start at 0 and

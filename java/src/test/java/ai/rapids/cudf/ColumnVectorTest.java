@@ -165,7 +165,7 @@ public class ColumnVectorTest extends CudfTestBase {
 
   /** Writes the digits into the row's slot of the result, sized by preallocated offsets. */
   private static final String DIGITS_WRITE_UDF = "__device__ inline void f(" +
-      "cuda::std::span<char>* output," +
+      "cudf::mutable_string_view* output," +
       "int input" +
       "){" +
       "char* out = output->data();" +
@@ -343,7 +343,7 @@ public class ColumnVectorTest extends CudfTestBase {
     String writeUdf = "__device__ inline void f(" +
         "void* user_data," +
         "cudf::size_type row," +
-        "cuda::std::span<char>* output," +
+        "cudf::mutable_string_view* output," +
         "int input" +
         "){" +
         "char const* letters = static_cast<char const*>(user_data);" +
@@ -394,7 +394,7 @@ public class ColumnVectorTest extends CudfTestBase {
         "\tret;\n" +
         "\n" +
         "}\n";
-    //   extern "C" __device__ int digits_write(cuda::std::span<char>* output, int input) {
+    //   extern "C" __device__ int digits_write(cudf::mutable_string_view* output, int input) {
     //     char* out = output->data();
     //     if (input >= 10) { *out++ = static_cast<char>(48 + input / 10); }
     //     *out = static_cast<char>(48 + input % 10);

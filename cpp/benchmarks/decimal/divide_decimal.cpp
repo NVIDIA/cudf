@@ -66,8 +66,13 @@ void bench_divide_decimal(nvbench::state& state, nvbench::type_list<DecimalType>
 
   auto const mem_stats_logger = cudf::memory_stats_logger();
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
-    cudf::divide_decimal(
-      lhs->view(), rhs->view(), lhs->type(), cudf::rounding_method::HALF_UP, intermediate, stream);
+    cudf::divide_decimal(lhs->view(),
+                         rhs->view(),
+                         lhs->type(),
+                         cudf::error_policy::NULLIFY,
+                         cudf::rounding_method::HALF_UP,
+                         intermediate,
+                         stream);
   });
 
   state.add_element_count(num_rows);

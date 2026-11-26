@@ -31,8 +31,8 @@ namespace CUDF_EXPORT cudf {
  * @brief Width of the intermediate value that `divide_decimal` rescales the dividend into.
  */
 enum class decimal_intermediate : int32_t {
-  STANDARD,  ///< 64 bits if all types are `DECIMAL32`, else 128 bits. Rows that overflow are null.
-  WIDE       ///< 256 bits. Rows are null only for a zero divisor or a quotient that doesn't fit.
+  STANDARD,  ///< 64 bits if all types are `DECIMAL32`, else 128 bits. Rows that overflow fail.
+  WIDE       ///< 256 bits. Rows fail only for a zero divisor or a quotient that doesn't fit.
 };
 
 /**
@@ -47,13 +47,15 @@ enum class decimal_intermediate : int32_t {
  * The precision of the output is the largest number of decimal digits its type can hold: 9 for
  * `DECIMAL32`, 18 for `DECIMAL64` and 38 for `DECIMAL128`.
  *
- * An output element is null if:
- * - either input element is null,
- * - `rhs[i]` is zero,
+ * An output element is null if either input element is null. A row fails with
+ * `errc::DIVISION_BY_ZERO` if `rhs[i]` is zero, and with `errc::ARITHMETIC_OVERFLOW` if:
  * - the rounded quotient has more digits than the precision of `output_type`, or
  * - `intermediate` is `decimal_intermediate::STANDARD` and the magnitude of `lhs[i]`, rescaled to
  *   give a quotient at the scale of `output_type`, does not fit in an unsigned 64-bit integer if
  *   `lhs`, `rhs` and `output_type` are all `DECIMAL32`, or an unsigned 128-bit integer otherwise.
+ *
+ * `error_policy::PROPAGATE` throws `cudf::evaluation_error` if any row fails;
+ * `error_policy::NULLIFY` makes failing rows null.
  *
  * With `decimal_intermediate::WIDE`, the rescaled dividend is held in 256 bits, which is always
  * enough for any quotient that fits in `output_type`. Rows that would need it are slower than
@@ -61,10 +63,12 @@ enum class decimal_intermediate : int32_t {
  *
  * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
  * @throw cudf::logic_error if `lhs` and `rhs` have different sizes
+ * @throw cudf::evaluation_error if `policy` is `error_policy::PROPAGATE` and any row fails
  *
  * @param lhs The dividend column
  * @param rhs The divisor column
  * @param output_type The decimal type and scale of the output
+ * @param policy How failing rows are handled
  * @param method The rounding method to use
  * @param intermediate The width of the intermediate value used to rescale the dividend
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -75,6 +79,7 @@ std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   column_view const& rhs,
   data_type output_type,
+  error_policy policy,
   rounding_method method            = rounding_method::HALF_UP,
   decimal_intermediate intermediate = decimal_intermediate::STANDARD,
   cuda::stream_ref stream           = cudf::get_default_stream(),
@@ -86,14 +91,16 @@ std::unique_ptr<column> divide_decimal(
  *
  * Each output element is `lhs[i] / rhs`, rounded to the scale of `output_type` using `method`.
  *
- * Types, precision and null outputs follow the same rules as the column-column overload. Every
- * output element is null if `rhs` is invalid.
+ * Types, precision, null outputs and failing rows follow the same rules as the column-column
+ * overload. Every output element is null if `rhs` is invalid.
  *
  * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
+ * @throw cudf::evaluation_error if `policy` is `error_policy::PROPAGATE` and any row fails
  *
  * @param lhs The dividend column
  * @param rhs The divisor scalar
  * @param output_type The decimal type and scale of the output
+ * @param policy How failing rows are handled
  * @param method The rounding method to use
  * @param intermediate The width of the intermediate value used to rescale the dividend
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -104,6 +111,7 @@ std::unique_ptr<column> divide_decimal(
   column_view const& lhs,
   scalar const& rhs,
   data_type output_type,
+  error_policy policy,
   rounding_method method            = rounding_method::HALF_UP,
   decimal_intermediate intermediate = decimal_intermediate::STANDARD,
   cuda::stream_ref stream           = cudf::get_default_stream(),
@@ -115,14 +123,16 @@ std::unique_ptr<column> divide_decimal(
  *
  * Each output element is `lhs / rhs[i]`, rounded to the scale of `output_type` using `method`.
  *
- * Types, precision and null outputs follow the same rules as the column-column overload. Every
- * output element is null if `lhs` is invalid.
+ * Types, precision, null outputs and failing rows follow the same rules as the column-column
+ * overload. Every output element is null if `lhs` is invalid.
  *
  * @throw cudf::logic_error if `lhs`, `rhs` or `output_type` is not a decimal type
+ * @throw cudf::evaluation_error if `policy` is `error_policy::PROPAGATE` and any row fails
  *
  * @param lhs The dividend scalar
  * @param rhs The divisor column
  * @param output_type The decimal type and scale of the output
+ * @param policy How failing rows are handled
  * @param method The rounding method to use
  * @param intermediate The width of the intermediate value used to rescale the dividend
  * @param stream CUDA stream used for device memory operations and kernel launches
@@ -133,6 +143,7 @@ std::unique_ptr<column> divide_decimal(
   scalar const& lhs,
   column_view const& rhs,
   data_type output_type,
+  error_policy policy,
   rounding_method method            = rounding_method::HALF_UP,
   decimal_intermediate intermediate = decimal_intermediate::STANDARD,
   cuda::stream_ref stream           = cudf::get_default_stream(),

@@ -22,6 +22,7 @@ TEST_F(DivideDecimalTest, ColumnColumn)
   cudf::divide_decimal(lhs,
                        rhs,
                        cudf::data_type{cudf::type_id::DECIMAL128, numeric::scale_type{-4}},
+                       cudf::error_policy::NULLIFY,
                        cudf::rounding_method::HALF_UP,
                        cudf::decimal_intermediate::STANDARD,
                        cudf::test::get_default_stream());
@@ -36,6 +37,7 @@ TEST_F(DivideDecimalTest, ColumnScalar)
   cudf::divide_decimal(lhs,
                        *rhs,
                        cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}},
+                       cudf::error_policy::NULLIFY,
                        cudf::rounding_method::HALF_EVEN,
                        cudf::decimal_intermediate::STANDARD,
                        cudf::test::get_default_stream());
@@ -50,6 +52,7 @@ TEST_F(DivideDecimalTest, ScalarColumn)
   cudf::divide_decimal(*lhs,
                        rhs,
                        cudf::data_type{cudf::type_id::DECIMAL64, numeric::scale_type{-2}},
+                       cudf::error_policy::NULLIFY,
                        cudf::rounding_method::HALF_UP,
                        cudf::decimal_intermediate::STANDARD,
                        cudf::test::get_default_stream());

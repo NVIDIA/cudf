@@ -7,10 +7,12 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/operators/decimal_division.cuh>
 #include <cudf/detail/transform.hpp>
+#include <cudf/errc.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/concepts.hpp>
@@ -20,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/atomic>
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/optional>
@@ -29,6 +32,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <type_traits>
 
 namespace cudf {
@@ -54,7 +58,8 @@ using compute_rep_t =
  * @brief Functor that divides `lhs[i]` by `rhs[i]` and writes the quotient to `output[i]`.
  *
  * The quotient is `lhs * 10^exponent / rhs`, rounded using `method`. A row is null, and its
- * output value is 0, if either operand is null or the division has no result.
+ * output value is 0, if either operand is null or the division fails. The largest error code of
+ * the failing rows is written to `max_error`.
  *
  * @tparam OutRep The representation type of the output
  * @tparam RhsRep The representation type of the divisor
@@ -75,6 +80,7 @@ struct divide_decimal_fn {
   decimal_intermediate intermediate;
   OutRep* output;
   bool* output_valid;
+  int32_t* max_error;
 
   __device__ void operator()(size_type i) const
   {
@@ -92,6 +98,10 @@ struct divide_decimal_fn {
                                                                 intermediate);
     output[i]           = quotient.value_or(OutRep{0});
     output_valid[i]     = quotient.has_value();
+    if (!quotient.has_value()) {
+      cuda::atomic_ref ref(*max_error);
+      ref.fetch_max(static_cast<int32_t>(quotient.error()), cuda::std::memory_order_relaxed);
+    }
   }
 };
 
@@ -99,7 +109,7 @@ struct divide_decimal_fn {
  * @brief Divides `lhs[i]` by `rhs[i]` for each row into a new column of type `output_type`.
  *
  * The iterators yield `cuda::std::optional<LhsT>` and `cuda::std::optional<RhsT>`. A row is null
- * if either operand is null or the division has no result.
+ * if either operand is null, or if the division fails and `policy` is `error_policy::NULLIFY`.
  */
 template <cudf::concepts::fixed_point LhsT,
           cudf::concepts::fixed_point RhsT,
@@ -111,6 +121,7 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
                                             int32_t exponent,
                                             data_type output_type,
                                             size_type size,
+                                            error_policy policy,
                                             rounding_method method,
                                             decimal_intermediate intermediate,
                                             cuda::stream_ref stream,
@@ -122,6 +133,8 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
   auto result =
     make_fixed_width_column(output_type, size, mask_state::UNALLOCATED, stream, mr.get_output_mr());
   auto valid = cuda::device_buffer<bool>(stream, mr.get_temporary_mr(), size, cuda::no_init);
+  cudf::detail::device_scalar<int32_t> max_error{
+    static_cast<int32_t>(errc::SUCCESS), stream, mr.get_temporary_mr()};
 
   using Fn = divide_decimal_fn<OutRep, typename RhsT::rep, CompRep, LhsIterator, RhsIterator>;
   thrust::for_each_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
@@ -133,7 +146,16 @@ std::unique_ptr<column> divide_decimal_impl(LhsIterator lhs,
                         method,
                         intermediate,
                         result->mutable_view().begin<OutRep>(),
-                        valid.data()});
+                        valid.data(),
+                        max_error.data()});
+
+  if (policy == error_policy::PROPAGATE) {
+    auto const error = static_cast<errc>(max_error.value(stream));
+    if (error != errc::SUCCESS) {
+      throw evaluation_error(
+        error, std::string{"Decimal division failed with error `"} + to_string(error) + "`");
+    }
+  }
 
   auto [null_mask, null_count] = cudf::detail::bools_to_mask(
     column_view{data_type{type_id::BOOL8}, size, valid.data(), nullptr, 0}, stream, mr);
@@ -212,6 +234,7 @@ template <bool ScalarIsLhs>
 std::unique_ptr<column> divide_decimal_column_scalar(column_view const& col,
                                                      scalar const& s,
                                                      data_type output_type,
+                                                     error_policy policy,
                                                      rounding_method method,
                                                      decimal_intermediate intermediate,
                                                      cuda::stream_ref stream,
@@ -235,11 +258,27 @@ std::unique_ptr<column> divide_decimal_column_scalar(column_view const& col,
       auto const col_it = make_optional_iterator<ColT>(*d_col, nullate::DYNAMIC{col.has_nulls()});
       auto const s_it   = make_optional_iterator<ScalarT>(s, nullate::YES{});
       if constexpr (ScalarIsLhs) {
-        return divide_decimal_impl<LhsT, RhsT, OutT>(
-          s_it, col_it, exponent, output_type, col.size(), method, intermediate, stream, mr);
+        return divide_decimal_impl<LhsT, RhsT, OutT>(s_it,
+                                                     col_it,
+                                                     exponent,
+                                                     output_type,
+                                                     col.size(),
+                                                     policy,
+                                                     method,
+                                                     intermediate,
+                                                     stream,
+                                                     mr);
       } else {
-        return divide_decimal_impl<LhsT, RhsT, OutT>(
-          col_it, s_it, exponent, output_type, col.size(), method, intermediate, stream, mr);
+        return divide_decimal_impl<LhsT, RhsT, OutT>(col_it,
+                                                     s_it,
+                                                     exponent,
+                                                     output_type,
+                                                     col.size(),
+                                                     policy,
+                                                     method,
+                                                     intermediate,
+                                                     stream,
+                                                     mr);
       }
     });
 }
@@ -249,6 +288,7 @@ std::unique_ptr<column> divide_decimal_column_scalar(column_view const& col,
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        column_view const& rhs,
                                        data_type output_type,
+                                       error_policy policy,
                                        rounding_method method,
                                        decimal_intermediate intermediate,
                                        cuda::stream_ref stream,
@@ -275,6 +315,7 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
         exponent,
         output_type,
         lhs.size(),
+        policy,
         method,
         intermediate,
         stream,
@@ -285,25 +326,27 @@ std::unique_ptr<column> divide_decimal(column_view const& lhs,
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        scalar const& rhs,
                                        data_type output_type,
+                                       error_policy policy,
                                        rounding_method method,
                                        decimal_intermediate intermediate,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
   return divide_decimal_column_scalar<false>(
-    lhs, rhs, output_type, method, intermediate, stream, mr);
+    lhs, rhs, output_type, policy, method, intermediate, stream, mr);
 }
 
 std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        column_view const& rhs,
                                        data_type output_type,
+                                       error_policy policy,
                                        rounding_method method,
                                        decimal_intermediate intermediate,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
   return divide_decimal_column_scalar<true>(
-    rhs, lhs, output_type, method, intermediate, stream, mr);
+    rhs, lhs, output_type, policy, method, intermediate, stream, mr);
 }
 
 }  // namespace detail
@@ -311,37 +354,40 @@ std::unique_ptr<column> divide_decimal(scalar const& lhs,
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        column_view const& rhs,
                                        data_type output_type,
+                                       error_policy policy,
                                        rounding_method method,
                                        decimal_intermediate intermediate,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::divide_decimal(lhs, rhs, output_type, method, intermediate, stream, mr);
+  return detail::divide_decimal(lhs, rhs, output_type, policy, method, intermediate, stream, mr);
 }
 
 std::unique_ptr<column> divide_decimal(column_view const& lhs,
                                        scalar const& rhs,
                                        data_type output_type,
+                                       error_policy policy,
                                        rounding_method method,
                                        decimal_intermediate intermediate,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::divide_decimal(lhs, rhs, output_type, method, intermediate, stream, mr);
+  return detail::divide_decimal(lhs, rhs, output_type, policy, method, intermediate, stream, mr);
 }
 
 std::unique_ptr<column> divide_decimal(scalar const& lhs,
                                        column_view const& rhs,
                                        data_type output_type,
+                                       error_policy policy,
                                        rounding_method method,
                                        decimal_intermediate intermediate,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  return detail::divide_decimal(lhs, rhs, output_type, method, intermediate, stream, mr);
+  return detail::divide_decimal(lhs, rhs, output_type, policy, method, intermediate, stream, mr);
 }
 
 }  // namespace cudf

@@ -9,11 +9,13 @@
 #include <cudf_test/cudf_gtest.hpp>
 
 #include <cudf/copying.hpp>
+#include <cudf/errc.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/round.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/bit.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/std/limits>
@@ -23,6 +25,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -32,6 +35,21 @@ struct FixedPointDivideDecimalTest : public cudf::test::BaseFixture {};
 
 template <typename T>
 using fp_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
+
+auto constexpr nullify   = cudf::error_policy::NULLIFY;
+auto constexpr propagate = cudf::error_policy::PROPAGATE;
+
+// The error code that `fn` throws `cudf::evaluation_error` with, or `errc::SUCCESS` if it doesn't
+template <typename Fn>
+cudf::errc error_of(Fn&& fn)
+{
+  try {
+    std::ignore = fn();
+  } catch (cudf::evaluation_error const& e) {
+    return e.error_code();
+  }
+  return cudf::errc::SUCCESS;
+}
 
 template <typename T>
 cudf::data_type decimal_type(numeric::scale_type scale)
@@ -61,7 +79,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, HalfUpRounding)
   auto const rhs      = fp_wrapper<T>{{300, 300, 200}, scale};
   auto const expected = fp_wrapper<T>{{333, 667, 250}, scale};
 
-  auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale));
+  auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   EXPECT_EQ(result->type().scale(), scale);
@@ -78,7 +96,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, NegativeNumbers)
   auto const expected = fp_wrapper<T>{{-333, -333, 333}, scale};
 
   auto const result =
-    cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), cudf::rounding_method::HALF_UP);
+    cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify, cudf::rounding_method::HALF_UP);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 }
@@ -94,7 +112,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, Nulls)
   auto const rhs      = fp_wrapper<T>{{200, 300, 400, 500, 250}, {1, 1, 0, 0, 1}, scale};
   auto const expected = fp_wrapper<T>{{500, 0, 0, 0, 2000}, {1, 0, 0, 0, 1}, scale};
 
-  auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale));
+  auto const result = cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
 
@@ -102,12 +120,17 @@ TYPED_TEST(FixedPointDivideDecimalTest, Nulls)
   auto const lhs_slice = cudf::slice(lhs, {1, 5})[0];
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     cudf::slice(expected, {1, 5})[0],
-    *cudf::divide_decimal(lhs_slice, cudf::slice(rhs, {1, 5})[0], decimal_type<T>(scale)));
+    *cudf::divide_decimal(lhs_slice, cudf::slice(rhs, {1, 5})[0], decimal_type<T>(scale), nullify));
 
   // null / 2.00 = null, 30.00 / 2.00 = 15.00, null / 2.00 = null, 50.00 / 2.00 = 25.00
   auto const two = cudf::make_fixed_point_scalar<T>(200, scale);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<T>({0, 1500, 0, 2500}, {0, 1, 0, 1}, scale),
-                                 *cudf::divide_decimal(lhs_slice, *two, decimal_type<T>(scale)));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    fp_wrapper<T>({0, 1500, 0, 2500}, {0, 1, 0, 1}, scale),
+    *cudf::divide_decimal(lhs_slice, *two, decimal_type<T>(scale), nullify));
+
+  // Null inputs are not errors
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), propagate));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, EmptyColumns)
@@ -121,9 +144,9 @@ TYPED_TEST(FixedPointDivideDecimalTest, EmptyColumns)
   auto const type   = decimal_type<numeric::decimal64>(numeric::scale_type{-4});
   auto const scalar = cudf::make_fixed_point_scalar<T>(100, scale);
 
-  for (auto const& result : {cudf::divide_decimal(lhs, rhs, type),
-                             cudf::divide_decimal(lhs, *scalar, type),
-                             cudf::divide_decimal(*scalar, rhs, type)}) {
+  for (auto const& result : {cudf::divide_decimal(lhs, rhs, type, nullify),
+                             cudf::divide_decimal(lhs, *scalar, type, nullify),
+                             cudf::divide_decimal(*scalar, rhs, type, nullify)}) {
     EXPECT_EQ(result->size(), 0);
     EXPECT_EQ(result->type(), type);
   }
@@ -140,8 +163,8 @@ TYPED_TEST(FixedPointDivideDecimalTest, DifferentScales)
   auto const rhs      = fp_wrapper<T>{{20, 30, 40}, rhs_scale};
   auto const expected = fp_wrapper<T>{{62, 152, 197}, lhs_scale};
 
-  auto const result =
-    cudf::divide_decimal(lhs, rhs, decimal_type<T>(lhs_scale), cudf::rounding_method::HALF_UP);
+  auto const result = cudf::divide_decimal(
+    lhs, rhs, decimal_type<T>(lhs_scale), nullify, cudf::rounding_method::HALF_UP);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   EXPECT_EQ(result->type().scale(), lhs_scale);
@@ -156,7 +179,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, OutputScale)
   auto const rhs = fp_wrapper<T>{{20, 20}, numeric::scale_type{-1}};
 
   auto const divide = [&](int32_t scale) {
-    return cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{scale}));
+    return cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{scale}), nullify);
   };
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<T>({6150, -6150}, numeric::scale_type{-4}),
@@ -177,19 +200,19 @@ TYPED_TEST(FixedPointDivideDecimalTest, PositiveOutputScale)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<T>({123, 125}, numeric::scale_type{1}),
-    *cudf::divide_decimal(lhs, rhs, type, cudf::rounding_method::HALF_UP));
+    *cudf::divide_decimal(lhs, rhs, type, nullify, cudf::rounding_method::HALF_UP));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<T>({123, 125}, numeric::scale_type{1}),
-    *cudf::divide_decimal(lhs, rhs, type, cudf::rounding_method::HALF_EVEN));
+    *cudf::divide_decimal(lhs, rhs, type, nullify, cudf::rounding_method::HALF_EVEN));
 
   // 125 / 1 -> 13 (HALF_UP) or 12 (HALF_EVEN) tens, 135 / 1 -> 14 tens
   auto const ties = fp_wrapper<T>{{125, 135}, numeric::scale_type{0}};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<T>({13, 14}, numeric::scale_type{1}),
-    *cudf::divide_decimal(ties, rhs, type, cudf::rounding_method::HALF_UP));
+    *cudf::divide_decimal(ties, rhs, type, nullify, cudf::rounding_method::HALF_UP));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<T>({12, 14}, numeric::scale_type{1}),
-    *cudf::divide_decimal(ties, rhs, type, cudf::rounding_method::HALF_EVEN));
+    *cudf::divide_decimal(ties, rhs, type, nullify, cudf::rounding_method::HALF_EVEN));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, SmallerOperandScale)
@@ -204,7 +227,8 @@ TYPED_TEST(FixedPointDivideDecimalTest, SmallerOperandScale)
   auto const expected = fp_wrapper<T>{{2143}, rhs_scale};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(std::min(lhs_scale, rhs_scale))));
+    expected,
+    *cudf::divide_decimal(lhs, rhs, decimal_type<T>(std::min(lhs_scale, rhs_scale)), nullify));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, RoundingTies)
@@ -221,9 +245,9 @@ TYPED_TEST(FixedPointDivideDecimalTest, RoundingTies)
   auto const half_even = fp_wrapper<T>{{2, 4, -2, -4, 0, 0, 0}, scale};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    half_up, *cudf::divide_decimal(lhs, rhs, type, cudf::rounding_method::HALF_UP));
+    half_up, *cudf::divide_decimal(lhs, rhs, type, nullify, cudf::rounding_method::HALF_UP));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    half_even, *cudf::divide_decimal(lhs, rhs, type, cudf::rounding_method::HALF_EVEN));
+    half_even, *cudf::divide_decimal(lhs, rhs, type, nullify, cudf::rounding_method::HALF_EVEN));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, DivideByZeroIsNull)
@@ -235,7 +259,19 @@ TYPED_TEST(FixedPointDivideDecimalTest, DivideByZeroIsNull)
   auto const rhs      = fp_wrapper<T>{{0, 100, 0}, scale};
   auto const expected = fp_wrapper<T>{{0, 2, 0}, {0, 1, 0}, scale};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
+                                 *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify));
+  EXPECT_EQ(
+    error_of([&] { return cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), propagate); }),
+    cudf::errc::DIVISION_BY_ZERO);
+
+  // An overflowing row and a zero divisor report the larger error code
+  auto const overflow = fp_wrapper<T>{{max_digits<T>() + 1, typename T::rep{1}}, scale};
+  auto const divisors = fp_wrapper<T>{{1, 0}, scale};
+  EXPECT_EQ(error_of([&] {
+              return cudf::divide_decimal(overflow, divisors, decimal_type<T>(scale), propagate);
+            }),
+            cudf::errc::DIVISION_BY_ZERO);
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, PrecisionLimit)
@@ -252,7 +288,17 @@ TYPED_TEST(FixedPointDivideDecimalTest, PrecisionLimit)
   auto const rhs      = fp_wrapper<T>{{1, 1, 1, 1, -1}, scale};
   auto const expected = fp_wrapper<T>{{max, -max, 0, 0, 0}, {1, 1, 0, 0, 0}, scale};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
+                                 *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify));
+  EXPECT_EQ(
+    error_of([&] { return cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), propagate); }),
+    cudf::errc::ARITHMETIC_OVERFLOW);
+
+  // Only failing rows throw
+  auto const fitting = cudf::slice(lhs, {0, 2})[0];
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+    fp_wrapper<T>({max, -max}, scale),
+    *cudf::divide_decimal(fitting, cudf::slice(rhs, {0, 2})[0], decimal_type<T>(scale), propagate));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, RoundingPastPrecisionLimitIsNull)
@@ -269,8 +315,8 @@ TYPED_TEST(FixedPointDivideDecimalTest, RoundingPastPrecisionLimitIsNull)
     auto const rhs      = fp_wrapper<T>{{2, 2}, scale};
     auto const expected = fp_wrapper<T>{{0, max}, {0, 1}, scale};
 
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
-                                   *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify));
   }
 }
 
@@ -286,7 +332,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, QuotientTooLargeIsNull)
   auto const expected = fp_wrapper<T>{{0, 10}, {0, 1}, numeric::scale_type{0}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{0})));
+    expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{0}), nullify));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, RescaledDividendWiderThanRep)
@@ -303,18 +349,25 @@ TYPED_TEST(FixedPointDivideDecimalTest, RescaledDividendWiderThanRep)
   auto const expected = fp_wrapper<T>{{max / 2 + 1}, scale};
 
   auto const result =
-    cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), cudf::rounding_method::HALF_UP);
+    cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify, cudf::rounding_method::HALF_UP);
 
+  auto const standard_error = error_of([&] {
+    return cudf::divide_decimal(
+      lhs, rhs, decimal_type<T>(scale), propagate, cudf::rounding_method::HALF_UP);
+  });
   if constexpr (std::is_same_v<T, numeric::decimal128>) {
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<T>({0}, {0}, scale), *result);
+    EXPECT_EQ(standard_error, cudf::errc::ARITHMETIC_OVERFLOW);
   } else {
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
+    EXPECT_EQ(standard_error, cudf::errc::SUCCESS);
   }
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
                                  *cudf::divide_decimal(lhs,
                                                        rhs,
                                                        decimal_type<T>(scale),
+                                                       propagate,
                                                        cudf::rounding_method::HALF_UP,
                                                        cudf::decimal_intermediate::WIDE));
 }
@@ -330,10 +383,21 @@ TYPED_TEST(FixedPointDivideDecimalTest, OutputScaleRescaleOverflow)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<T>({0, 0, 0}, {0, 0, 1}, numeric::scale_type{-40}),
-    *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{-40})));
+    *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{-40}), nullify));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<T>({0, 0, 0}, numeric::scale_type{40}),
-    *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{40})));
+    *cudf::divide_decimal(lhs, rhs, decimal_type<T>(numeric::scale_type{40}), nullify));
+
+  EXPECT_EQ(error_of([&] {
+              return cudf::divide_decimal(
+                lhs, rhs, decimal_type<T>(numeric::scale_type{-40}), propagate);
+            }),
+            cudf::errc::ARITHMETIC_OVERFLOW);
+  EXPECT_EQ(error_of([&] {
+              return cudf::divide_decimal(
+                lhs, rhs, decimal_type<T>(numeric::scale_type{40}), propagate);
+            }),
+            cudf::errc::SUCCESS);
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, PositiveDivisorScale)
@@ -346,7 +410,8 @@ TYPED_TEST(FixedPointDivideDecimalTest, PositiveDivisorScale)
   auto const rhs      = fp_wrapper<T>{{5, 5, 5}, numeric::scale_type{1}};
   auto const expected = fp_wrapper<T>{{20, 20, -21}, scale};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
+                                 *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, ColumnScalarDifferentScales)
@@ -360,7 +425,7 @@ TYPED_TEST(FixedPointDivideDecimalTest, ColumnScalarDifferentScales)
   auto const expected = fp_wrapper<T>{{62, 228}, scale};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
-                                 *cudf::divide_decimal(lhs, *rhs, decimal_type<T>(scale)));
+                                 *cudf::divide_decimal(lhs, *rhs, decimal_type<T>(scale), nullify));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, ScalarColumnDifferentScales)
@@ -373,10 +438,13 @@ TYPED_TEST(FixedPointDivideDecimalTest, ScalarColumnDifferentScales)
   auto const rhs      = fp_wrapper<T>{{3, 4, 5, 0}, {1, 1, 0, 1}, numeric::scale_type{0}};
   auto const expected = fp_wrapper<T>{{5, 4, 0, 0}, {1, 1, 0, 0}, scale};
 
-  auto const result = cudf::divide_decimal(*lhs, rhs, decimal_type<T>(scale));
+  auto const result = cudf::divide_decimal(*lhs, rhs, decimal_type<T>(scale), nullify);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *result);
   EXPECT_EQ(result->type().scale(), -1);
+  EXPECT_EQ(
+    error_of([&] { return cudf::divide_decimal(*lhs, rhs, decimal_type<T>(scale), propagate); }),
+    cudf::errc::DIVISION_BY_ZERO);
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, InvalidOrZeroScalarGivesAllNulls)
@@ -389,11 +457,15 @@ TYPED_TEST(FixedPointDivideDecimalTest, InvalidOrZeroScalarGivesAllNulls)
   auto scalar         = cudf::make_fixed_point_scalar<T>(0, scale);
   auto const expected = fp_wrapper<T>{{0, 0}, {0, 0}, scale};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type, nullify));
+  EXPECT_EQ(error_of([&] { return cudf::divide_decimal(column, *scalar, type, propagate); }),
+            cudf::errc::DIVISION_BY_ZERO);
 
   scalar->set_valid_async(false);
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, column, type));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, column, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(column, *scalar, type, propagate));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, column, type, propagate));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, AllNullColumnGivesAllNulls)
@@ -407,10 +479,11 @@ TYPED_TEST(FixedPointDivideDecimalTest, AllNullColumnGivesAllNulls)
   auto const scalar   = cudf::make_fixed_point_scalar<T>(100, scale);
   auto const expected = fp_wrapper<numeric::decimal128>{{0, 0}, {0, 0}, numeric::scale_type{-4}};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, valid, type));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(valid, all_null, type));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, *scalar, type));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, all_null, type));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, valid, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(valid, all_null, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, *scalar, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(*scalar, all_null, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, *cudf::divide_decimal(all_null, valid, type, propagate));
 }
 
 TYPED_TEST(FixedPointDivideDecimalTest, RescaledDividendAround64Bits)
@@ -428,8 +501,8 @@ TYPED_TEST(FixedPointDivideDecimalTest, RescaledDividendAround64Bits)
     auto const expected =
       fp_wrapper<T>{{Rep{614'891'469'123'651'720}, Rep{614'891'469'123'651'721}}, scale};
 
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected,
-                                   *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale)));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+      expected, *cudf::divide_decimal(lhs, rhs, decimal_type<T>(scale), nullify));
   }
 }
 
@@ -445,7 +518,7 @@ TEST(FixedPointDivideDecimal128Test, DivisorWiderThan64Bits)
   auto const expected = fp_wrapper<numeric::decimal128>{{1}, scale};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
-    expected, *cudf::divide_decimal(lhs, rhs, decimal_type<numeric::decimal128>(scale)));
+    expected, *cudf::divide_decimal(lhs, rhs, decimal_type<numeric::decimal128>(scale), nullify));
 }
 
 TEST(FixedPointDivideDecimalMixedWidthTest, OperandsOfDifferentWidths)
@@ -461,15 +534,15 @@ TEST(FixedPointDivideDecimalMixedWidthTest, OperandsOfDifferentWidths)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<numeric::decimal64>({62, -62}, numeric::scale_type{-2}),
     *cudf::divide_decimal(
-      lhs64, rhs128, decimal_type<numeric::decimal64>(numeric::scale_type{-2})));
+      lhs64, rhs128, decimal_type<numeric::decimal64>(numeric::scale_type{-2}), nullify));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<numeric::decimal128>({6150, -6150}, numeric::scale_type{-4}),
     *cudf::divide_decimal(
-      lhs32, rhs64, decimal_type<numeric::decimal128>(numeric::scale_type{-4})));
+      lhs32, rhs64, decimal_type<numeric::decimal128>(numeric::scale_type{-4}), nullify));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<numeric::decimal32>({6, -6}, numeric::scale_type{-1}),
     *cudf::divide_decimal(
-      lhs128, rhs32, decimal_type<numeric::decimal32>(numeric::scale_type{-1})));
+      lhs128, rhs32, decimal_type<numeric::decimal32>(numeric::scale_type{-1}), nullify));
 }
 
 TEST(FixedPointDivideDecimalMixedWidthTest, WiderOutputHoldsRescaledDividend)
@@ -486,7 +559,8 @@ TEST(FixedPointDivideDecimalMixedWidthTest, WiderOutputHoldsRescaledDividend)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     expected,
-    *cudf::divide_decimal(lhs, rhs, decimal_type<numeric::decimal128>(numeric::scale_type{-20})));
+    *cudf::divide_decimal(
+      lhs, rhs, decimal_type<numeric::decimal128>(numeric::scale_type{-20}), nullify));
 }
 
 TEST(FixedPointDivideDecimalMixedWidthTest, NarrowerOutputPrecisionLimit)
@@ -505,7 +579,8 @@ TEST(FixedPointDivideDecimalMixedWidthTest, NarrowerOutputPrecisionLimit)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     expected,
-    *cudf::divide_decimal(lhs, rhs, decimal_type<numeric::decimal32>(numeric::scale_type{0})));
+    *cudf::divide_decimal(
+      lhs, rhs, decimal_type<numeric::decimal32>(numeric::scale_type{0}), nullify));
 }
 
 TEST(FixedPointDivideDecimalMixedWidthTest, ScalarOfDifferentWidth)
@@ -517,11 +592,11 @@ TEST(FixedPointDivideDecimalMixedWidthTest, ScalarOfDifferentWidth)
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<numeric::decimal64>({250, -75}, numeric::scale_type{-2}),
-    *cudf::divide_decimal(column, *scalar, type));
+    *cudf::divide_decimal(column, *scalar, type, nullify));
   // 4 / 10.00 = 0.40, 4 / -3.00 = -1.333... -> -1.33
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     fp_wrapper<numeric::decimal64>({40, -133}, numeric::scale_type{-2}),
-    *cudf::divide_decimal(*scalar, column, type));
+    *cudf::divide_decimal(*scalar, column, type, nullify));
 }
 
 template <typename Lhs, typename Rhs>
@@ -531,7 +606,8 @@ std::unique_ptr<cudf::column> divide_wide(
   cudf::data_type output_type,
   cudf::rounding_method method = cudf::rounding_method::HALF_UP)
 {
-  return cudf::divide_decimal(lhs, rhs, output_type, method, cudf::decimal_intermediate::WIDE);
+  return cudf::divide_decimal(
+    lhs, rhs, output_type, nullify, method, cudf::decimal_intermediate::WIDE);
 }
 
 __int128_t pow10_128(int32_t exponent)
@@ -630,9 +706,9 @@ TYPED_TEST(FixedPointDivideDecimalTest, MatchesReference)
   auto wide_only = 0;
   for (auto const method : {cudf::rounding_method::HALF_UP, cudf::rounding_method::HALF_EVEN}) {
     for (int32_t scale = 40; scale >= -80; --scale) {
-      auto const type                           = decimal_type<T>(numeric::scale_type{scale});
-      auto const standard                       = cudf::divide_decimal(lhs, rhs, type, method);
-      auto const wide                           = divide_wide(lhs, rhs, type, method);
+      auto const type     = decimal_type<T>(numeric::scale_type{scale});
+      auto const standard = cudf::divide_decimal(lhs, rhs, type, nullify, method);
+      auto const wide     = divide_wide(lhs, rhs, type, method);
       auto const [standard_data, standard_mask] = cudf::test::to_host<T>(*standard);
       auto const [wide_data, wide_mask]         = cudf::test::to_host<T>(*wide);
       for (cudf::size_type i = 0; i < standard->size(); ++i) {
@@ -676,9 +752,9 @@ TEST(FixedPointDivideDecimalWideTest, RescaledDividendWiderThan128Bits)
     cudf::make_fixed_point_scalar<numeric::decimal128>(ten_20, numeric::scale_type{-20});
   auto const all_null = dec128_wrapper{{0, 0, 0}, {0, 0, 0}, numeric::scale_type{-20}};
 
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, rhs, type));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, *rhs_scalar, type));
-  CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(*lhs_scalar, rhs, type));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, rhs, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, *rhs_scalar, type, nullify));
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(*lhs_scalar, rhs, type, nullify));
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(
     dec128_wrapper({ten_20, -ten_20, -3 * ten_20}, numeric::scale_type{-20}),
@@ -701,7 +777,7 @@ TEST(FixedPointDivideDecimalWideTest, ThirtyEightDigitDividend)
   auto const rhs = dec128_wrapper{{3 * pow10_128(37), 3 * pow10_128(37)}, numeric::scale_type{0}};
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({0, 0}, {0, 0}, numeric::scale_type{-37}),
-                                 *cudf::divide_decimal(lhs, rhs, type));
+                                 *cudf::divide_decimal(lhs, rhs, type, nullify));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({max / 3, -max / 3}, numeric::scale_type{-37}),
                                  *divide_wide(lhs, rhs, type));
 }
@@ -767,7 +843,7 @@ TEST(FixedPointDivideDecimalWideTest, RoundingTies)
     auto const rhs = dec128_wrapper{{divisor, divisor, -divisor, -divisor}, numeric::scale_type{0}};
 
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({0, 0, 0, 0}, {0, 0, 0, 0}, scale),
-                                   *cudf::divide_decimal(lhs, rhs, type));
+                                   *cudf::divide_decimal(lhs, rhs, type, nullify));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({half, -half, -(half - 1), half - 1}, scale),
                                    *divide_wide(lhs, rhs, type, cudf::rounding_method::HALF_UP));
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({half, -half, -(half - 2), half - 2}, scale),
@@ -787,7 +863,7 @@ TEST(FixedPointDivideDecimalWideTest, NarrowerOperands)
   auto const type21 = decimal_type<numeric::decimal128>(numeric::scale_type{-21});
   auto const q64    = Rep{max64 / 3} * pow10_128(20);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({0, 0}, {0, 0}, numeric::scale_type{-21}),
-                                 *cudf::divide_decimal(lhs64, rhs64, type21));
+                                 *cudf::divide_decimal(lhs64, rhs64, type21, nullify));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({q64, -q64}, numeric::scale_type{-21}),
                                  *divide_wide(lhs64, rhs64, type21));
 
@@ -796,7 +872,7 @@ TEST(FixedPointDivideDecimalWideTest, NarrowerOperands)
   auto const rhs32  = fp_wrapper<numeric::decimal32>{{max32}, numeric::scale_type{0}};
   auto const type37 = decimal_type<numeric::decimal128>(numeric::scale_type{-37});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({0}, {0}, numeric::scale_type{-37}),
-                                 *cudf::divide_decimal(lhs32, rhs32, type37));
+                                 *cudf::divide_decimal(lhs32, rhs32, type37, nullify));
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(dec128_wrapper({pow10_128(37)}, numeric::scale_type{-37}),
                                  *divide_wide(lhs32, rhs32, type37));
 
@@ -820,7 +896,7 @@ TEST(FixedPointDivideDecimalWideTest, NarrowerOutput)
     auto const type     = decimal_type<OutT>(scale);
     auto const quotient = static_cast<typename OutT::rep>(pow10_128(exponent));
     auto const all_null = fp_wrapper<OutT>({0, 0}, {0, 0}, scale);
-    CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, rhs, type));
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(all_null, *cudf::divide_decimal(lhs, rhs, type, nullify));
     if (fits) {
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(fp_wrapper<OutT>({quotient, -quotient}, scale),
                                      *divide_wide(lhs, rhs, type));
@@ -882,18 +958,18 @@ TEST(FixedPointDivideDecimalErrorTest, InvalidInputs)
   auto const type     = decimal_type<numeric::decimal32>(scale);
   auto const int_type = cudf::data_type{cudf::type_id::INT32};
 
-  EXPECT_THROW(cudf::divide_decimal(dec32, short32, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(ints, ints, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(dec32, ints, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(dec32, dec32, int_type), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, short32, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(ints, ints, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, ints, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, dec32, int_type, nullify), cudf::logic_error);
 
   auto const dec32_scalar = cudf::make_fixed_point_scalar<numeric::decimal32>(100, scale);
   auto const int_scalar   = cudf::numeric_scalar<int32_t>(100);
 
-  EXPECT_THROW(cudf::divide_decimal(ints, *dec32_scalar, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(*dec32_scalar, ints, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(dec32, int_scalar, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(int_scalar, dec32, type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(dec32, *dec32_scalar, int_type), cudf::logic_error);
-  EXPECT_THROW(cudf::divide_decimal(*dec32_scalar, dec32, int_type), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(ints, *dec32_scalar, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(*dec32_scalar, ints, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, int_scalar, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(int_scalar, dec32, type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(dec32, *dec32_scalar, int_type, nullify), cudf::logic_error);
+  EXPECT_THROW(cudf::divide_decimal(*dec32_scalar, dec32, int_type, nullify), cudf::logic_error);
 }

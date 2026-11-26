@@ -7,11 +7,11 @@
 
 namespace cudf::test::detail {
 
-void initialize_test_shared(int argc, char** argv, config const& config_override)
+void initialize_test_compiled(int argc, char** argv, config const& config_override)
 {
   initialize_test_impl(argc, argv, config_override);
 }
 
-int run_test_main_shared(int argc, char** argv) { return run_test_main_impl(argc, argv); }
+int run_test_main_compiled(int argc, char** argv) { return run_test_main_impl(argc, argv); }
 
 }  // namespace cudf::test::detail

@@ -7,22 +7,11 @@
 
 find_package(Threads REQUIRED)
 
-set(benchmark_helper_sources common/generate_input.cu common/generate_skewed_data.cpp
-                             common/generate_nested_types.cpp
+add_library(
+  cudf_benchmark_helpers common/generate_input.cu common/generate_skewed_data.cpp
+                         common/generate_nested_types.cpp
 )
-if(BUILD_SHARED_LIBS)
-  # Benchmarks need the test utilities and run in separate processes from gtests.
-  cudf_add_private_test_library(cudf_benchmark_helpers benchmarking ${benchmark_helper_sources})
-  target_link_libraries(
-    cudf_benchmark_helpers
-    PUBLIC "$<COMPILE_ONLY:nvbench::nvbench>"
-    PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,nvbench::nvbench>"
-  )
-else()
-  add_library(cudf_benchmark_helpers STATIC ${benchmark_helper_sources})
-  target_link_libraries(cudf_benchmark_helpers PUBLIC cudf::cudftestutil nvbench::nvbench)
-  set(benchmark_test_support cudftestutil_objects)
-endif()
+cudf_configure_test_library(cudf_benchmark_helpers benchmarking nvbench::nvbench)
 
 target_compile_features(cudf_benchmark_helpers PUBLIC cxx_std_20 cuda_std_20)
 target_compile_options(
@@ -74,8 +63,8 @@ add_library(
                                common/nvbench_utilities.cpp
 )
 target_link_libraries(
-  cudf_benchmark_common PRIVATE cudf_benchmark_helpers ${benchmark_test_support}
-                                $<TARGET_NAME_IF_EXISTS:conda_env> kvikio::kvikio
+  cudf_benchmark_common PRIVATE cudf_benchmark_helpers $<TARGET_NAME_IF_EXISTS:conda_env>
+                                kvikio::kvikio
 )
 
 add_custom_command(
@@ -98,7 +87,7 @@ function(ConfigureNVBench CMAKE_BENCH_NAME)
   )
   target_link_libraries(
     ${CMAKE_BENCH_NAME} PRIVATE cudf_benchmark_common ndsh_data_generator cudf_benchmark_helpers
-                                ${benchmark_test_support} $<TARGET_NAME_IF_EXISTS:conda_env>
+                                $<TARGET_NAME_IF_EXISTS:conda_env>
   )
   install(
     TARGETS ${CMAKE_BENCH_NAME}

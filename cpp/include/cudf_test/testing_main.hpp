@@ -258,14 +258,14 @@ inline int run_test_main_impl(int argc, char** argv)
 }
 
 #ifdef CUDF_USE_PRIVATE_TEST_STARTUP
-CUDF_EXPORT void initialize_test_shared(int argc, char** argv, config const& config_override);
-CUDF_EXPORT int run_test_main_shared(int argc, char** argv);
+CUDF_EXPORT void initialize_test_compiled(int argc, char** argv, config const& config_override);
+CUDF_EXPORT int run_test_main_compiled(int argc, char** argv);
 #endif
 
 inline int run_test_main(int argc, char** argv)
 {
 #ifdef CUDF_USE_PRIVATE_TEST_STARTUP
-  return run_test_main_shared(argc, argv);
+  return run_test_main_compiled(argc, argv);
 #else
   return run_test_main_impl(argc, argv);
 #endif
@@ -282,7 +282,7 @@ inline int run_test_main(int argc, char** argv)
 inline void init_cudf_test(int argc, char** argv, cudf::test::config const& config_override = {})
 {
 #ifdef CUDF_USE_PRIVATE_TEST_STARTUP
-  cudf::test::detail::initialize_test_shared(argc, argv, config_override);
+  cudf::test::detail::initialize_test_compiled(argc, argv, config_override);
 #else
   cudf::test::detail::initialize_test_impl(argc, argv, config_override);
 #endif

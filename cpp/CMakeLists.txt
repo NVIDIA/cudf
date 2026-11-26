@@ -1569,26 +1569,29 @@ if(CUDF_BUILD_TESTUTIL)
   )
   add_library(cudf::cudftestutil_objects ALIAS cudftestutil_objects)
 
-  if(BUILD_SHARED_LIBS AND (CUDF_BUILD_TESTS OR CUDF_BUILD_BENCHMARKS))
-    foreach(gtest_target IN ITEMS GTest::gmock GTest::gtest)
-      get_target_property(gtest_type ${gtest_target} TYPE)
-      if(NOT gtest_type STREQUAL "STATIC_LIBRARY")
-        message(FATAL_ERROR "The private cuDF test runtime requires a static ${gtest_target}")
-      endif()
-    endforeach()
-    set_target_properties(cudftestutil_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
-    # Let each install component carry its own runtime without depending on the other package.
-    function(cudf_add_private_test_library target component)
-      add_library(${target} SHARED ${ARGN} $<TARGET_OBJECTS:cudftestutil_objects>)
+  # Each install component carries its runtime so it can be installed independently.
+  function(cudf_configure_test_library target component)
+    set(frameworks GTest::gmock GTest::gtest ${ARGN})
+    target_sources(${target} PRIVATE $<TARGET_OBJECTS:cudftestutil_objects>)
+    target_link_libraries(${target} PUBLIC cudf::cudftestutil)
+    if(BUILD_SHARED_LIBS)
+      foreach(framework IN LISTS frameworks)
+        get_target_property(framework_type ${framework} TYPE)
+        if(NOT framework_type STREQUAL "STATIC_LIBRARY")
+          message(FATAL_ERROR "The private cuDF test runtime requires a static ${framework}")
+        endif()
+      endforeach()
+      set_target_properties(cudftestutil_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
       set_target_properties(${target} PROPERTIES INSTALL_RPATH "\$ORIGIN")
-      # Each executable and its helpers must use the same GoogleTest state.
+      # An executable and its helpers must use the same framework state.
+      string(JOIN "," framework_archives ${frameworks})
       set_property(
-        TARGET ${target} PROPERTY LINK_LIBRARY_OVERRIDE "WHOLE_ARCHIVE,GTest::gmock,GTest::gtest"
+        TARGET ${target} PROPERTY LINK_LIBRARY_OVERRIDE "WHOLE_ARCHIVE,${framework_archives}"
       )
       target_link_libraries(
         ${target}
-        PUBLIC cudf::cudftestutil "$<COMPILE_ONLY:GTest::gmock>"
-        PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,GTest::gmock,GTest::gtest>"
+        PUBLIC "$<COMPILE_ONLY:${frameworks}>"
+        PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,${framework_archives}>"
       )
       target_link_options(${target} PRIVATE "LINKER:-z,defs")
       install(
@@ -1597,8 +1600,10 @@ if(CUDF_BUILD_TESTUTIL)
                 COMPONENT ${component}
                 EXCLUDE_FROM_ALL
       )
-    endfunction()
-  endif()
+    else()
+      target_link_libraries(${target} PUBLIC ${frameworks})
+    endif()
+  endfunction()
 
   install(FILES tests/io/metadata_utilities.cpp DESTINATION src/cudftestutil/io)
   install(

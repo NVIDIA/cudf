@@ -1153,40 +1153,6 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
-   * Transform a vector using a custom function, passing user data to the UDF, for example as
-   * scratch space for STRING output.  See
-   * {@link #transform(String, boolean, DType, BaseDeviceMemoryBuffer, ColumnView)}.
-   * @param udf This function will be applied to every element in the vector
-   * @param isPtx is the code of the function ptx? true or C/C++ false.
-   * @param outputType the type of the output column. The type of the UDF's output parameter
-   *                   must match it.
-   * @param userData device memory passed to the UDF
-   * @throws IllegalArgumentException if outputType is neither a fixed-width type nor STRING
-   */
-  public final ColumnVector transform(String udf, boolean isPtx, DType outputType,
-      BaseDeviceMemoryBuffer userData) {
-    return transform(udf, isPtx, outputType, userData, null);
-  }
-
-  /**
-   * Transform a vector using a custom function, writing STRING output into preallocated
-   * offsets.  See
-   * {@link #transform(String, boolean, DType, BaseDeviceMemoryBuffer, ColumnView)}.
-   * @param udf This function will be applied to every element in the vector
-   * @param isPtx is the code of the function ptx? true or C/C++ false.
-   * @param outputType the type of the output column, must be STRING. The type of the UDF's
-   *                   output parameter must match it.
-   * @param stringOffsets the offsets of the STRING output: INT32, without nulls, with one more
-   *                      row than this column.  Copied, not retained.
-   * @throws IllegalArgumentException if outputType is not STRING, or if stringOffsets has the
-   *                                  wrong type, nulls, or the wrong number of rows
-   */
-  public final ColumnVector transform(String udf, boolean isPtx, DType outputType,
-      ColumnView stringOffsets) {
-    return transform(udf, isPtx, outputType, null, stringOffsets);
-  }
-
-  /**
    * Transform a vector using a custom function, as {@link #transform(String, boolean, DType)},
    * optionally passing user data to the UDF, and optionally writing STRING output into
    * preallocated offsets.

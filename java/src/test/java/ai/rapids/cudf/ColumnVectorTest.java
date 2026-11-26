@@ -145,7 +145,7 @@ public class ColumnVectorTest extends CudfTestBase {
       boolean isPtx) {
     try (DeviceMemoryBuffer scratch =
              DeviceMemoryBuffer.allocate(input.getRowCount() * DIGITS_SLOT_SIZE)) {
-      return input.transform(udf, isPtx, DType.STRING, scratch);
+      return input.transform(udf, isPtx, DType.STRING, scratch, null);
     }
   }
 
@@ -197,7 +197,7 @@ public class ColumnVectorTest extends CudfTestBase {
   private static ColumnVector transformWithStringOffsets(ColumnView input, String sizeUdf,
       String writeUdf, boolean isPtx) {
     try (ColumnVector offsets = stringOffsets(input, sizeUdf, isPtx)) {
-      return input.transform(writeUdf, isPtx, DType.STRING, offsets);
+      return input.transform(writeUdf, isPtx, DType.STRING, null, offsets);
     }
   }
 
@@ -321,7 +321,7 @@ public class ColumnVectorTest extends CudfTestBase {
           ColumnView[] slicedOffsets =
               paddedOffsets.splitAsViews(1, 1 + (int) offsets.getRowCount());
           try (ColumnVector offsetsResult =
-                   input.transform(DIGITS_WRITE_UDF, false, DType.STRING, slicedOffsets[1])) {
+                   input.transform(DIGITS_WRITE_UDF, false, DType.STRING, null, slicedOffsets[1])) {
             assertDigitsResult(offsetsResult);
           } finally {
             for (ColumnView view : slicedOffsets) {
@@ -459,20 +459,20 @@ public class ColumnVectorTest extends CudfTestBase {
          ColumnVector longOffsets = ColumnVector.fromLongs(0, 1, 2);
          ColumnVector nullOffsets = ColumnVector.fromBoxedInts(0, null, 2)) {
       IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
-          cv.transform(cuda, false, DType.INT32, offsets));
+          cv.transform(cuda, false, DType.INT32, null, offsets));
       assertEquals("string offsets are only supported for STRING output, got INT32",
           ex.getMessage());
       ex = assertThrows(IllegalArgumentException.class, () ->
-          cv.transform(cuda, false, DType.STRING, shortOffsets));
+          cv.transform(cuda, false, DType.STRING, null, shortOffsets));
       assertEquals("string offsets must have 3 rows, got 2", ex.getMessage());
       ex = assertThrows(IllegalArgumentException.class, () ->
-          cv.transform(cuda, false, DType.STRING, floatOffsets));
+          cv.transform(cuda, false, DType.STRING, null, floatOffsets));
       assertEquals("string offsets must be INT32, got FLOAT32", ex.getMessage());
       ex = assertThrows(IllegalArgumentException.class, () ->
-          cv.transform(cuda, false, DType.STRING, longOffsets));
+          cv.transform(cuda, false, DType.STRING, null, longOffsets));
       assertEquals("string offsets must be INT32, got INT64", ex.getMessage());
       ex = assertThrows(IllegalArgumentException.class, () ->
-          cv.transform(cuda, false, DType.STRING, nullOffsets));
+          cv.transform(cuda, false, DType.STRING, null, nullOffsets));
       assertEquals("string offsets must not have nulls", ex.getMessage());
       ex = assertThrows(IllegalArgumentException.class, () ->
           cv.transform(cuda, false, DType.LIST, null, null));

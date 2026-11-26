@@ -12,6 +12,8 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
     attempts=(baseline alternate)
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-alternate-dask-datetime ]]; then
     attempts=(alternate alternate-repeat)
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused-dask-datetime ]]; then
+    attempts=({1..10})
 fi
 status=0
 for attempt in "${attempts[@]}"; do
@@ -54,14 +56,16 @@ if driver.cuInit(0) != 0 or driver.cuDriverGetVersion(ctypes.byref(version)) != 
 print("CUDA driver API version:", version.value)
 PY
         cat "$output/driver.txt"
+    elif [[ "$trial" == signal-order-focused-dask-datetime ]]; then
+        echo "Datetime GPU replay $attempt of ${#attempts[@]}"
     else
-        echo "Full-suite GPU replay $attempt of 3"
+        echo "Full-suite GPU replay $attempt of ${#attempts[@]}"
     fi
     env "${environment[@]}" CUDF_POLARS_DIAGNOSTICS_TRIAL="$trial" \
         "$(dirname "${BASH_SOURCE[0]}")/run_cudf_polars_pytests-once.sh" "${args[@]}" || {
         status=$?
         # Only paired comparisons need to continue after a crash.
-        if [[ "$attempt" == [123] || "$trial" == signal-order-alternate-dask-datetime ]]; then
+        if [[ "$attempt" =~ ^[0-9]+$ || "$trial" == signal-order-alternate-dask-datetime ]]; then
             exit "$status"
         fi
     }

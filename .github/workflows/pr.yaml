@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-stream-trace-alternate
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-stream-trace-focused
   cancel-in-progress: true
 
 jobs:
@@ -20,17 +20,15 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - order-reference
-          - order-alternate-reference
-          - order-alternate-probe-01
-          - order-alternate-probe-02
-          - order-alternate-probe-03
-          - order-alternate-probe-04
-          - order-alternate-probe-05
-          - order-alternate-probe-06
-          - order-alternate-probe-07
-          - order-alternate-probe-08
-          - sanitizer-order-alternate
+          - order-focused-reference
+          - order-focused-probe-01
+          - order-focused-probe-02
+          - order-focused-probe-03
+          - order-focused-probe-04
+          - order-focused-probe-05
+          - order-focused-probe-06
+          - order-focused-probe-07
+          - order-focused-probe-08
     permissions:
       actions: read
       contents: read

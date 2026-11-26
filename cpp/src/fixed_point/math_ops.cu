@@ -81,7 +81,7 @@ struct divide_decimal_fn {
   {
     auto const l        = lhs[i];
     auto const r        = rhs[i];
-    auto const quotient = (l and r)
+    auto const quotient = (l.has_value() && r.has_value())
                             ? divide_and_round<OutRep, RhsRep>(static_cast<CompRep>(l->value()),
                                                                static_cast<CompRep>(r->value()),
                                                                exponent,

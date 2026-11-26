@@ -23,8 +23,17 @@ transform_input_spec make_input_spec(column_view const& column, bool is_scalar);
 /// @brief Reflects accessor storage types, including dictionary indices and keys.
 std::string reflect_input_element(transform_input_spec const& spec, bool use_physical_type);
 
-/// @brief Reflects decoded values, using dictionary keys rather than their indices.
-std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type);
+/**
+ * @brief Reflects decoded values, using dictionary keys rather than their indices.
+ *
+ * @param spec Input type specification
+ * @param use_physical_type Whether to use the physical storage type
+ * @param use_abi Whether to use the ABI type name instead of the cuDF type name
+ * @return Reflected value type name
+ */
+std::string reflect_input_value_type(transform_input_spec const& spec,
+                                     bool use_physical_type,
+                                     bool use_abi);
 
 /// @brief Reflects the mutable device-view type for an output specification.
 std::string reflect_output_column(transform_output_spec const& spec);
@@ -112,13 +121,23 @@ std::vector<transform_output_spec> make_output_specs(
   std::span<transform_output const> outputs,
   std::span<std::unique_ptr<column> const> string_offsets);
 
-/** @brief Reflects ordered UDF parameter types: requested indices, outputs, then inputs.
+/**
+ * @brief Reflects ordered UDF parameter types: requested indices, outputs, then inputs.
+ *
+ * @param is_null_aware Whether value parameters use optional types
+ * @param inputs Input type specifications
+ * @param outputs Output type specifications
+ * @param use_physical_types Whether to use physical storage types
+ * @param index_count Number of leading row indices
+ * @param use_abi Whether to use ABI type names instead of cuDF type names
+ * @return Ordered parameter type names
  */
 std::vector<std::string> reflect_udf_parameter_types(bool is_null_aware,
                                                      std::span<transform_input_spec const> inputs,
                                                      std::span<transform_output_spec const> outputs,
                                                      bool use_physical_types,
-                                                     int32_t index_count);
+                                                     int32_t index_count,
+                                                     bool use_abi);
 
 /** @brief Reflects the private normalized kernel signature, including requested row indices.
  *
@@ -127,6 +146,7 @@ std::vector<std::string> reflect_udf_parameter_types(bool is_null_aware,
  * @param outputs The output type specifications.
  * @param use_physical_types Whether to use physical types in the signature.
  * @param index_count Number of indices: zero if unindexed, one for transform, two for join.
+ * @param use_abi Whether to use ABI type names instead of cuDF type names.
  *
  * @return A string representing the UDF function signature.
  */
@@ -134,7 +154,8 @@ std::string reflect_udf_signature(bool is_null_aware,
                                   std::span<transform_input_spec const> inputs,
                                   std::span<transform_output_spec const> outputs,
                                   bool use_physical_types,
-                                  int32_t index_count);
+                                  int32_t index_count,
+                                  bool use_abi);
 
 /** @brief Reflects the UDF function signature from column storage.
  *
@@ -143,6 +164,7 @@ std::string reflect_udf_signature(bool is_null_aware,
  * @param outputs The output columns.
  * @param use_physical_types Whether to use physical types in the signature.
  * @param index_count Number of indices: zero if unindexed, one for transform, two for join.
+ * @param use_abi Whether to use ABI type names instead of cuDF type names.
  *
  * @return A string representing the UDF function signature.
  */
@@ -150,6 +172,7 @@ std::string reflect_udf_signature(bool is_null_aware,
                                   std::span<transform_input const> inputs,
                                   std::span<output_column const> outputs,
                                   bool use_physical_types,
-                                  int32_t index_count);
+                                  int32_t index_count,
+                                  bool use_abi);
 
 }  // namespace cudf::jit

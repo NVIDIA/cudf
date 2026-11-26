@@ -514,7 +514,7 @@ std::optional<compiled_fragment> get_udf_adapter(std::string_view symbol,
   if (symbol == target_symbol) { return std::nullopt; }
 
   auto parameters = jit::reflect_udf_parameter_types(
-    is_null_aware, inputs, outputs, use_physical_types, index_count);
+    is_null_aware, inputs, outputs, use_physical_types, index_count, true);
   auto append = [&](std::string& target, size_t i, bool with_type) {
     if (!target.empty()) { target += ", "; }
     if (with_type) { target += parameters[i] + " "; }
@@ -527,11 +527,11 @@ std::optional<compiled_fragment> get_udf_adapter(std::string_view symbol,
     append(arguments, i, false);
   }
   auto source = std::format(R"CUDA(
-#include <jit/udf_abi.cuh>
+#include <jit/cudf_abi.cuh>
 #pragma nv_hdrstop
-namespace cudf_udf_abi {{
-extern "C" __device__ cudf::errc {0}({1});
-extern "C" __device__ cudf::errc {3}({1}) {{ return {0}({2}); }}
+namespace cudf_abi {{
+extern "C" __device__ errc {0}({1});
+extern "C" __device__ errc {3}({1}) {{ return {0}({2}); }}
 }}
 )CUDA",
                             symbol,

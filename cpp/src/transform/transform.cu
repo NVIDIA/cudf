@@ -141,7 +141,7 @@ kernel get_kernel(transform_udf const& udf,
     auto name                  = rtcx::reflect_template(
       "cudf::detail::transform_kernel", rtcx::reflect(is_null_aware), in_types, out_types);
     auto udf_signature =
-      jit::reflect_udf_signature(is_null_aware, inputs, outputs, true, index_count);
+      jit::reflect_udf_signature(is_null_aware, inputs, outputs, true, index_count, false);
     auto blob = jit::get_udf_kernel_fragment(
       "cudf/cpp/src/transform/jit/transform_kernel.cu", name, udf_signature, udf.indexed);
     fragment = fragment_t{.fragment = {.type = lto_binary_type::LTO_IR, .data = blob->view()},

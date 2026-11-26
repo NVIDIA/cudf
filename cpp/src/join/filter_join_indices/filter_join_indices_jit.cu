@@ -85,7 +85,7 @@ kernel get_kernel(transform_udf const& udf,
     "detail::filter_join_kernel", rtcx::reflect(is_null_aware), reflection.input_accessors);
   std::array outputs{transform_output_spec{.type = type_id::BOOL8}};
   auto udf_signature =
-    cudf::jit::reflect_udf_signature(is_null_aware, specs, outputs, true, index_count);
+    cudf::jit::reflect_udf_signature(is_null_aware, specs, outputs, true, index_count, false);
   auto kernel_fragment = cudf::jit::get_udf_kernel_fragment(
     "cudf/cpp/src/join/jit/filter_join_kernel.cu", name, udf_signature, udf.indexed);
   auto adapter = get_udf_adapter(

@@ -8,22 +8,29 @@
 // This header is included by NVRTC-compiled adapters.
 // It is intended to be a minimal fast to compile header for forwarding UDF arguments across ABIs.
 
-namespace cudf_udf_abi {
+namespace cudf_abi {
 
 using int8_t   = signed char;
 using int16_t  = short;
 using int32_t  = int;
 using int64_t  = long long;
-using uint8_t  = unsigned char;
-using uint16_t = unsigned short;
-using uint32_t = unsigned int;
-using uint64_t = unsigned long long;
+using int128_t = __int128;
 
-namespace cudf {
+using uint8_t   = unsigned char;
+using uint16_t  = unsigned short;
+using uint32_t  = unsigned int;
+using uint64_t  = unsigned long long;
+using uint128_t = unsigned __int128;
 
-using size_type = int32_t;
-using voidptr_t = void*;
-using error_int = int32_t;
+using float32_t = float;
+using float64_t = double;
+
+using bool8_t = bool;
+
+using size_type    = int32_t;
+using voidptr_t    = void*;
+using error_int    = int32_t;
+using bitmask_type = uint32_t;
 
 enum class errc : error_int;
 
@@ -39,23 +46,39 @@ struct mutable_string_view {
   size_type length;
 };
 
-template <typename Rep>
-struct duration {
-  Rep count;
+// Each unit has its own type identity while retaining the same representation layout.
+struct duration_D {
+  int32_t count;
+};
+
+struct duration_h {
+  int32_t count;
+};
+
+struct duration_m {
+  int32_t count;
+};
+
+struct duration_s {
+  int64_t count;
+};
+
+struct duration_ms {
+  int64_t count;
+};
+
+struct duration_us {
+  int64_t count;
+};
+
+struct duration_ns {
+  int64_t count;
 };
 
 template <typename Duration>
 struct timestamp {
   Duration duration;
 };
-
-using duration_D  = duration<int32_t>;
-using duration_h  = duration<int32_t>;
-using duration_m  = duration<int32_t>;
-using duration_s  = duration<int64_t>;
-using duration_ms = duration<int64_t>;
-using duration_us = duration<int64_t>;
-using duration_ns = duration<int64_t>;
 
 using timestamp_D  = timestamp<duration_D>;
 using timestamp_h  = timestamp<duration_h>;
@@ -64,9 +87,6 @@ using timestamp_s  = timestamp<duration_s>;
 using timestamp_ms = timestamp<duration_ms>;
 using timestamp_us = timestamp<duration_us>;
 using timestamp_ns = timestamp<duration_ns>;
-}  // namespace cudf
-
-namespace numeric {
 
 template <typename Rep>
 struct decimal {
@@ -76,11 +96,7 @@ struct decimal {
 
 using decimal32  = decimal<int32_t>;
 using decimal64  = decimal<int64_t>;
-using decimal128 = decimal<__int128>;
-
-}  // namespace numeric
-
-namespace cuda::std {
+using decimal128 = decimal<int128_t>;
 
 template <typename T>
 struct optional {
@@ -91,12 +107,4 @@ struct optional {
   bool engaged;
 };
 
-template <typename T>
-struct span {
-  T* data;
-  ::size_t size;
-};
-
-}  // namespace cuda::std
-
-}  // namespace cudf_udf_abi
+}  // namespace cudf_abi

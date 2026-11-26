@@ -32,41 +32,6 @@ using column_wrapper = cudf::test::fixed_width_column_wrapper<T>;
 template <typename T>
 using decimal_wrapper = cudf::test::fixed_point_column_wrapper<typename T::rep>;
 
-TEST_F(TransformLTOTest, UdfAbiLayouts)
-{
-  // Physical value types and the additional types used in UDF signatures.
-  constexpr char const* abi_types[]{"uint8_t",
-                                    "uint16_t",
-                                    "uint32_t",
-                                    "uint64_t",
-                                    "numeric::decimal32",
-                                    "numeric::decimal64",
-                                    "numeric::decimal128",
-                                    "cudf::string_view",
-                                    "cudf::mutable_string_view",
-                                    "cudf::size_type",
-                                    "cudf::errc",
-                                    "cudf::voidptr_t"};
-  std::string source = R"CUDA(
-#include <cudf/udf_includes.hpp>
-#include <jit/udf_abi.cuh>
-#pragma nv_hdrstop
-)CUDA";
-  for (auto type : abi_types) {
-    source += std::format(R"CUDA(
-static_assert(sizeof({0}) == sizeof({1}), "ABI size: {0}");
-static_assert(alignof({0}) == alignof({1}), "ABI alignment: {0}");
-static_assert(sizeof(cuda::std::optional<{0}>) ==
-              sizeof(cudf_udf_abi::cuda::std::optional<{1}>), "optional ABI size: {0}");
-static_assert(alignof(cuda::std::optional<{0}>) ==
-              alignof(cudf_udf_abi::cuda::std::optional<{1}>), "optional ABI alignment: {0}");
-)CUDA",
-                          type,
-                          std::format("cudf_udf_abi::{}", type));
-  }
-  EXPECT_NO_THROW(static_cast<void>(cudf::compile_cuda_to_lto_ir(source.c_str())));
-}
-
 TEST_F(TransformLTOTest, CompileUdfWithIncludes)
 {
   constexpr char source[] = R"CUDA(

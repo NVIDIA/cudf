@@ -11,6 +11,7 @@
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <jit/abi_traits.cuh>
 #include <jit/helpers.hpp>
 #include <jit/reflect.hpp>
 #include <jit/util.hpp>
@@ -23,6 +24,17 @@
 namespace cudf::jit {
 
 namespace {
+
+std::string reflect_value_type(data_type type, bool use_abi)
+{
+  auto const names = get_abi_type_names(type.id());
+  return use_abi ? names.abi_name : names.cudf_name;
+}
+
+std::string reflect_value_type(data_type type, bool use_physical_type, bool use_abi)
+{
+  return reflect_value_type(use_physical_type ? physical_type_of(type) : type, use_abi);
+}
 
 struct reflect_input_element_fn {
   template <typename T>
@@ -89,21 +101,25 @@ struct reflect_output_element_fn {
 
 struct reflect_input_value_fn {
   template <typename T>
-  std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
+  std::string operator()(transform_input_spec const& spec,
+                         bool use_physical_type,
+                         bool use_abi) const
     requires(cudf::concepts::fixed_width<T> || cudf::concepts::string_view<T>)
   {
-    auto type = data_type{spec.type};
-    return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
+    return reflect_value_type(data_type{spec.type}, use_physical_type, use_abi);
   }
 
   template <cudf::concepts::dictionary T>
-  std::string operator()(transform_input_spec const& spec, bool use_physical_type) const
+  std::string operator()(transform_input_spec const& spec,
+                         bool use_physical_type,
+                         bool use_abi) const
   {
-    return reflect_input_element(spec.children.at(dictionary_keys_column_index), use_physical_type);
+    return reflect_input_value_type(
+      spec.children.at(dictionary_keys_column_index), use_physical_type, use_abi);
   }
 
   template <typename T>
-  std::string operator()(transform_input_spec const& spec, bool) const
+  std::string operator()(transform_input_spec const& spec, bool, bool) const
   {
     CUDF_FAIL(std::format("Unsupported input value type for JIT input: {}",
                           type_to_name(data_type{spec.type})),
@@ -113,10 +129,11 @@ struct reflect_input_value_fn {
 
 struct reflect_output_value_fn {
   template <cudf::concepts::fixed_width T>
-  std::string operator()(transform_output_spec const& spec, bool use_physical_type) const
+  std::string operator()(transform_output_spec const& spec,
+                         bool use_physical_type,
+                         bool use_abi) const
   {
-    auto type = data_type{spec.type};
-    return type_to_name(use_physical_type ? jit::physical_type_of(type) : type);
+    return reflect_value_type(data_type{spec.type}, use_physical_type, use_abi);
   }
 
   /**
@@ -125,18 +142,24 @@ struct reflect_output_value_fn {
    * @tparam T String-view type selected by output type dispatch
    * @param spec Output specification indicating whether string offsets are preallocated
    * @param use_physical_type Unused because string values have no physical-type variant
-   * @return `cudf::mutable_string_view` for writing into preallocated storage, otherwise
+   * @param use_abi Whether to use the ABI type name instead of the cuDF type name
+   * @return `cudf::mutable_string_view` or its ABI equivalent for preallocated storage, otherwise
    * `cudf::string_view` for returning a view of existing string data
    */
   template <cudf::concepts::string_view T>
   std::string operator()(transform_output_spec const& spec,
-                         [[maybe_unused]] bool use_physical_type) const
+                         [[maybe_unused]] bool use_physical_type,
+                         bool use_abi) const
   {
-    return spec.has_string_offsets ? "cudf::mutable_string_view" : "cudf::string_view";
+    if (spec.has_string_offsets) {
+      using traits = cudf_to_abi_type_impl<mutable_string_view>;
+      return use_abi ? traits::abi_name : traits::cudf_name;
+    }
+    return reflect_value_type(data_type{spec.type}, use_abi);
   }
 
   template <typename T>
-  std::string operator()(transform_output_spec const& spec, bool) const
+  std::string operator()(transform_output_spec const& spec, bool, bool) const
   {
     CUDF_FAIL(std::format("Unsupported output value type for JIT output: {}",
                           type_to_name(data_type{spec.type})),
@@ -150,9 +173,12 @@ std::string reflect_output_element(transform_output_spec const& spec, bool use_p
     data_type{spec.type}, reflect_output_element_fn{}, spec, use_physical_type);
 }
 
-std::string reflect_output_value_type(transform_output_spec const& spec, bool use_physical_type)
+std::string reflect_output_value_type(transform_output_spec const& spec,
+                                      bool use_physical_type,
+                                      bool use_abi)
 {
-  return type_dispatcher(data_type{spec.type}, reflect_output_value_fn{}, spec, use_physical_type);
+  return type_dispatcher(
+    data_type{spec.type}, reflect_output_value_fn{}, spec, use_physical_type, use_abi);
 }
 
 transform_input_spec make_input_spec(column_view const& column)
@@ -198,10 +224,16 @@ std::string reflect_input_element(transform_input_spec const& spec, bool use_phy
   return type_dispatcher(data_type{spec.type}, reflect_input_element_fn{}, spec, use_physical_type);
 }
 
-std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type)
+std::string reflect_input_value_type(transform_input_spec const& spec,
+                                     bool use_physical_type,
+                                     bool use_abi)
 {
-  if (spec.is_user_data) { return "cudf::voidptr_t"; }
-  return type_dispatcher(data_type{spec.type}, reflect_input_value_fn{}, spec, use_physical_type);
+  if (spec.is_user_data) {
+    using traits = cudf_to_abi_type_impl<voidptr_t>;
+    return use_abi ? traits::abi_name : traits::cudf_name;
+  }
+  return type_dispatcher(
+    data_type{spec.type}, reflect_input_value_fn{}, spec, use_physical_type, use_abi);
 }
 
 transform_input_spec make_input_spec(column_view const& column, bool is_scalar)
@@ -347,28 +379,22 @@ std::vector<std::string> reflect_udf_parameter_types(bool is_null_aware,
                                                      std::span<transform_input_spec const> inputs,
                                                      std::span<transform_output_spec const> outputs,
                                                      bool use_physical_types,
-                                                     int32_t index_count)
+                                                     int32_t index_count,
+                                                     bool use_abi)
 {
-  std::vector<std::string> in_types;
-
-  for (auto const& input : inputs) {
-    auto element = reflect_input_value_type(input, use_physical_types);
-    in_types.push_back(is_null_aware && !input.is_user_data
-                         ? std::format("cuda::std::optional<{}>", element)
-                         : element);
-  }
-
-  std::vector<std::string> out_types;
-
+  auto const optional_type = use_abi ? "cudf_abi::optional" : "cuda::std::optional";
+  std::vector<std::string> params(index_count, use_abi ? "cudf_abi::size_type" : "cudf::size_type");
   for (auto const& output : outputs) {
-    auto element = reflect_output_value_type(output, use_physical_types);
-    out_types.push_back(is_null_aware ? std::format("cuda::std::optional<{}> *", element)
-                                      : std::format("{} *", element));
+    auto const element = reflect_output_value_type(output, use_physical_types, use_abi);
+    params.push_back(is_null_aware ? std::format("{}<{}> *", optional_type, element)
+                                   : std::format("{} *", element));
   }
-
-  auto params = std::move(out_types);
-  params.insert(params.begin(), index_count, "cudf::size_type");
-  params.insert(params.end(), in_types.begin(), in_types.end());
+  for (auto const& input : inputs) {
+    auto const element = reflect_input_value_type(input, use_physical_types, use_abi);
+    params.push_back(is_null_aware && !input.is_user_data
+                       ? std::format("{}<{}>", optional_type, element)
+                       : element);
+  }
   return params;
 }
 
@@ -376,23 +402,28 @@ std::string reflect_udf_signature(bool is_null_aware,
                                   std::span<transform_input_spec const> inputs,
                                   std::span<transform_output_spec const> outputs,
                                   bool use_physical_types,
-                                  int32_t index_count)
+                                  int32_t index_count,
+                                  bool use_abi)
 {
-  auto params =
-    reflect_udf_parameter_types(is_null_aware, inputs, outputs, use_physical_types, index_count);
-  return std::format("cudf::errc({})", cudf::detail::string_join(params, {}, ", "));
+  auto const params = reflect_udf_parameter_types(
+    is_null_aware, inputs, outputs, use_physical_types, index_count, use_abi);
+  using traits = cudf_to_abi_type_impl<errc>;
+  return std::format("{}({})",
+                     use_abi ? traits::abi_name : traits::cudf_name,
+                     cudf::detail::string_join(params, {}, ", "));
 }
 
 std::string reflect_udf_signature(bool is_null_aware,
                                   std::span<transform_input const> inputs,
                                   std::span<output_column const> outputs,
                                   bool use_physical_types,
-                                  int32_t index_count)
+                                  int32_t index_count,
+                                  bool use_abi)
 {
   auto input_specs  = make_input_specs(inputs);
   auto output_specs = make_output_specs(outputs);
   return reflect_udf_signature(
-    is_null_aware, input_specs, output_specs, use_physical_types, index_count);
+    is_null_aware, input_specs, output_specs, use_physical_types, index_count, use_abi);
 }
 
 }  // namespace cudf::jit

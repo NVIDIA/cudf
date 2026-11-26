@@ -75,6 +75,7 @@ void BM_transform_dispatch(nvbench::state& state)
                                             cudf::output_nullability::ALL_VALID}};
   auto const compiled = make_udf(expression_depth);
   auto fragment       = compiled.view();
+  cudf::transform_udf const udf{"transform", {&fragment, 1}};
 
   cudf::ast::tree tree;
   tree.push(cudf::ast::column_reference{0});
@@ -88,11 +89,8 @@ void BM_transform_dispatch(nvbench::state& state)
   switch (api) {
     case transform_api::TRANSFORM: cudf::transform(udf, inputs, outputs, {}, std::nullopt); break;
     case transform_api::TRANSFORM_PROGRAM:
-      program =
-        std::make_unique<cudf::transform_program>(cudf::transform_udf{"transform", {&fragment, 1}},
-                                                  inputs,
-                                                  outputs,
-                                                  std::span<std::unique_ptr<cudf::column> const>{});
+      program = std::make_unique<cudf::transform_program>(
+        udf, inputs, outputs, std::span<std::unique_ptr<cudf::column> const>{});
       break;
     case transform_api::AST: cudf::compute_column_jit(table, expression); break;
     case transform_api::AST_TRANSFORM_PROGRAM: {

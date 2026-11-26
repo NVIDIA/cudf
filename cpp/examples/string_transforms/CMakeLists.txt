@@ -126,6 +126,7 @@ add_fragment(
 rtcx_embed(
   string_transform_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
 )
+
 foreach(example IN ITEMS compute_checksum_jit extract_email_jit format_phone_jit localize_phone_jit)
   target_sources(
     ${example} PRIVATE ${string_transform_fragments_SOURCE_DIR}/string_transform_fragments.s

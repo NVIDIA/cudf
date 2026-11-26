@@ -31,7 +31,6 @@ EXPECTED_FAILURES: Mapping[str, str] = {
     "tests/expr_and_series/all_horizontal_test.py::test_all_ignore_nulls[pandas]": "NVIDIA/cudf#19417: Kleene any/all horizontal with nulls.",
     "tests/expr_and_series/all_horizontal_test.py::test_allh_kleene[pandas]": "NVIDIA/cudf#19417: Kleene any/all horizontal with nulls.",
     "tests/expr_and_series/any_horizontal_test.py::test_anyh_kleene[pandas]": "NVIDIA/cudf#19417: Kleene any/all horizontal with nulls.",
-    "tests/expr_and_series/cast_test.py::test_pandas_pyarrow_dtypes": "cudf.pandas preserves pyarrow extension dtypes, causing PyArrow dtype handling differences.",
     "tests/expr_and_series/concat_str_test.py::test_concat_str_dask_nullable_boolean[False-expected1-2-bool[pyarrow]]": "_pickle.PicklingError: Can't pickle <class 'pandas.arrays.ArrowStringArray'>: it's not the same object as pandas.arrays.ArrowStringArray",
     "tests/expr_and_series/concat_str_test.py::test_concat_str_dask_nullable_boolean[False-expected1-2-boolean]": "_pickle.PicklingError: Can't pickle <class 'pandas.arrays.ArrowStringArray'>: it's not the same object as pandas.arrays.ArrowStringArray",
     "tests/expr_and_series/concat_str_test.py::test_concat_str_dask_nullable_boolean[True-expected0-2-bool[pyarrow]]": "_pickle.PicklingError: Can't pickle <class 'pandas.arrays.ArrowStringArray'>: it's not the same object as pandas.arrays.ArrowStringArray",

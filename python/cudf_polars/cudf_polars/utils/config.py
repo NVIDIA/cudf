@@ -222,14 +222,21 @@ class StreamingFallbackMode(enum.StrEnum):
 
 class RankLocalCPUComputeMode(enum.StrEnum):
     """
-    When the streaming executor evaluates an IR node on the CPU with Polars.
+    When the streaming executor evaluates an operation on the CPU with Polars.
 
     * ``RankLocalCPUComputeMode.NEVER`` : Always evaluate on the GPU.
-    * ``RankLocalCPUComputeMode.ALWAYS`` : Evaluate every supported IR node on
-      the CPU with Polars. Unsupported nodes are evaluated on the GPU.
+    * ``RankLocalCPUComputeMode.ON_OOM`` : Evaluate on the GPU. If that raises
+      ``MemoryError`` and the operation is supported, evaluate it again on the
+      CPU with Polars. If the memory reservation for an evaluation overbooks
+      the device memory limit, evaluate the supported operations on the CPU
+      without a GPU attempt. These reservations may overbook even when
+      ``allow_overbooking_by_default`` is off.
+    * ``RankLocalCPUComputeMode.ALWAYS`` : Evaluate every supported operation
+      on the CPU with Polars. Unsupported operations are evaluated on the GPU.
     """
 
     NEVER = "never"
+    ON_OOM = "on_oom"
     ALWAYS = "always"
 
 
@@ -1091,7 +1098,7 @@ class StreamingExecutor:
         This can be set using the ``CUDF_POLARS__EXECUTOR__FALLBACK_MODE``
         environment variable.
     rank_local_cpu_compute
-        When to evaluate IR nodes on the CPU with Polars instead of on the GPU.
+        When to evaluate operations on the CPU with Polars instead of on the GPU.
         ``RankLocalCPUComputeMode.NEVER`` by default. Only applies inside streaming
         actors. This can be set using the
         ``CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE`` environment variable.

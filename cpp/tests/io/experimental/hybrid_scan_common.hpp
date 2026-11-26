@@ -114,7 +114,7 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
   rmm::device_async_resource_ref mr);
 
 /**
- * @brief Creates a table and writes it to Parquet host buffer with column level statistics
+ * @brief Reuse an encoded statistics fixture instead of rebuilding it for each hybrid-scan test
  *
  * This function creates a table with three columns:
  * - col0: ascending T values
@@ -141,18 +141,27 @@ void setup_page_indexes(cudf::io::parquet::experimental::hybrid_scan_multifile c
  * @note `column_order` must be a permutation of {0, 1, 2}; passing a non-permutation (e.g.
  *       {0, 0, 1}) is undefined behavior.
  *
- * @return Tuple of table and Parquet host buffer
+ * @note Cached fixtures use the current device memory resource when first created. That resource
+ * and the stream must remain alive until the GTest environment teardown releases the fixtures;
+ * test-local streams and resources are unsafe.
+ *
+ * @return Reference to the shared table and Parquet host buffer, owned by the GTest
+ * environment until teardown
  */
 template <typename T,
           size_t NumTableConcats,
           bool IsConstantStrings = true,
           bool IsNullable        = false>
-[[nodiscard]] std::pair<std::unique_ptr<cudf::table>, std::vector<char>> create_parquet_with_stats(
-  cudf::size_type str_col_value             = 100,
-  cudf::io::compression_type compression    = cudf::io::compression_type::AUTO,
-  std::vector<std::string> column_names     = {"col0", "col1", "col2"},
-  std::vector<cudf::size_type> column_order = {0, 1, 2},
-  cuda::stream_ref stream                   = cudf::get_default_stream());
+// The returned reference belongs to the cache, not to any temporary argument.
+#if __has_cpp_attribute(gnu::no_dangling)
+[[gnu::no_dangling]]
+#endif
+[[nodiscard]] std::pair<std::unique_ptr<cudf::table const>, std::vector<char>> const&
+create_parquet_with_stats(cudf::size_type str_col_value          = 100,
+                          cudf::io::compression_type compression = cudf::io::compression_type::AUTO,
+                          std::vector<std::string> column_names  = {"col0", "col1", "col2"},
+                          std::vector<cudf::size_type> column_order = {0, 1, 2},
+                          cuda::stream_ref stream                   = cudf::get_default_stream());
 
 /**
  * @brief Prune row groups using column chunk dictionaries via the single-file hybrid scan reader

@@ -16,19 +16,23 @@ from cudf_streaming.channel_metadata import (
     OrderKey,
     Ordering,
 )
+from cudf_streaming.partition_utils import unpack_and_concat
 from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.streaming.core.message import Message
 
 from cudf_polars.containers import DataFrame, DataType
 from cudf_polars.dsl.ir import Empty, IRExecutionContext
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.collectives.ordering import (
+    _send_remote_partition,
     adjust_ordering,
 )
-from cudf_polars.streaming.actor_graph.utils import gather_in_task_group
+from cudf_polars.streaming.actor_graph.utils import ChunkStore, gather_in_task_group
 
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
+    from rapidsmpf.memory.packed_data import PackedData
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
 
@@ -723,3 +727,56 @@ def test_adjust_ordering_respects_order_key_metadata(
         )
 
     _assert_partition_output(output_by_pid, expected)
+
+
+class _RecordingExchange:
+    """Stand-in for ``SparseAlltoall`` that records inserted payloads."""
+
+    def __init__(self) -> None:
+        self.inserted: list[tuple[int, PackedData]] = []
+
+    def insert(self, destination: int, packed: PackedData) -> None:
+        self.inserted.append((destination, packed))
+
+
+@pytest.mark.parametrize("values", [[], [3, 1, 2]])
+def test_send_remote_partition_spilled_single_piece(
+    spmd_engine: SPMDEngine, values: list[int]
+) -> None:
+    context = spmd_engine.context
+    stream = context.br().stream_pool.get_stream()
+    df = DataFrame.from_polars(_frame(values), stream)
+    chunk = TableChunk.from_pylibcudf_table(
+        df.table, stream, exclusive_view=True, br=context.br()
+    )
+    reservation, _ = context.br().reserve(
+        MemoryType.HOST, chunk.data_alloc_size(), allow_overbooking=True
+    )
+    spilled = chunk.copy(reservation)
+    del df, chunk
+    assert not spilled.is_available()
+    store = ChunkStore(context)
+    store.insert(Message(0, spilled))
+    exchange = _RecordingExchange()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        ir_context = IRExecutionContext(
+            executor, get_cuda_stream=context.br().stream_pool.get_stream
+        )
+        asyncio.run(
+            _send_remote_partition(
+                context,
+                spmd_engine.comm,
+                Empty(_SCHEMA),
+                ir_context,
+                exchange,
+                2,
+                1,
+                store,
+            )
+        )
+
+    ((_, packed),) = exchange.inserted
+    table = unpack_and_concat([packed], stream, context.br())
+    result = DataFrame.from_table(table, _NAMES, _DTYPES, stream).to_polars()
+    assert result.equals(_frame(values))

@@ -1547,6 +1547,55 @@ def test_orc_writer_lists_empty_rg():
     assert pa_out.equals(cudf_in.to_arrow())
 
 
+@pytest.mark.parametrize(
+    "days, expected_min, expected_max",
+    [
+        ([-719162, 2932896], "0001-01-01", "9999-12-31"),
+        ([-719163, 0], None, "1970-01-01"),
+        ([0, 2932897], "1970-01-01", None),
+        ([-2147483648, 2147483647], None, None),
+        ([None, None], None, None),
+    ],
+)
+def test_date_statistics_outside_datetime_range(
+    days, expected_min, expected_max
+):
+    table = pa.table(
+        {"date": pa.array(days, type=pa.date32()), "value": [1, 2]}
+    )
+    buffer = BytesIO()
+    orc.write_table(table, buffer)
+
+    file_stats, stripe_stats = cudf.io.orc.read_orc_statistics([buffer])
+    for stats in (file_stats[0]["date"], stripe_stats[0]["date"]):
+        for bound, expected in [
+            ("minimum", expected_min),
+            ("maximum", expected_max),
+        ]:
+            if expected is None:
+                assert stats[bound] is None
+            else:
+                assert stats[bound] == datetime.datetime.fromisoformat(
+                    expected
+                ).replace(tzinfo=datetime.timezone.utc)
+        assert stats.number_of_values == sum(day is not None for day in days)
+        assert stats.has_null == any(day is None for day in days)
+
+    # Statistics are parsed before projection. An unrepresentable DATE bound
+    # must not prevent predicate pushdown on a different column.
+    got = cudf.read_orc(buffer, columns=["value"], filters=[("value", ">", 0)])
+    assert_eq(got, cudf.DataFrame({"value": [1, 2]}))
+
+    # Unknown DATE bounds must remain conservative for equality and membership
+    # pruning, including when the filter column is absent from the projection.
+    epoch = datetime.datetime(1970, 1, 1, tzinfo=datetime.timezone.utc)
+    for op, value in [("=", epoch), ("in", [epoch])]:
+        got = cudf.read_orc(
+            buffer, columns=["value"], filters=[("date", op, value)]
+        )
+        assert_eq(got, cudf.DataFrame({"value": [1, 2]}))
+
+
 def test_statistics_sum_overflow():
     maxint64 = np.iinfo(np.int64).max
     minint64 = np.iinfo(np.int64).min

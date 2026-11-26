@@ -135,7 +135,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       src_pos += block.thread_rank() - warp.size();
 
       // The position in the output column/buffer
-      int dst_pos = sb->nz_idx[rolling_index<rolling_buf_size>(src_pos)];
+      // Only read nz_idx for positions below target_pos: warp 0 may be concurrently writing the
+      // entries at and beyond target_pos for the next iteration.
+      int dst_pos = 0;
+      if (src_pos < target_pos) { dst_pos = sb->nz_idx[rolling_index<rolling_buf_size>(src_pos)]; }
 
       // for the flat hierarchy case we will be reading from the beginning of the value stream,
       // regardless of the value of first_row. so adjust our destination offset accordingly.
@@ -354,7 +357,10 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
       src_pos += block.thread_rank() - first_out_thread_id;
 
       // the position in the output column/buffer
-      int dst_pos = sb->nz_idx[rolling_index<rolling_buf_size>(src_pos)];
+      // Only read nz_idx for positions below target_pos: warp 0 may be concurrently writing the
+      // entries at and beyond target_pos for the next iteration.
+      int dst_pos = 0;
+      if (src_pos < target_pos) { dst_pos = sb->nz_idx[rolling_index<rolling_buf_size>(src_pos)]; }
 
       // for the flat hierarchy case we will be reading from the beginning of the value stream,
       // regardless of the value of first_row. so adjust our destination offset accordingly.

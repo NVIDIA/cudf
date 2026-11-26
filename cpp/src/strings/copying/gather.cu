@@ -69,7 +69,7 @@ __device__ inline void copy_group(gather_string_column col,
   }
   // Two 16-lane groups copy medium strings; every lane also participates
   // when the last queue entry occupies only one half warp.
-  auto const warp_lane = threadIdx.x % 32;
+  auto const warp_lane = threadIdx.x % cudf::detail::warp_size;
   while (medium_rows) {
     auto const first = __ffs(medium_rows) - 1;
     medium_rows &= medium_rows - 1;
@@ -90,12 +90,10 @@ __device__ inline void copy_group(gather_string_column col,
     auto const source = __shfl_sync(0xffff'ffffu, begin, leader);
     auto const output = __shfl_sync(0xffff'ffffu, target, leader);
     auto const count  = __shfl_sync(0xffff'ffffu, length, leader);
-    copy_string_warp(col.input_chars + source,
-                     col.output_chars,
-                     output,
-                     int64_t{output} + count,
-                     0,
-                     threadIdx.x % 32);
+    // output_chars is the base of an rmm::device_buffer allocation, which is at least
+    // 256-byte aligned. Its address modulo sizeof(uint4) is therefore zero.
+    copy_string_warp(
+      col.input_chars + source, col.output_chars, output, int64_t{output} + count, 0, warp_lane);
     long_rows &= long_rows - 1;
   }
 }

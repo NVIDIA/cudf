@@ -39,6 +39,88 @@ def test_multiindex_repr(pmi, max_seq_items):
         assert repr(gmi) == repr(pmi)
 
 
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+@pytest.mark.parametrize("tz", [None, "US/Eastern"])
+@pytest.mark.parametrize("max_seq_items", [None, 2, 10])
+@pytest.mark.parametrize("selection", [slice(None), slice(0, 1), slice(0, 0)])
+def test_multiindex_repr_unused_datetime_levels(
+    unit, tz, max_seq_items, selection
+):
+    times = pd.date_range("2025-01-01", periods=20, freq="s", tz=tz, unit=unit)
+    expected = pd.MultiIndex.from_arrays(
+        [pd.CategoricalIndex(["a"] * 10 + ["long label"] * 10), times],
+        names=["label", "time"],
+    )
+    result = cudf.from_pandas(expected)[selection]
+    expected = expected[selection]
+
+    with pd.option_context("display.max_seq_items", max_seq_items):
+        assert repr(result) == repr(expected)
+
+
+@pytest.mark.parametrize("unit", ["s", "ns"])
+@pytest.mark.parametrize("tz", [None, "US/Eastern"])
+@pytest.mark.parametrize("max_seq_items", [None, 2])
+@pytest.mark.parametrize("selection", [slice(None), slice(0, 1), slice(0, 0)])
+def test_multiindex_repr_all_null_datetime_level(
+    unit, tz, max_seq_items, selection
+):
+    times = pd.date_range("2025-01-01", periods=3, freq="s", tz=tz, unit=unit)
+    expected = pd.MultiIndex(
+        levels=[pd.CategoricalIndex(["a", "long label"]), times],
+        codes=[[0, 0, 0, 1, 1, 1], [-1] * 6],
+        names=["label", "time"],
+    )
+    result = cudf.from_pandas(expected)[selection]
+    expected = expected[selection]
+
+    with pd.option_context("display.max_seq_items", max_seq_items):
+        assert repr(result) == repr(expected)
+
+
+def test_multiindex_repr_range_level_with_missing_code():
+    codes = [[0, -1, 2], [0, 0, 0]]
+    expected = pd.MultiIndex(levels=[pd.RangeIndex(100), ["x"]], codes=codes)
+    result = cudf.MultiIndex(levels=[cudf.RangeIndex(100), ["x"]], codes=codes)
+
+    assert repr(result) == repr(expected)
+
+
+@pytest.mark.parametrize("from_pandas", [False, True])
+def test_multiindex_repr_duplicate_levels(from_pandas):
+    kwargs = {
+        "levels": [[1, 2, 2], ["x"]],
+        "codes": [[0], [0]],
+        "verify_integrity": False,
+    }
+    expected = pd.MultiIndex(**kwargs)
+    result = (
+        cudf.from_pandas(expected)
+        if from_pandas
+        else cudf.MultiIndex(**kwargs)
+    )
+
+    assert repr(result) == repr(expected)
+
+
+@pytest.mark.parametrize(
+    "temporal_dtype", ["datetime64[ns]", "timedelta64[ns]"]
+)
+def test_multiindex_repr_lazy_levels(temporal_dtype):
+    values = np.zeros(20, dtype="int64")
+    values[10] = 1  # Only a row outside the preview has a sub-day value.
+    frame = pd.DataFrame(
+        {"key": np.arange(20), "time": values.astype(temporal_dtype)}
+    )
+    expected = frame.set_index(["key", "time"]).index
+    result = cudf.from_pandas(frame).set_index(["key", "time"]).index
+
+    with pd.option_context("display.max_seq_items", 4):
+        assert repr(result) == repr(expected)
+    assert result._levels is None
+    assert result._codes is None
+
+
 @pytest.mark.parametrize(
     "gdi, expected_repr",
     [

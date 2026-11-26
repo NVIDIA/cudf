@@ -1,6 +1,6 @@
 /*
  *
- *  SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ *  SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  *  SPDX-License-Identifier: Apache-2.0
  *
  */
@@ -19,6 +19,7 @@ public class ORCOptions extends ColumnFilterOptions {
   public static ORCOptions DEFAULT = new ORCOptions(new Builder());
 
   private final boolean useNumPyTypes;
+  private final boolean convertDatesToProleptic;
   private final DType unit;
   private final String[] decimal128Columns;
   private final boolean ignoreTimezoneInStripeFooter;
@@ -27,6 +28,7 @@ public class ORCOptions extends ColumnFilterOptions {
     super(builder);
     decimal128Columns = builder.decimal128Columns.toArray(new String[0]);
     useNumPyTypes = builder.useNumPyTypes;
+    convertDatesToProleptic = builder.convertDatesToProleptic;
     unit = builder.unit;
     ignoreTimezoneInStripeFooter = builder.ignoreTimezoneInStripeFooter;
   }
@@ -34,6 +36,8 @@ public class ORCOptions extends ColumnFilterOptions {
   boolean usingNumPyTypes() {
     return useNumPyTypes;
   }
+
+  boolean convertDatesToProleptic() { return convertDatesToProleptic; }
 
   DType timeUnit() {
     return unit;
@@ -53,6 +57,7 @@ public class ORCOptions extends ColumnFilterOptions {
 
   public static class Builder extends ColumnFilterOptions.Builder<Builder> {
     private boolean useNumPyTypes = true;
+    private boolean convertDatesToProleptic = false;
     private DType unit = DType.EMPTY;
 
     final List<String> decimal128Columns = new ArrayList<>();
@@ -73,11 +78,16 @@ public class ORCOptions extends ColumnFilterOptions {
 
     /**
      * Specify the time unit to use when returning timestamps.
+     * TIMESTAMP_DAYS resolution is not supported; cast the returned column to get it.
      * @param unit default unit of time specified by the user
      * @return builder for chaining
+     * @throws IllegalArgumentException if {@code unit} is TIMESTAMP_DAYS or neither
+     *     DType.EMPTY nor a timestamp type
      */
     public ORCOptions.Builder withTimeUnit(DType unit) {
-      assert unit.isTimestampType();
+      if (unit == null || (unit != DType.EMPTY && !unit.hasTimeResolution())) {
+        throw new IllegalArgumentException("Unsupported time unit: " + unit);
+      }
       this.unit = unit;
       return this;
     }
@@ -96,6 +106,19 @@ public class ORCOptions extends ColumnFilterOptions {
      */
     public Builder decimal128Column(String... names) {
       decimal128Columns.addAll(Arrays.asList(names));
+      return this;
+    }
+
+    /**
+     * Convert DATE columns explicitly marked JULIAN_GREGORIAN to cuDF proleptic dates.
+     * Disabled by default for callers that perform their own rebasing. Missing and UNKNOWN
+     * calendar fields and TIMESTAMP columns are unchanged. Conversion applies to nested DATE
+     * columns and precedes NumPy promotion. Unrepresentable dates cause a read error.
+     * @param convert whether DATE conversion is enabled
+     * @return builder for chaining
+     */
+    public Builder convertDatesToProleptic(boolean convert) {
+      this.convertDatesToProleptic = convert;
       return this;
     }
 

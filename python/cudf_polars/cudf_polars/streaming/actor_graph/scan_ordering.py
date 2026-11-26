@@ -359,12 +359,12 @@ async def parquet_metadata_ordering(
         local_chunk = TableChunk.from_pylibcudf_table(
             local_task_bounds, stream, exclusive_view=True, br=context.br()
         )
-        allgather = AllGatherManager(context, comm, collective_id)
-        with allgather.inserting() as inserter:
-            await inserter.insert(comm.rank, local_chunk)
-        global_task_bounds = await allgather.extract_concatenated(
-            stream, ordered=True, ir_context=ir_context
-        )
+        async with AllGatherManager(context, comm, collective_id) as allgather:
+            with allgather.inserting() as inserter:
+                await inserter.insert(comm.rank, local_chunk)
+            global_task_bounds = await allgather.extract_concatenated(
+                stream, ordered=True, ir_context=ir_context
+            )
 
     # StreamingScan emits one output chunk per scan task, so task-bound rows
     # also line up with the global chunk count used by Ordering metadata.

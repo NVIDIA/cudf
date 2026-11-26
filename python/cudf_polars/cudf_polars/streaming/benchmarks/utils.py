@@ -1363,7 +1363,7 @@ def run_polars_query(
                         quent_context,
                         query=dataclasses.replace(
                             quent_context.query,
-                            query_name=f"Iteration {i + 1}",
+                            query_name=f"Q{q_id:02d} Iteration {i + 1}",
                         ),
                     )
                 )
@@ -1452,7 +1452,7 @@ def _run_query_loop(
                         query=dataclasses.replace(
                             quent_context.query,
                             query_group_id=uuid.uuid4(),
-                            query_group_name=f"PDSH Query {q_id}",
+                            query_group_name=f"Query {q_id}",
                         ),
                     )
                 )

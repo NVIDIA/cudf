@@ -17,6 +17,7 @@
 #include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 
+#include <cudf/ast/expressions.hpp>
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
@@ -24,12 +25,14 @@
 #include <cudf/io/parquet_metadata.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/reshape.hpp>
+#include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/unary.hpp>
+#include <cudf/utilities/type_dispatcher.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/type_traits>
@@ -40,6 +43,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <locale>
 #include <memory>
@@ -167,23 +171,38 @@ TEST_F(ParquetReaderTest, ReadUsesMemoryResources)
 
 TEST_F(ParquetReaderTest, ManyTinyStringPages)
 {
-  // This is a regression test for a ptxas codegen bug (not a race) and for the page-header
-  // overflow path that is mostly host logic. It takes hours when racecheck is used.
+  // This is a regression test for a ptxas codegen bug (not a race) and for page-header
+  // address-buffer overflow. It takes hours when racecheck is used.
   if (getenv("LIBCUDF_RACECHECK_ENABLED")) { GTEST_SKIP(); }
 
   // This creates enough pages to cross the scan-by-key tile boundary implicated in
   // https://github.com/NVIDIA/cccl/issues/11167, and more pages than the reader records while
   // counting page headers without an offset index (1M).
-  constexpr cudf::size_type num_rows    = 300'000;
-  constexpr cudf::size_type num_columns = 4;
+  // More column chunks parallelize page setup and header discovery without reducing page coverage.
+  constexpr cudf::size_type source_rows       = 300'000;
+  constexpr cudf::size_type num_columns       = 64;
+  constexpr cudf::size_type slices_per_source = num_columns / 4;
+  constexpr cudf::size_type num_rows          = source_rows / slices_per_source;
+  static_assert(source_rows % slices_per_source == 0);
 
   std::vector<std::string> values;
-  values.reserve(num_rows);
-  for (cudf::size_type i = 0; i < num_rows; ++i) {
+  values.reserve(source_rows);
+  for (cudf::size_type i = 0; i < source_rows; ++i) {
     values.push_back(std::to_string(i) + std::string(static_cast<std::size_t>(i % 12), 'a'));
   }
   cudf::test::strings_column_wrapper strings(values.begin(), values.end());
-  cudf::table_view const input{std::vector<cudf::column_view>(num_columns, strings)};
+  // Reuse every original string four times, as before, while shortening each column chunk.
+  std::vector<cudf::size_type> boundaries;
+  for (cudf::size_type i = 0; i < slices_per_source; ++i) {
+    boundaries.push_back(i * num_rows);
+    boundaries.push_back((i + 1) * num_rows);
+  }
+  auto const slices = cudf::slice(strings, boundaries);
+  std::vector<cudf::column_view> columns;
+  for (cudf::size_type i = 0; i < num_columns; ++i) {
+    columns.push_back(slices[i % slices_per_source]);
+  }
+  cudf::table_view const input{columns};
 
   auto const filepath = temp_env->get_temp_filepath("ManyTinyStringPages.parquet");
   auto const write_options =
@@ -236,7 +255,7 @@ TEST_F(ParquetReaderTest, PlainStringOffsetsAcrossPageGroups)
   cudf::io::write_parquet(write_options);
 
   // Exercise a partial final page group, and crops spanning page boundaries.
-  for (auto const [first, count] : std::array<std::pair<cudf::size_type, cudf::size_type>, 4>{
+  for (auto const& [first, count] : std::array<std::pair<cudf::size_type, cudf::size_type>, 4>{
          {{0, num_rows}, {36, 5}, {38, 77}, {996, 31}}}) {
     SCOPED_TRACE(first);
     auto const read_options =
@@ -634,7 +653,7 @@ TEST_F(ParquetReaderTest, RequiredStructUserBoundsAcrossPages)
                     .max_page_fragment_size(32);
   cudf::io::write_parquet(out_opts);
 
-  for (auto const [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
+  for (auto const& [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
     auto read_opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
                        .skip_rows(skip_rows)
                        .num_rows(num_rows_to_read);
@@ -710,7 +729,7 @@ TEST_F(ParquetReaderTest, NullableStructBoolAndStringUserBounds)
       .max_page_fragment_size(32)
       .write_v2_headers(true));
 
-  for (auto const [skip_rows, num_rows_to_read] : page_boundary_slices(row_count)) {
+  for (auto const& [skip_rows, num_rows_to_read] : page_boundary_slices(row_count)) {
     auto const result = cudf::io::read_parquet(
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
         .skip_rows(skip_rows)
@@ -793,7 +812,7 @@ TEST_F(ParquetReaderTest, NullableStructDictionaryAndByteStreamSplit)
     bss_encodings.end());
 
   for (auto const& filepath : {dictionary_filepath, bss_filepath}) {
-    for (auto const [skip_rows, num_rows_to_read] : page_boundary_slices(row_count)) {
+    for (auto const& [skip_rows, num_rows_to_read] : page_boundary_slices(row_count)) {
       auto const result = cudf::io::read_parquet(
         cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
           .skip_rows(skip_rows)
@@ -871,7 +890,7 @@ TEST_F(ParquetReaderTest, ByteStreamSplitNestedListFloat)
     std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::BYTE_STREAM_SPLIT),
     encodings.end());
 
-  for (auto const [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
+  for (auto const& [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
     auto const result = cudf::io::read_parquet(
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
         .skip_rows(skip_rows)
@@ -1077,7 +1096,7 @@ TEST_F(ParquetReaderTest, NullableListAllNullPages)
       .max_page_size_rows(32)
       .max_page_fragment_size(32));
 
-  for (auto const [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
+  for (auto const& [skip_rows, num_rows_to_read] : page_boundary_slices(num_rows)) {
     auto const result = cudf::io::read_parquet(
       cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
         .skip_rows(skip_rows)
@@ -1244,6 +1263,63 @@ TEST_F(ParquetReaderTest, SelectColumnByMissingFieldIds)
                            .build();
     EXPECT_THROW(cudf::io::read_parquet(options), std::invalid_argument);
   }
+}
+
+TEST_F(ParquetReaderTest, TimestampTypeMustHaveSecondBasedUnit)
+{
+  // The reader rescales timestamps by a clock rate in ticks per second, which TIMESTAMP_DAYS
+  // cannot express: a request for it used to decode seconds as 8-byte values into a column
+  // allocated at 4 bytes per row.
+  auto options = cudf::io::parquet_reader_options{};
+  for (auto const id : {cudf::type_id::EMPTY,
+                        cudf::type_id::TIMESTAMP_SECONDS,
+                        cudf::type_id::TIMESTAMP_MILLISECONDS,
+                        cudf::type_id::TIMESTAMP_MICROSECONDS,
+                        cudf::type_id::TIMESTAMP_NANOSECONDS}) {
+    EXPECT_NO_THROW(options.set_timestamp_type(cudf::data_type{id}));
+    EXPECT_EQ(options.get_timestamp_type().id(), id);
+  }
+  for (auto const id :
+       {cudf::type_id::TIMESTAMP_DAYS, cudf::type_id::DURATION_SECONDS, cudf::type_id::INT64}) {
+    EXPECT_THROW(options.set_timestamp_type(cudf::data_type{id}), std::invalid_argument);
+  }
+  // A rejected type leaves the previous one in place.
+  EXPECT_EQ(options.get_timestamp_type().id(), cudf::type_id::TIMESTAMP_NANOSECONDS);
+  EXPECT_THROW(cudf::io::parquet_reader_options_builder{}.timestamp_type(
+                 cudf::data_type{cudf::type_id::TIMESTAMP_DAYS}),
+               std::invalid_argument);
+}
+
+TEST_F(ParquetReaderTest, ReadTimestampsAsSeconds)
+{
+  // SupportedTimestampTypes (parquet_common.hpp) has no seconds member, so this is the read
+  // coverage for the TIMESTAMP_SECONDS target: each finer unit is floored to whole seconds,
+  // negative values included.
+  auto const check = [&]<typename Timestamp>() {
+    constexpr int64_t per_second = Timestamp::period::den;
+    std::vector<int64_t> const ticks{0,
+                                     per_second - 1,
+                                     per_second,
+                                     1'767'314'700 * per_second + per_second / 2,
+                                     -1,
+                                     -per_second,
+                                     -per_second - 1};
+    auto const input = column_wrapper<Timestamp, int64_t>(ticks.begin(), ticks.end());
+    auto const expected =
+      column_wrapper<cudf::timestamp_s, cudf::timestamp_s::rep>{0, 0, 1, 1'767'314'700, -1, -1, -2};
+    auto const filepath =
+      write_parquet_temp_file(cudf::table_view{{input}},
+                              "ReadTimestampsAsSeconds_" + std::to_string(per_second) + ".parquet");
+
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .timestamp_type(cudf::data_type{cudf::type_id::TIMESTAMP_SECONDS})
+        .build());
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(result.tbl->view().column(0), expected);
+  };
+  check.template operator()<cudf::timestamp_ms>();
+  check.template operator()<cudf::timestamp_us>();
+  check.template operator()<cudf::timestamp_ns>();
 }
 
 TEST_F(ParquetReaderTest, ColumnSelectionModesAreExclusive)
@@ -2380,7 +2456,7 @@ TEST_F(ParquetReaderTest, DeltaHeaderCountsTooLarge)
     uint64_t block_size;
     int64_t value_count;
   };
-  for (auto const [block_size, value_count] :
+  for (auto const& [block_size, value_count] :
        {header{2 * two31, 3},
         header{two31, static_cast<int64_t>(two31) + 2},
         header{two31 - 32, 2 * static_cast<int64_t>(two31) - 10}}) {
@@ -4116,6 +4192,54 @@ TEST_F(ParquetReaderTest, FilterNoStats)
   auto result              = table_with_metadata.tbl->view();
 
   CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result);
+}
+
+TEST_F(ParquetReaderTest, FilterInexactStats)
+{
+  // Row groups: {"abcX", "abcY"}, {"abc", "abc"}, {"x", "y"}
+  auto const col   = cudf::test::strings_column_wrapper{"abcX", "abcY", "abc", "abc", "x", "y"};
+  auto const table = table_view{{col}};
+  std::vector<char> buffer;
+  cudf::io::write_parquet(
+    cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, table)
+      .row_group_size_rows(2)
+      .max_page_size_rows(2)
+      .max_page_fragment_size(2)
+      .build());
+
+  // Mimic a non-compliant writer that truncates both bounds of row group 0 to the same prefix,
+  // and mark row group 2 inexact without changing its (still valid) bounds
+  edit_footer(buffer, [](cudf::io::parquet::FileMetaData& fmd) {
+    ASSERT_EQ(fmd.row_groups.size(), 3);
+    auto& rg0_stats     = fmd.row_groups[0].columns[0].meta_data.statistics;
+    rg0_stats.min_value = rg0_stats.max_value = std::vector<uint8_t>{'a', 'b', 'c'};
+    for (auto const rg : {0, 2}) {
+      auto& stats              = fmd.row_groups[rg].columns[0].meta_data.statistics;
+      stats.is_min_value_exact = false;
+      stats.is_max_value_exact = false;
+    }
+  });
+
+  auto const test_filter =
+    [&](cudf::ast::ast_operator op, std::string const& value, cudf::size_type expected_row_groups) {
+      auto scalar       = cudf::string_scalar(value);
+      auto const lit    = cudf::ast::literal(scalar);
+      auto const ref    = cudf::ast::column_reference(0);
+      auto const expr   = cudf::ast::operation(op, ref, lit);
+      auto const result = cudf::io::read_parquet(
+        cudf::io::parquet_reader_options::builder(
+          cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}})
+          .filter(expr)
+          .build());
+      auto const expected = cudf::apply_retention_mask(table, *cudf::compute_column(table, expr));
+      CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
+      EXPECT_EQ(result.metadata.num_row_groups_after_stats_filter.value(), expected_row_groups);
+    };
+
+  // Inexact min == max is not a constant, so row group 0 is kept. Exact min == max of row group 1
+  // still prunes for `!=`, and the valid inexact bounds of row group 2 still prune for `==`
+  test_filter(cudf::ast::ast_operator::NOT_EQUAL, "abc", 2);
+  test_filter(cudf::ast::ast_operator::EQUAL, "abcX", 1);
 }
 
 TEST_F(ParquetReaderTest, FilterNullableStats)
@@ -6492,7 +6616,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderAscending)
 {
   auto const f0        = make_ordered_rg_source(0, 4);
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 1, 3}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{f0.filepath})
                       .row_groups(selection)
@@ -6505,7 +6629,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderNonAscending)
 {
   auto const f0        = make_ordered_rg_source(0, 4);
   auto const selection = std::vector<std::vector<cudf::size_type>>{{3, 0, 2}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{f0.filepath})
                       .row_groups(selection)
@@ -6518,7 +6642,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderRepeatedIndices)
 {
   auto const f0        = make_ordered_rg_source(0, 3);
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 2, 0, 1, 0}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(cudf::io::source_info{f0.filepath})
                       .row_groups(selection)
@@ -6535,7 +6659,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderEmptySourceVector)
 
   // Middle source contributes nothing; outer source order must be preserved.
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 1}, {}, {0}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0, &f1, &f2}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0, &f1, &f2}, selection);
 
   auto const opts =
     cudf::io::parquet_reader_options::builder(
@@ -6553,7 +6677,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderMultiSourceMix)
 
   // Within each source, user-given order is preserved (non-ascending for f0).
   auto const selection = std::vector<std::vector<cudf::size_type>>{{0, 3}, {0, 1}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0, &f1}, selection);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0, &f1}, selection);
 
   auto const opts = cudf::io::parquet_reader_options::builder(
                       cudf::io::source_info{std::vector<std::string>{f0.filepath, f1.filepath}})
@@ -6570,7 +6694,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderUnsetMultiSource)
 
   // Without .row_groups(...): all RGs in source order, then on-disk order.
   auto const expected_order = std::vector<std::vector<cudf::size_type>>{{0, 1, 2}, {0, 1}};
-  auto const expected       = build_expected_ordered_table(std::vector{&f0, &f1}, expected_order);
+  auto const expected       = create_expected_ordered_table(std::vector{&f0, &f1}, expected_order);
 
   auto const opts = cudf::io::parquet_reader_options::builder(
                       cudf::io::source_info{std::vector<std::string>{f0.filepath, f1.filepath}})
@@ -6597,7 +6721,7 @@ TEST_F(ParquetReaderTest, RowGroupOrderStatsPushdown)
 
   // Survivors must keep relative order: f0 RG0, f0 RG1, f0 RG2.
   auto const survivors = std::vector<std::vector<cudf::size_type>>{{0, 1, 2}, {}};
-  auto const expected  = build_expected_ordered_table(std::vector{&f0, &f1}, survivors);
+  auto const expected  = create_expected_ordered_table(std::vector{&f0, &f1}, survivors);
 
   auto const opts = cudf::io::parquet_reader_options::builder(
                       cudf::io::source_info{std::vector<std::string>{f0.filepath, f1.filepath}})
@@ -6912,7 +7036,7 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
 {
   // Cover a partial window, the sequential scan (>64-byte average), and a full-window refill.
   // In the last case, the corrupt prefix is beyond the first 1 KiB of a >2 KiB page.
-  for (auto const [num_rows, string_length, target_row] :
+  for (auto const& [num_rows, string_length, target_row] :
        std::array<std::array<cudf::size_type, 3>, 3>{{{4, 17, 2}, {4, 256, 2}, {128, 17, 64}}}) {
     SCOPED_TRACE(num_rows);
     SCOPED_TRACE(string_length);
@@ -6970,44 +7094,170 @@ TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
   }
 }
 
-TEST_F(ParquetReaderTest, DecimalTypeOption)
+template <typename T>
+struct ParquetReaderDecimalWidthTest : public ParquetReaderTest {
+  static constexpr auto scale = numeric::scale_type{-2};
+
+  /**
+   * @brief Creates INT32, INT64 and FLBA decimal columns of the same values truncated to each type
+   */
+  static std::unique_ptr<cudf::table> create_fixed_width_decimals_table()
+  {
+    // -600 and -1 are sign extended when widened, and 2^40 + 5 and 2^100 + 5 read as 5 when
+    // narrowed below their stored type
+    auto const distinct = std::vector<__int128_t>{-(__int128_t{1} << 100) - 7,
+                                                  -600,
+                                                  -1,
+                                                  0,
+                                                  5,
+                                                  7,
+                                                  999'999'999,
+                                                  (__int128_t{1} << 40) + 5,
+                                                  (__int128_t{1} << 100) + 5};
+    // Values repeat so that dictionaries pay off
+    auto values = std::vector<__int128_t>{};
+    for (auto i = 0; i < 100; ++i) {
+      values.insert(values.end(), distinct.begin(), distinct.end());
+    }
+    auto const validity = cudf::detail::make_counting_transform_iterator(
+      0, [&](auto i) { return i % distinct.size() != 3; });
+    auto columns   = std::vector<std::unique_ptr<cudf::column>>{};
+    auto const add = [&]<typename Rep>() {
+      auto const reps = std::vector<Rep>(values.begin(), values.end());
+      columns.push_back(
+        cudf::test::fixed_point_column_wrapper<Rep>(reps.begin(), reps.end(), validity, scale)
+          .release());
+    };
+    add.template operator()<int32_t>();
+    add.template operator()<int64_t>();
+    add.template operator()<__int128_t>();
+    return std::make_unique<cudf::table>(std::move(columns));
+  }
+
+  /**
+   * @brief Writes `table` with `encoding` where the physical type supports it and returns the file
+   * path
+   */
+  static std::string write_decimals_table(
+    cudf::table_view table,
+    cudf::io::column_encoding encoding = cudf::io::column_encoding::USE_DEFAULT)
+  {
+    auto metadata = cudf::io::table_input_metadata{table};
+    for (auto col = 0; col < table.num_columns(); ++col) {
+      // FLBA does not support DELTA_BINARY_PACKED
+      if (encoding != cudf::io::column_encoding::DELTA_BINARY_PACKED or
+          table.column(col).type().id() != cudf::type_id::DECIMAL128) {
+        metadata.column_metadata[col].set_encoding(encoding);
+      }
+    }
+    auto const filepath = temp_env->get_temp_filepath("DecimalWidth.parquet");
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, table)
+        .metadata(std::move(metadata))
+        .build());
+    return filepath;
+  }
+
+  /**
+   * @brief Creates the columns of `table` cast to the `decimal_width` T
+   */
+  static std::unique_ptr<cudf::table> create_expected_table(cudf::table_view table)
+  {
+    auto columns = std::vector<std::unique_ptr<cudf::column>>{};
+    for (auto const& col : table) {
+      columns.push_back(cudf::cast(col, cudf::data_type{cudf::type_to_id<T>(), scale}));
+    }
+    return std::make_unique<cudf::table>(std::move(columns));
+  }
+};
+
+TYPED_TEST_SUITE(ParquetReaderDecimalWidthTest, cudf::test::FixedPointTypes);
+
+TYPED_TEST(ParquetReaderDecimalWidthTest, ReadValues)
 {
-  auto const data = std::vector<int32_t>{1000, 2000, 3000, 4000, 5000};
-  auto col        = cudf::test::fixed_point_column_wrapper<int32_t>(
-    data.begin(), data.end(), numeric::scale_type{-2});
+  using cudf::io::column_encoding;
+  using cudf::io::parquet::Encoding;
+  auto const table    = TestFixture::create_fixed_width_decimals_table();
+  auto const expected = TestFixture::create_expected_table(table->view());
+  for (auto const [encoding, parquet_encoding] :
+       {std::pair{column_encoding::PLAIN, Encoding::PLAIN},
+        std::pair{column_encoding::DICTIONARY, Encoding::PLAIN_DICTIONARY},
+        std::pair{column_encoding::DELTA_BINARY_PACKED, Encoding::DELTA_BINARY_PACKED},
+        std::pair{column_encoding::BYTE_STREAM_SPLIT, Encoding::BYTE_STREAM_SPLIT}}) {
+    SCOPED_TRACE(std::format("encoding {}", static_cast<int>(encoding)));
+    auto const filepath = TestFixture::write_decimals_table(table->view(), encoding);
 
-  auto expected_table = cudf::table_view{{col}};
+    // The writer falls back to other encodings rather than failing, so check it used this one
+    auto const footer =
+      cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{filepath}))
+        .front();
+    for (auto const& column : footer.row_groups[0].columns) {
+      if (encoding == column_encoding::DELTA_BINARY_PACKED and
+          column.meta_data.type == cudf::io::parquet::Type::FIXED_LEN_BYTE_ARRAY) {
+        continue;
+      }
+      auto const& encodings = column.meta_data.encodings;
+      EXPECT_NE(std::ranges::find(encodings, parquet_encoding), encodings.end());
+    }
 
-  auto filepath = temp_env->get_temp_filepath("DecimalTypeOption.parquet");
-
-  // Write the table with DECIMAL32
-  {
-    auto options =
-      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{filepath}, expected_table)
-        .build();
-    cudf::io::write_parquet(options);
+    auto const result = cudf::io::read_parquet(
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+        .decimal_width(cudf::type_to_id<TypeParam>())
+        .build());
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result.tbl->view());
   }
+}
 
-  // Read back with decimal_width set to DECIMAL128
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL128)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
+TYPED_TEST(ParquetReaderDecimalWidthTest, FilterRows)
+{
+  auto const table    = TestFixture::create_fixed_width_decimals_table();
+  auto const expected = TestFixture::create_expected_table(table->view());
+  auto const filepath = TestFixture::write_decimals_table(table->view());
 
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL128);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
+  // Rows that read as 5 match, including ones truncated to it
+  auto literal_value = cudf::fixed_point_scalar<TypeParam>(5, TestFixture::scale);
+  auto const literal = cudf::ast::literal(literal_value);
+  for (auto col = 0; col < table->num_columns(); ++col) {
+    SCOPED_TRACE(std::format("column {}", col));
+    auto const col_ref = cudf::ast::column_reference(col);
+    auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+    auto const options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+                           .decimal_width(cudf::type_to_id<TypeParam>())
+                           .filter(filter)
+                           .build();
+    CUDF_TEST_EXPECT_TABLES_EQUIVALENT(
+      cudf::apply_retention_mask(*expected, cudf::compute_column(*expected, filter)->view())
+        ->view(),
+      cudf::io::read_parquet(options).tbl->view());
   }
-  // Read back with decimal_width set to DECIMAL64
-  {
-    auto options = cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
-                     .decimal_width(cudf::type_id::DECIMAL64)
-                     .build();
-    auto result = cudf::io::read_parquet(options);
+}
 
-    EXPECT_EQ(result.tbl->view().column(0).type().id(), cudf::type_id::DECIMAL64);
-    EXPECT_EQ(result.tbl->view().column(0).type().scale(), -2);
-  }
+TYPED_TEST(ParquetReaderDecimalWidthTest, InvalidOptionsThrow)
+{
+  EXPECT_THROW(cudf::io::parquet_reader_options::builder().decimal_width(cudf::type_id::INT64),
+               std::invalid_argument);
+
+  auto const table    = TestFixture::create_fixed_width_decimals_table();
+  auto const filepath = TestFixture::write_decimals_table(table->view());
+
+  // Literals of a stored type other than T do not match the columns read as T
+  auto const expect_throw = [&]<typename Stored>(cudf::size_type col) {
+    if constexpr (not cuda::std::is_same_v<Stored, TypeParam>) {
+      auto literal_value = cudf::fixed_point_scalar<Stored>(5, TestFixture::scale);
+      auto const literal = cudf::ast::literal(literal_value);
+      auto const col_ref = cudf::ast::column_reference(col);
+      auto const filter  = cudf::ast::operation(cudf::ast::ast_operator::EQUAL, col_ref, literal);
+      auto const options =
+        cudf::io::parquet_reader_options::builder(cudf::io::source_info{filepath})
+          .decimal_width(cudf::type_to_id<TypeParam>())
+          .filter(filter)
+          .build();
+      EXPECT_THROW(std::ignore = cudf::io::read_parquet(options), cudf::logic_error);
+    }
+  };
+  expect_throw.template operator()<numeric::decimal32>(0);
+  expect_throw.template operator()<numeric::decimal64>(1);
+  expect_throw.template operator()<numeric::decimal128>(2);
 }
 
 TEST_F(ParquetReaderTest, CaseInsensitiveColumnSelection)
@@ -7844,6 +8094,30 @@ TEST_F(ParquetReaderTest, MismatchedLogicalTypeAcrossSources)
                         .column_names({"t"})
                         .build();
     EXPECT_THROW(cudf::io::read_parquet(opts), std::invalid_argument);
+  }
+}
+
+TEST_F(ParquetReaderTest, LogicalTypeAgainstUnannotatedAcrossSources)
+{
+  // Nanosecond timestamps only have a logical type, plain INT64 has no annotation at all
+  column_wrapper<cudf::timestamp_ns> const ns{1790816523456789012L};
+  column_wrapper<int64_t> const plain{1790816523456789012L};
+  auto const ns_file = write_parquet_temp_file(cudf::table_view{{ns}}, "TsNanos.parquet", {"t"});
+  auto const plain_file =
+    write_parquet_temp_file(cudf::table_view{{plain}}, "PlainInt64.parquet", {"t"});
+
+  for (auto const& paths : {std::vector<std::string>{ns_file, plain_file},
+                            std::vector<std::string>{plain_file, ns_file}}) {
+    auto const default_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths}).build();
+    EXPECT_THROW(cudf::io::read_parquet(default_opts), cudf::logic_error);
+
+    auto const mismatched_opts =
+      cudf::io::parquet_reader_options::builder(cudf::io::source_info{paths})
+        .allow_mismatched_pq_schemas(true)
+        .column_names({"t"})
+        .build();
+    EXPECT_THROW(cudf::io::read_parquet(mismatched_opts), std::invalid_argument);
   }
 }
 

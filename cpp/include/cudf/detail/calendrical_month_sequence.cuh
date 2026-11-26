@@ -7,7 +7,7 @@
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
-#include <cudf/detail/datetime_ops.cuh>
+#include <cudf/detail/operators/datetime.cuh>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
@@ -44,8 +44,8 @@ struct calendrical_month_sequence_functor {
                       cuda::counting_iterator<size_type>{n},
                       output->mutable_view().begin<T>(),
                       [initial = device_input, months] __device__(size_type i) {
-                        return datetime::detail::add_calendrical_months_with_scale_back(
-                          initial.value(), cuda::std::chrono::months{i * months});
+                        return ops::add_calendrical_months(initial.value(),
+                                                           cuda::std::chrono::months{i * months});
                       });
 
     return output;

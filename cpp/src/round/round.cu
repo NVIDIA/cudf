@@ -153,13 +153,15 @@ std::unique_ptr<column> round_with(column_view const& input,
   auto out_view = result->mutable_view();
   // An unrepresentable rounding increment produces zero, as for fixed-point inputs.
   // Compare before negating decimal_places so INT32_MIN is also handled safely.
-  if (cuda::std::integral<T> && decimal_places < -cuda::std::numeric_limits<T>::digits10) {
-    thrust::uninitialized_fill(
-      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-      out_view.begin<T>(),
-      out_view.end<T>(),
-      T{0});
-    return result;
+  if constexpr (cuda::std::integral<T>) {
+    if (decimal_places < -cuda::std::numeric_limits<T>::digits10) {
+      thrust::uninitialized_fill(
+        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+        out_view.begin<T>(),
+        out_view.end<T>(),
+        T{0});
+      return result;
+    }
   }
 
   T n;

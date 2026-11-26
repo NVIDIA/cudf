@@ -220,8 +220,11 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
     try {
       cudf::detail::cuda_memcpy_async<gather_string_column>(
         device_columns, host_span<gather_string_column const>{descriptors}, stream);
-      gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
-        device_columns.data(), columns, rows, device_sizes.data());
+      gather_string_sizes<<<
+        cudf::detail::grid_1d{columns, gather_strings_plan::threads_per_block}.num_blocks,
+        gather_strings_plan::threads_per_block,
+        0,
+        stream.get()>>>(device_columns.data(), columns, rows, device_sizes.data());
       CUDF_CUDA_TRY(cudaPeekAtLastError());
       cudf::detail::cuda_memcpy<size_type>(char_sizes, device_sizes, stream);
     } catch (...) {

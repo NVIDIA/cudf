@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -195,20 +195,22 @@ def test_roundtrip_pa_table(
 
 
 @pytest.mark.uses_custom_stream
-def test_write_sliced_boolean_list_near_size_type_limit(tmp_path):
+def test_write_sliced_boolean_list_near_size_type_limit(
+    tmp_path, patch_cupy_stream
+):
     import cupy as cp
 
     # Slice away a large null prefix without copying the children. Only 16 child
     # values are written, but their row coordinates are within a word of INT32_MAX.
     prefix = 2**31 - 24
     size = prefix + 16
-    values = cp.empty(size, dtype=cp.uint8)
-    values[prefix:] = 1
-    mask = cp.zeros(((size + 511) // 512) * 64, dtype=cp.uint8)
-    mask[prefix // 8 : prefix // 8 + 2] = cp.array(
-        [0x01, 0x7F], dtype=cp.uint8
-    )
-    cp.cuda.get_current_stream().synchronize()
+    with patch_cupy_stream:
+        values = cp.empty(size, dtype=cp.uint8)
+        values[prefix:] = 1
+        mask = cp.zeros(((size + 511) // 512) * 64, dtype=cp.uint8)
+        mask[prefix // 8 : prefix // 8 + 2] = cp.array(
+            [0x01, 0x7F], dtype=cp.uint8
+        )
     children = plc.Column(
         plc.DataType(plc.TypeId.BOOL8),
         size,

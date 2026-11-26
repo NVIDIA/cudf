@@ -324,10 +324,10 @@ TEST_F(HybridScanMultifileTest, MaterializeStructs)
 
 TEST_F(HybridScanMultifileTest, SparseDictionaryEncodedPages)
 {
-  auto constexpr num_sources         = 2;
-  auto const [table, parquet_buffer] = create_parquet_with_stats<uint32_t, 1>();
-  auto const payload_table           = table->view().select({2});
-  auto parquet_buffers               = std::vector<std::vector<char>>(num_sources, parquet_buffer);
+  auto constexpr num_sources          = 2;
+  auto const& [table, parquet_buffer] = create_parquet_with_stats<uint32_t, 1>();
+  auto const payload_table            = table->view().select({2});
+  auto parquet_buffers                = std::vector<std::vector<char>>(num_sources, parquet_buffer);
 
   auto const source_info = build_source_info(parquet_buffers);
   auto const reader_options =
@@ -515,11 +515,11 @@ TEST_F(HybridScanMultifileTest, SparsePayloadEmptyAndAllPrunedPageData)
 
 TEST_F(HybridScanMultifileTest, AllColumnsPreservesRequiredNullability)
 {
-  auto const [input_table, parquet_buffer] = create_parquet_with_stats<int64_t, 1>();
-  auto const parquet_buffers               = std::vector<std::vector<char>>{parquet_buffer};
-  auto const source_info                   = build_source_info(parquet_buffers);
-  auto const options                       = cudf::io::parquet_reader_options::builder().build();
-  auto inputs                              = multifile_inputs(source_info);
+  auto const& [input_table, parquet_buffer] = create_parquet_with_stats<int64_t, 1>();
+  auto const parquet_buffers                = std::vector<std::vector<char>>{parquet_buffer};
+  auto const source_info                    = build_source_info(parquet_buffers);
+  auto const options                        = cudf::io::parquet_reader_options::builder().build();
+  auto inputs                               = multifile_inputs(source_info);
   auto reader =
     cudf::io::parquet::experimental::hybrid_scan_multifile{inputs.footer_byte_spans, options};
 
@@ -547,8 +547,8 @@ TEST_F(HybridScanMultifileTest, MismatchedSchemaNullabilityDoesNotLeakIntoMetada
   // nullable. The output must be nullable, but the metadata handed back by the reader must keep
   // reporting the repetition types that were read from the file footers, both before and after
   // materialization.
-  auto const buffer_a = std::get<1>(create_parquet_with_stats<int64_t, 1>());
-  auto const buffer_b = std::get<1>(create_parquet_with_stats<int64_t, 1, true, true>(
+  auto const& buffer_a = std::get<1>(create_parquet_with_stats<int64_t, 1>());
+  auto const& buffer_b = std::get<1>(create_parquet_with_stats<int64_t, 1, true, true>(
     100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1}));
 
   auto const parquet_buffers = std::vector<std::vector<char>>{buffer_a, buffer_b};
@@ -612,8 +612,8 @@ TEST_F(HybridScanMultifileTest, ReadColumnsFromMismatchedSchemas)
   using T = cudf::timestamp_ms;
 
   // Create two sources with mismatched schemas
-  auto const buffer_a = std::get<1>(create_parquet_with_stats<T, 1>());
-  auto const buffer_b = std::get<1>(create_parquet_with_stats<T, 1>(
+  auto const& buffer_a = std::get<1>(create_parquet_with_stats<T, 1>());
+  auto const& buffer_b = std::get<1>(create_parquet_with_stats<T, 1>(
     100, cudf::io::compression_type::AUTO, {"col2", "col0", "col1"}, {2, 0, 1}));
 
   auto const parquet_buffers = std::vector<std::vector<char>>{buffer_a, buffer_b};

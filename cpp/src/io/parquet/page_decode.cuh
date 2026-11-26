@@ -5,9 +5,9 @@
 
 #pragma once
 
-#include "error.hpp"
 #include "io/parquet/timestamp_utils.cuh"
 #include "io/utilities/block_utils.cuh"
+#include "io/utilities/kernel_error.hpp"
 #include "parquet_gpu.hpp"
 #include "rle_stream.cuh"
 
@@ -1221,22 +1221,7 @@ inline __device__ bool setup_local_page_info(auto* const s,
             [[fallthrough]];
           case Type::DOUBLE: s->output_cvt.dtype_len = 8; break;
           case Type::INT96: s->output_cvt.dtype_len = 12; break;
-          case Type::BYTE_ARRAY:
-            if (is_decimal) {
-              auto const decimal_precision = s->setup.col.logical_type->precision();
-              s->output_cvt.dtype_len      = [decimal_precision]() {
-                if (decimal_precision <= MAX_DECIMAL32_PRECISION) {
-                  return sizeof(int32_t);
-                } else if (decimal_precision <= MAX_DECIMAL64_PRECISION) {
-                  return sizeof(int64_t);
-                } else {
-                  return sizeof(__int128_t);
-                }
-              }();
-            } else {
-              s->output_cvt.dtype_len = sizeof(string_index_pair);
-            }
-            break;
+          case Type::BYTE_ARRAY: s->output_cvt.dtype_len = sizeof(string_index_pair); break;
           default:  // FIXED_LEN_BYTE_ARRAY:
             s->output_cvt.dtype_len = s->setup.col.type_length;
             if (s->output_cvt.dtype_len <= 0) {
@@ -1246,20 +1231,16 @@ inline __device__ bool setup_local_page_info(auto* const s,
         }
         // Special check for downconversions
         s->output_cvt.dtype_len_in = s->output_cvt.dtype_len;
-        if (data_type == Type::FIXED_LEN_BYTE_ARRAY) {
-          if (is_decimal) {
-            s->output_cvt.dtype_len = [dtype_len = s->output_cvt.dtype_len]() {
-              if (dtype_len <= sizeof(int32_t)) {
-                return sizeof(int32_t);
-              } else if (dtype_len <= sizeof(int64_t)) {
-                return sizeof(int64_t);
-              } else {
-                return sizeof(__int128_t);
-              }
-            }();
-          } else {
-            s->output_cvt.dtype_len = sizeof(string_index_pair);
+        if (is_decimal) {
+          // Decimals are decoded directly into the cudf output type of the leaf column
+          switch (s->setup.page.nesting[s->setup.col.max_nesting_depth - 1].type) {
+            case type_id::DECIMAL32: s->output_cvt.dtype_len = sizeof(int32_t); break;
+            case type_id::DECIMAL64: s->output_cvt.dtype_len = sizeof(int64_t); break;
+            case type_id::DECIMAL128: s->output_cvt.dtype_len = sizeof(__int128_t); break;
+            default: s->set_error_code(decode_error::INVALID_DATA_TYPE); break;
           }
+        } else if (data_type == Type::FIXED_LEN_BYTE_ARRAY) {
+          s->output_cvt.dtype_len = sizeof(string_index_pair);
         } else if (data_type == Type::INT32) {
           // check for smaller bitwidths
           if (s->setup.col.logical_type.has_value()) {

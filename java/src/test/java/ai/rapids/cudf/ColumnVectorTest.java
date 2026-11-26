@@ -580,15 +580,86 @@ public class ColumnVectorTest extends CudfTestBase {
   }
 
   @Test
-  void testTransformVectorRejectsNonFixedWidthOutput() {
+  void testTransformVectorStringOutput() {
+    String udf = "__device__ inline void f(" +
+        "cudf::string_view* output," +
+        "cudf::string_view input" +
+        "){" +
+        "auto const size = input.size_bytes() < 3 ? input.size_bytes() : 3;" +
+        "*output = cudf::string_view{input.data(), size};" +
+        "}";
+    try (ColumnVector cv = ColumnVector.fromStrings("abcdef", null, "", "xy", "123");
+         ColumnVector result = cv.transform(udf, false, DType.STRING);
+         ColumnVector expected = ColumnVector.fromStrings("abc", null, "", "xy", "123")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorStringOutputFromInt() {
+    String udf = "__device__ inline void f(" +
+        "cudf::string_view* output," +
+        "int input" +
+        "){" +
+        "*output = input % 2 == 0 ? cudf::string_view{\"even\", 4}" +
+        " : cudf::string_view{\"odd\", 3};" +
+        "}";
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3, null, -5);
+         ColumnVector result = cv.transform(udf, false, DType.STRING);
+         ColumnVector expected = ColumnVector.fromStrings("even", "odd", null, "odd")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorPtxStringOutput() {
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int prefix3(cudf::string_view* output, cudf::string_view input) {
+    //     auto const size = input.size_bytes() < 3 ? input.size_bytes() : 3;
+    //     *output = cudf::string_view{input.data(), size};
+    //     return 0;
+    //   }
+    String ptxPrefix3 = ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) prefix3(\n" +
+        "\t.param .b64 prefix3_param_0,\n" +
+        "\t.param .align 8 .b8 prefix3_param_1[16]\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .b32 \t%r<7>;\n" +
+        "\t.reg .b64 \t%rd<3>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd1, [prefix3_param_0];\n" +
+        "\tld.param.v2.u32 \t{%r1, %r2}, [prefix3_param_1+8];\n" +
+        "\tld.param.u64 \t%rd2, [prefix3_param_1];\n" +
+        "\tst.u64 \t[%rd1], %rd2;\n" +
+        "\tmin.s32 \t%r4, %r1, 3;\n" +
+        "\tmov.u32 \t%r5, 0;\n" +
+        "\tmov.u32 \t%r6, -1;\n" +
+        "\tst.v2.u32 \t[%rd1+8], {%r4, %r6};\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r5;\n" +
+        "\tret;\n" +
+        "}\n";
+    try (ColumnVector cv = ColumnVector.fromStrings("abcdef", null, "", "xy", "123");
+         ColumnVector result = cv.transform(ptxPrefix3, true, DType.STRING);
+         ColumnVector expected = ColumnVector.fromStrings("abc", null, "", "xy", "123")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorRejectsUnsupportedOutput() {
     try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3)) {
       IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
-          cv.transform(cuda, false, DType.STRING));
-      assertEquals("transform only supports fixed-width output types, got STRING", ex.getMessage());
-      ex = assertThrows(IllegalArgumentException.class, () -> cv.transform(cuda, false, DType.LIST));
-      assertEquals("transform only supports fixed-width output types, got LIST", ex.getMessage());
+          cv.transform(cuda, false, DType.LIST));
+      assertEquals("transform only supports fixed-width and STRING output types, got LIST",
+          ex.getMessage());
       ex = assertThrows(IllegalArgumentException.class, () -> cv.transform(cuda, false, DType.STRUCT));
-      assertEquals("transform only supports fixed-width output types, got STRUCT", ex.getMessage());
+      assertEquals("transform only supports fixed-width and STRING output types, got STRUCT",
+          ex.getMessage());
     }
   }
 

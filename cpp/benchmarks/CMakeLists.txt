@@ -10,7 +10,7 @@ find_package(Threads REQUIRED)
 set(benchmark_helper_sources common/generate_input.cu common/generate_skewed_data.cpp
                              common/generate_nested_types.cpp
 )
-if(CUDF_PRIVATE_TEST_LIBRARIES)
+if(BUILD_SHARED_LIBS)
   # Benchmarks need the test utilities and run in separate processes from gtests.
   cudf_add_private_test_library(cudf_benchmark_helpers benchmarking ${benchmark_helper_sources})
   target_link_libraries(

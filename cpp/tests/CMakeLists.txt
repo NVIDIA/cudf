@@ -15,7 +15,7 @@ rapids_test_init()
 rapids_cmake_install_lib_dir(lib_dir)
 
 set(cudf_gtest_support cudftestutil_objects)
-if(CUDF_PRIVATE_TEST_LIBRARIES)
+if(BUILD_SHARED_LIBS)
   cudf_add_private_test_library(cudf_test_support testing utilities/testing_main.cpp)
   target_compile_features(cudf_test_support PRIVATE cxx_std_20)
   target_compile_definitions(cudf_test_support PUBLIC CUDF_USE_PRIVATE_TEST_STARTUP)

@@ -52,7 +52,8 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-dask-datetime ]]; then
     if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
         export DASK_DISTRIBUTED__WORKER__PRELOAD='["dask_fault_preload"]'
     fi
-    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ||
+          "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-alternate-dask-datetime ]]; then
         compat_root=$(mktemp -d /tmp/cudf-cuda-compat.XXXXXX)
         compat_deb="$compat_root/cuda-compat.deb"
         compat_url=https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2604/sbsa

@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-order-alternate-dask-datetime ]]; then
+    # The earlier run rejected CUDA entry points newer than the baseline driver.
+    export LD_LIBRARY_PATH="$CUDF_POLARS_ALTERNATE_COMPAT${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
 compute-sanitizer --version
 sanitizer=(
     timeout --signal=TERM --kill-after=15s 12m
@@ -42,7 +46,7 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-aggregation ]]; then
     cases=('tests/expressions/test_agg.py::test_agg[nulls-max-Int8-unsorted-spmd-small]')
     kernel_filters=("${packed_size_filters[@]}")
 fi
-if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-order-dask-datetime ]]; then
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-order*-dask-datetime ]]; then
     # Preserve allocation, event, and use edges across kernels and child workers.
     kernel_filters=(--track-stream-ordered-races all --target-processes all)
     cases=(

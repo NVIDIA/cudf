@@ -34,8 +34,17 @@ driver_gpus=(
 )
 if [[ "$trial" == order-reference ]]; then
     trial=signal-order-dask-datetime
-elif [[ "$trial" == sanitizer-order ]]; then
-    trial=memcheck-order-dask-datetime
+elif [[ "$trial" == order-alternate-reference ]]; then
+    trial=signal-order-alternate-dask-datetime
+elif [[ "$trial" == sanitizer-order || "$trial" == sanitizer-order-alternate ]]; then
+    trial="${trial/sanitizer/memcheck}-dask-datetime"
+elif [[ "$trial" == order-alternate-probe-* ]]; then
+    for gpu in "${driver_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
+            trial=signal-order-alternate-dask-datetime
+            break
+        fi
+    done
 elif [[ "$trial" == order-probe-* ]]; then
     for gpu in "${driver_gpus[@]}"; do
         if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
@@ -89,6 +98,7 @@ fi
 if [[ "$repeat" == false &&
     ( "$trial" == probe-* ||
         "$trial" == order-probe-* ||
+        "$trial" == order-alternate-probe-* ||
         "$trial" == shuffle-probe-* ||
         "$trial" == gdb-[0-9][0-9] ||
         "$trial" == plain-[0-9][0-9] ||

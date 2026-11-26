@@ -10,6 +10,8 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-paired-dask-datetime ]]; then
     attempts=(call reset)
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
     attempts=(baseline alternate)
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-alternate-dask-datetime ]]; then
+    attempts=(alternate alternate-repeat)
 fi
 status=0
 for attempt in "${attempts[@]}"; do
@@ -25,9 +27,9 @@ for attempt in "${attempts[@]}"; do
         trial="signal-${attempt}-dask-datetime"
         printf '%s\n' "$trial" > "$output/trial.txt"
         echo "Full-suite GPU replay with Dask condition $attempt"
-    elif [[ "$attempt" == baseline || "$attempt" == alternate ]]; then
+    elif [[ "$attempt" == baseline || "$attempt" == alternate* ]]; then
         expected=libcuda.so.615.71.10
-        if [[ "$attempt" == alternate ]]; then
+        if [[ "$attempt" == alternate* ]]; then
             expected=libcuda.so.620.70.10
             environment+=("LD_LIBRARY_PATH=$CUDF_POLARS_ALTERNATE_COMPAT${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
         fi
@@ -58,8 +60,8 @@ PY
     env "${environment[@]}" CUDF_POLARS_DIAGNOSTICS_TRIAL="$trial" \
         "$(dirname "${BASH_SOURCE[0]}")/run_cudf_polars_pytests-once.sh" "${args[@]}" || {
         status=$?
-        # Preserve the other condition even if this one reproduced the crash.
-        if [[ "$attempt" == [123] ]]; then
+        # Only paired comparisons need to continue after a crash.
+        if [[ "$attempt" == [123] || "$trial" == signal-order-alternate-dask-datetime ]]; then
             exit "$status"
         fi
     }

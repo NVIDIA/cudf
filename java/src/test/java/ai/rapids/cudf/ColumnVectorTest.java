@@ -362,38 +362,45 @@ public class ColumnVectorTest extends CudfTestBase {
     }
   }
 
+  /**
+   * PTX of {@link #DIGITS_SIZE_UDF}.  Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then
+   * retargeted to the PTX version and target used by the other PTX tests:
+   * <pre>
+   *   extern "C" __device__ int digits_size(int* output, int input) {
+   *     *output = input &gt;= 10 ? 2 : 1;
+   *     return 0;
+   *   }
+   * </pre>
+   */
+  private static final String DIGITS_SIZE_PTX =
+      ".version 6.3\n" +
+      ".target sm_70\n" +
+      ".address_size 64\n" +
+      "\n" +
+      ".visible .func  (.param .b32 func_retval0) digits_size(\n" +
+      "\t.param .b64 digits_size_param_0,\n" +
+      "\t.param .b32 digits_size_param_1\n" +
+      ")\n" +
+      "{\n" +
+      "\t.reg .pred \t%p<2>;\n" +
+      "\t.reg .b32 \t%r<4>;\n" +
+      "\t.reg .b64 \t%rd<2>;\n" +
+      "\n" +
+      "\tld.param.u64 \t%rd1, [digits_size_param_0];\n" +
+      "\tld.param.u32 \t%r1, [digits_size_param_1];\n" +
+      "\tsetp.gt.s32 \t%p1, %r1, 9;\n" +
+      "\tselp.b32 \t%r2, 2, 1, %p1;\n" +
+      "\tst.u32 \t[%rd1], %r2;\n" +
+      "\tmov.u32 \t%r3, 0;\n" +
+      "\tst.param.b32 \t[func_retval0+0], %r3;\n" +
+      "\tret;\n" +
+      "\n" +
+      "}\n";
+
   @Test
   void testTransformVectorPtxStringOutputStringOffsets() {
     // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
     // target used by the other PTX tests:
-    //   extern "C" __device__ int digits_size(int* output, int input) {
-    //     *output = input >= 10 ? 2 : 1;
-    //     return 0;
-    //   }
-    String sizeUdf =
-        ".version 6.3\n" +
-        ".target sm_70\n" +
-        ".address_size 64\n" +
-        "\n" +
-        ".visible .func  (.param .b32 func_retval0) digits_size(\n" +
-        "\t.param .b64 digits_size_param_0,\n" +
-        "\t.param .b32 digits_size_param_1\n" +
-        ")\n" +
-        "{\n" +
-        "\t.reg .pred \t%p<2>;\n" +
-        "\t.reg .b32 \t%r<4>;\n" +
-        "\t.reg .b64 \t%rd<2>;\n" +
-        "\n" +
-        "\tld.param.u64 \t%rd1, [digits_size_param_0];\n" +
-        "\tld.param.u32 \t%r1, [digits_size_param_1];\n" +
-        "\tsetp.gt.s32 \t%p1, %r1, 9;\n" +
-        "\tselp.b32 \t%r2, 2, 1, %p1;\n" +
-        "\tst.u32 \t[%rd1], %r2;\n" +
-        "\tmov.u32 \t%r3, 0;\n" +
-        "\tst.param.b32 \t[func_retval0+0], %r3;\n" +
-        "\tret;\n" +
-        "\n" +
-        "}\n";
     //   extern "C" __device__ int digits_write(cudf::mutable_string_view* output, int input) {
     //     char* out = output->data();
     //     if (input >= 10) { *out++ = static_cast<char>(48 + input / 10); }
@@ -445,8 +452,80 @@ public class ColumnVectorTest extends CudfTestBase {
         "\n" +
         "}\n";
     try (ColumnVector cv = digitsInput();
-         ColumnVector result = transformWithStringOffsets(cv, sizeUdf, writeUdf, true)) {
+         ColumnVector result = transformWithStringOffsets(cv, DIGITS_SIZE_PTX, writeUdf, true)) {
       assertDigitsResult(result);
+    }
+  }
+
+  @Test
+  void testTransformVectorPtxStringOutputStringOffsetsWithUserData() {
+    // The user data is a lookup table, mapping each digit to a letter.
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int letters_write(void* user_data, cudf::size_type row,
+    //                                           cudf::mutable_string_view* output, int input) {
+    //     char const* letters = static_cast<char const*>(user_data);
+    //     char* out = output->data();
+    //     if (input >= 10) { *out++ = letters[input / 10]; }
+    //     *out = letters[input % 10];
+    //     return 0;
+    //   }
+    String writeUdf =
+        ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) letters_write(\n" +
+        "\t.param .b64 letters_write_param_0,\n" +
+        "\t.param .b32 letters_write_param_1,\n" +
+        "\t.param .b64 letters_write_param_2,\n" +
+        "\t.param .b32 letters_write_param_3\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .pred \t%p<2>;\n" +
+        "\t.reg .b16 \t%rs<3>;\n" +
+        "\t.reg .b32 \t%r<9>;\n" +
+        "\t.reg .b64 \t%rd<12>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd4, [letters_write_param_0];\n" +
+        "\tld.param.u64 \t%rd5, [letters_write_param_2];\n" +
+        "\tld.param.u32 \t%r1, [letters_write_param_3];\n" +
+        "\tld.u64 \t%rd11, [%rd5];\n" +
+        "\tsetp.lt.s32 \t%p1, %r1, 10;\n" +
+        "\t@%p1 bra \t$L__BB0_2;\n" +
+        "\n" +
+        "\tmul.wide.u32 \t%rd6, %r1, -858993459;\n" +
+        "\tshr.u64 \t%rd7, %rd6, 35;\n" +
+        "\tadd.s64 \t%rd8, %rd4, %rd7;\n" +
+        "\tld.u8 \t%rs1, [%rd8];\n" +
+        "\tadd.s64 \t%rd2, %rd11, 1;\n" +
+        "\tst.u8 \t[%rd11], %rs1;\n" +
+        "\tmov.u64 \t%rd11, %rd2;\n" +
+        "\n" +
+        "$L__BB0_2:\n" +
+        "\tmul.hi.s32 \t%r2, %r1, 1717986919;\n" +
+        "\tshr.u32 \t%r3, %r2, 31;\n" +
+        "\tshr.s32 \t%r4, %r2, 2;\n" +
+        "\tadd.s32 \t%r5, %r4, %r3;\n" +
+        "\tmul.lo.s32 \t%r6, %r5, 10;\n" +
+        "\tsub.s32 \t%r7, %r1, %r6;\n" +
+        "\tcvt.s64.s32 \t%rd9, %r7;\n" +
+        "\tadd.s64 \t%rd10, %rd4, %rd9;\n" +
+        "\tld.u8 \t%rs2, [%rd10];\n" +
+        "\tst.u8 \t[%rd11], %rs2;\n" +
+        "\tmov.u32 \t%r8, 0;\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r8;\n" +
+        "\tret;\n" +
+        "\n" +
+        "}\n";
+    try (ColumnVector cv = digitsInput();
+         ColumnVector letters = ColumnVector.fromBytes(
+             "abcdefghij".getBytes(StandardCharsets.US_ASCII));
+         ColumnVector offsets = stringOffsets(cv, DIGITS_SIZE_PTX, true);
+         ColumnVector result =
+             cv.transform(writeUdf, true, DType.STRING, letters.getData(), offsets);
+         ColumnVector expected = ColumnVector.fromStrings("h", "ec", null, "a", "jj")) {
+      assertColumnsAreEqual(expected, result);
     }
   }
 
@@ -490,6 +569,66 @@ public class ColumnVectorTest extends CudfTestBase {
       assertColumnsAreEqual(expected, cv1);
       assertColumnsAreEqual(expected, cv2);
     }
+  }
+
+  /** Transforms with a UDF computing input * factor + row, the factor passed as user data. */
+  private static void assertScaleAddRowResult(String udf, boolean isPtx) {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3, null, 4);
+         ColumnVector factor = ColumnVector.fromInts(10);
+         ColumnVector result = cv.transform(udf, isPtx, DType.INT32, factor.getData(), null);
+         ColumnVector expected = ColumnVector.fromBoxedInts(20, 31, null, 43)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorUserData() {
+    assertScaleAddRowResult("__device__ inline void f(" +
+        "void* user_data," +
+        "cudf::size_type row," +
+        "int* output," +
+        "int input" +
+        "){" +
+        "*output = input * *static_cast<int const*>(user_data) + row;" +
+        "}", false);
+  }
+
+  @Test
+  void testTransformVectorPtxUserData() {
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int scale_add_row(void* user_data, cudf::size_type row,
+    //                                           int* output, int input) {
+    //     *output = input * *static_cast<int const*>(user_data) + row;
+    //     return 0;
+    //   }
+    assertScaleAddRowResult(
+        ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) scale_add_row(\n" +
+        "\t.param .b64 scale_add_row_param_0,\n" +
+        "\t.param .b32 scale_add_row_param_1,\n" +
+        "\t.param .b64 scale_add_row_param_2,\n" +
+        "\t.param .b32 scale_add_row_param_3\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .b32 \t%r<6>;\n" +
+        "\t.reg .b64 \t%rd<3>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd1, [scale_add_row_param_0];\n" +
+        "\tld.param.u32 \t%r1, [scale_add_row_param_1];\n" +
+        "\tld.param.u64 \t%rd2, [scale_add_row_param_2];\n" +
+        "\tld.param.u32 \t%r2, [scale_add_row_param_3];\n" +
+        "\tld.u32 \t%r3, [%rd1];\n" +
+        "\tmad.lo.s32 \t%r4, %r3, %r2, %r1;\n" +
+        "\tst.u32 \t[%rd2], %r4;\n" +
+        "\tmov.u32 \t%r5, 0;\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r5;\n" +
+        "\tret;\n" +
+        "\n" +
+        "}\n", true);
   }
 
   @Test

@@ -242,7 +242,17 @@ __device__ size_t decode_strings(auto* s,
         int input_thread_string_offset;
         int string_length;
         if (s->setup.col.physical_type == Type::FIXED_LEN_BYTE_ARRAY) {
-          input_thread_string_offset = src_pos * s->output_cvt.dtype_len_in;
+          auto const width  = static_cast<size_t>(s->output_cvt.dtype_len_in);
+          auto const offset = static_cast<size_t>(src_pos) * width;
+          if constexpr (!split_decode_t) {
+            auto const available = static_cast<size_t>(s->stream.dict_size);
+            // Validate the entire value before copying, including a partial final value.
+            if (offset > available || width > available - offset) {
+              s->set_error_code(decode_error::STRING_DATA_OVERRUN);
+              return string_index_pair{nullptr, 0};
+            }
+          }
+          input_thread_string_offset = offset;
           string_length              = s->output_cvt.dtype_len_in;
         } else {
           input_thread_string_offset = str_offsets[src_pos];

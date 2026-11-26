@@ -7032,6 +7032,73 @@ TEST_F(ParquetReaderTest, InvalidFooterMagic)
   EXPECT_THROW(cudf::io::read_parquet(read_opts), cudf::logic_error);
 }
 
+TEST_F(ParquetReaderTest, TruncatedPlainFixedLengthByteArrayThrows)
+{
+  for (bool const nullable : {false, true}) {
+    SCOPED_TRACE(nullable);
+    using binary_column = cudf::test::lists_column_wrapper<uint8_t>;
+    binary_column::initializer_type const values{
+      {'a', 'b', 'c', 'd'}, {'e', 'f', 'g', 'h'}, {'i', 'j', 'k', 'l'}, {'m', 'n', 'o', 'p'}};
+    std::array<bool, 4> const validity{true, false, true, true};
+    // Parentheses preserve the four-row value tree.
+    auto const binary = nullable ? binary_column(values, validity.begin()) : binary_column(values);
+    auto const expected = table_view{{binary}};
+    ASSERT_EQ(expected.num_rows(), 4);
+    ASSERT_EQ(cudf::lists_column_view{expected.column(0)}.child().type().id(),
+              cudf::type_id::UINT8);
+    ASSERT_EQ(expected.column(0).null_count(), nullable ? 1 : 0);
+    cudf::io::table_input_metadata metadata(expected);
+    metadata.column_metadata[0]
+      .set_type_length(4)
+      .set_output_as_binary(true)
+      .set_nullability(nullable)
+      .set_encoding(cudf::io::column_encoding::PLAIN);
+    std::vector<char> buffer;
+    cudf::io::write_parquet(
+      cudf::io::parquet_writer_options::builder(cudf::io::sink_info{&buffer}, expected)
+        .metadata(metadata)
+        .compression(cudf::io::compression_type::NONE)
+        .dictionary_policy(cudf::io::dictionary_policy::NEVER));
+
+    auto const footer =
+      cudf::io::read_parquet_footers(cudf::io::make_datasources(cudf::io::source_info{
+                                       cudf::host_span<char const>{buffer.data(), buffer.size()}}))
+        .front();
+    ASSERT_EQ(footer.schema.size(), 2);
+    ASSERT_EQ(footer.schema[1].type, cudf::io::parquet::Type::FIXED_LEN_BYTE_ARRAY);
+    ASSERT_EQ(footer.schema[1].type_length, 4);
+    ASSERT_EQ(footer.schema[1].repetition_type,
+              nullable ? cudf::io::parquet::FieldRepetitionType::OPTIONAL
+                       : cudf::io::parquet::FieldRepetitionType::REQUIRED);
+    auto const& encodings = footer.row_groups.front().columns.front().meta_data.encodings;
+    ASSERT_NE(std::find(encodings.begin(), encodings.end(), cudf::io::parquet::Encoding::PLAIN),
+              encodings.end());
+
+    auto const make_options = [](std::vector<char> const& bytes, int skip_rows) {
+      return cudf::io::parquet_reader_options::builder(
+               cudf::io::source_info{cudf::host_span<char const>{bytes.data(), bytes.size()}})
+        .skip_rows(skip_rows)
+        .build();
+    };
+    auto const valid = cudf::io::read_parquet(make_options(buffer, 0));
+    CUDF_TEST_EXPECT_TABLES_EQUAL(expected, valid.tbl->view());
+
+    // Widen only the declared values, retaining the original PLAIN page bytes. Five bytes
+    // leaves a partial final value; eight bytes leaves entire declared values missing.
+    for (int const width : {5, 8}) {
+      SCOPED_TRACE(width);
+      auto malformed = buffer;
+      edit_footer(malformed, [width](cudf::io::parquet::FileMetaData& footer) {
+        footer.schema[1].type_length = width;
+      });
+      for (int const skip_rows : {0, 2}) {
+        SCOPED_TRACE(skip_rows);
+        EXPECT_THROW(cudf::io::read_parquet(make_options(malformed, skip_rows)), cudf::logic_error);
+      }
+    }
+  }
+}
+
 TEST_F(ParquetReaderTest, CorruptPlainStringLengthThrows)
 {
   // Cover a partial window, the sequential scan (>64-byte average), and a full-window refill.

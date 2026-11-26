@@ -116,6 +116,17 @@ CUDF_KERNEL void copy_characters(gather_string_column const* columns,
 
 }  // namespace gather_strings_plan
 
+CUDF_KERNEL void gather_string_sizes(gather_string_column const* columns,
+                                     size_type num_columns,
+                                     size_type num_rows,
+                                     size_type* sizes)
+{
+  auto const column = cudf::detail::grid_1d::global_thread_id();
+  if (column < num_columns) {
+    sizes[column] = columns[column].input_offsets[num_rows] - columns[column].input_offsets[0];
+  }
+}
+
 }  // namespace
 
 std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
@@ -158,36 +169,67 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
                            nullptr,
                            nullptr});
   }
-  std::vector<size_type> char_sizes(columns);
-  {
-    auto const boundary_count = std::size_t{2} * columns;
-    // Avoid the host-vector allocator's stream wait for CPU initialization.
-    cuda::device_buffer<size_type> boundaries(
-      stream, cudf::get_pinned_memory_resource(), boundary_count, cuda::no_init);
+  // Small readbacks avoid a descriptor upload and sizing kernel. On CUDA 12, however,
+  // memcpy_batch_async submits one runtime copy per boundary (CUDA 13 also falls back
+  // on the legacy default stream), so its fixed cost grows with the number of boundaries.
+  // Count transfers rather than columns: a zero-offset view, including a prefix slice,
+  // only needs its last offset; a nonzero-offset slice needs both endpoints.
+  auto const boundary_copies =
+    columns +
+    std::count_if(input.begin(), input.end(), [](auto const& c) { return c.offset() != 0; });
+  // L4/CUDA 12.9 measurements with empty strings put the zero-offset crossover near
+  // 5-6 columns: four copies were clearly faster, while six were approximately tied.
+  // Keep a conservative limit of four boundary copies; this is a tuning choice,
+  // not a hardware-independent crossover. Fully sliced inputs reach it at two columns.
+  constexpr size_type max_direct_boundary_copies = 4;
+  // Use uninitialized pinned storage to avoid the host-vector allocator's stream wait
+  // for CPU initialization. The first half holds the final sizes (or last offsets),
+  // and the second half holds first offsets for the direct-readback path.
+  cuda::device_buffer<size_type> size_storage(
+    stream, cudf::get_pinned_memory_resource(), std::size_t{2} * columns, cuda::no_init);
+  auto char_sizes =
+    host_span<size_type>{size_storage.data(), static_cast<std::size_t>(columns), true};
+  if (boundary_copies <= max_direct_boundary_copies) {
     std::vector<void*> destinations;
     std::vector<void const*> sources;
-    destinations.reserve(boundary_count);
-    sources.reserve(boundary_count);
+    destinations.reserve(boundary_copies);
+    sources.reserve(boundary_copies);
     for (size_type i = 0; i < columns; ++i) {
-      auto const index = std::size_t{2} * i;
-      destinations.push_back(boundaries.data() + index + 1);
+      destinations.push_back(size_storage.data() + i);
       sources.push_back(descriptors[i].input_offsets + rows);
-      // A prefix slice also has offset zero; its first offset is still known to be zero.
       if (input.column(i).offset() != 0) {
-        destinations.push_back(boundaries.data() + index);
+        destinations.push_back(size_storage.data() + columns + i);
         sources.push_back(descriptors[i].input_offsets);
       }
     }
     std::vector<std::size_t> copy_sizes(sources.size(), sizeof(size_type));
     auto const copy_status = cudf::detail::memcpy_batch_async(
       destinations.data(), sources.data(), copy_sizes.data(), sources.size(), stream);
-    // Drain even a partially submitted batch before checking its status or releasing destinations.
+    // Drain a partially submitted batch before reporting an error or releasing destinations.
     cudf::detail::sync_stream(stream);
     CUDF_CUDA_TRY(copy_status);
     for (size_type i = 0; i < columns; ++i) {
-      auto const index = std::size_t{2} * i;
-      auto const first = input.column(i).offset() == 0 ? 0 : boundaries.data()[index];
-      char_sizes[i]    = boundaries.data()[index + 1] - first;
+      if (input.column(i).offset() != 0) { char_sizes[i] -= size_storage.data()[columns + i]; }
+    }
+  } else {
+    // Pack all size differences on the device, keeping transfer submission count constant:
+    // one descriptor H2D, one sizing kernel, and one contiguous D2H, followed by one wait.
+    cuda::device_buffer<gather_string_column> device_columns(
+      stream, temp_mr, columns, cuda::no_init);
+    cuda::device_buffer<size_type> device_sizes(stream, temp_mr, columns, cuda::no_init);
+    try {
+      cudf::detail::cuda_memcpy_async<gather_string_column>(
+        device_columns, host_span<gather_string_column const>{descriptors}, stream);
+      gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
+        device_columns.data(), columns, rows, device_sizes.data());
+      CUDF_CUDA_TRY(cudaPeekAtLastError());
+      cudf::detail::cuda_memcpy<size_type>(char_sizes, device_sizes, stream);
+    } catch (...) {
+      // CUDA 13 can defer reading descriptors until the stream reaches its upload. If a later
+      // operation throws, wait before unwinding so descriptors and the pinned readback buffer
+      // remain alive until all queued copies complete.
+      cudf::detail::sync_stream(stream);
+      throw;
     }
   }
 

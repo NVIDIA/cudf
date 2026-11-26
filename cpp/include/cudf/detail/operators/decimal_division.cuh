@@ -5,19 +5,23 @@
 
 #pragma once
 
+#include <cudf/errc.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/round.hpp>
+#include <cudf/utilities/export.hpp>
 
 #include <cuda/cmath>
 #include <cuda/numeric>
 #include <cuda/std/algorithm>
 #include <cuda/std/bit>
 #include <cuda/std/cstdint>
+#include <cuda/std/expected>
 #include <cuda/std/limits>
-#include <cuda/std/optional>
 
-namespace cudf::detail {
+namespace CUDF_EXPORT cudf {
+namespace detail {
+namespace ops {
 
 /**
  * @brief Unsigned type used to hold the magnitudes of `Rep` operands during division.
@@ -52,8 +56,6 @@ __device__ inline bool checked_power(U& result, int32_t exponent)
 /**
  * @brief Rounds the magnitude of a quotient using its remainder, and applies its sign.
  *
- * Returns no value if the rounded magnitude has more digits than `OutRep` can always hold.
- *
  * @tparam OutRep The representation type of the output
  * @tparam U The unsigned type holding the magnitudes
  * @param quotient The magnitude of the truncated quotient
@@ -61,10 +63,11 @@ __device__ inline bool checked_power(U& result, int32_t exponent)
  * @param divisor The magnitude of the divisor
  * @param negative Whether the quotient is negative
  * @param method The rounding method to use
- * @return The rounded quotient, or no value
+ * @return `errc::ARITHMETIC_OVERFLOW` if the rounded magnitude has more digits than `OutRep` can
+ * always hold, else the rounded quotient
  */
 template <typename OutRep, typename U>
-__device__ inline cuda::std::optional<OutRep> round_quotient(
+__device__ inline cuda::std::expected<OutRep, errc> round_quotient(
   U quotient, U remainder, U divisor, bool negative, rounding_method method)
 {
   U const rest          = divisor - remainder;
@@ -78,7 +81,9 @@ __device__ inline cuda::std::optional<OutRep> round_quotient(
     1;
   // Checked before rounding, so that the increment can't wrap
   auto const increment = static_cast<U>(round_away);
-  if (quotient > max_magnitude - increment) { return cuda::std::nullopt; }
+  if (quotient > max_magnitude - increment) {
+    return cuda::std::unexpected{errc::ARITHMETIC_OVERFLOW};
+  }
 
   auto const value = static_cast<OutRep>(quotient + increment);
   return negative ? -value : value;
@@ -129,14 +134,16 @@ __device__ inline cuda::std::uint64_t divide_3by2(__uint128_t& remainder,
  * @param exponent The non-negative power of 10 to rescale the dividend by
  * @param negative Whether the quotient is negative
  * @param method The rounding method to use
- * @return The rounded quotient, or no value if it has more digits than `OutRep` can always hold
+ * @return `errc::ARITHMETIC_OVERFLOW` if the rounded quotient has more digits than `OutRep` can
+ * always hold, else the rounded quotient
  */
 template <typename OutRep>
-__device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint128_t dividend,
-                                                                          __uint128_t divisor,
-                                                                          int32_t exponent,
-                                                                          bool negative,
-                                                                          rounding_method method)
+__device__ __noinline__ cuda::std::expected<OutRep, errc> divide_and_round_wide(
+  __uint128_t dividend,
+  __uint128_t divisor,
+  int32_t exponent,
+  bool negative,
+  rounding_method method)
 {
   using U = __uint128_t;
   // The largest power of 10 that fits in `U`
@@ -152,13 +159,13 @@ __device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint
     lo *= factor;
     // A product of 2^256 or more gives a quotient of at least 2^129, which never fits
     if (cuda::mul_overflow(hi, hi, factor) || cuda::add_overflow(hi, hi, carry)) {
-      return cuda::std::nullopt;
+      return cuda::std::unexpected{errc::ARITHMETIC_OVERFLOW};
     }
     exponent -= step;
   }
 
   // The quotient is at least 2^128, which never fits
-  if (hi >= divisor) { return cuda::std::nullopt; }
+  if (hi >= divisor) { return cuda::std::unexpected{errc::ARITHMETIC_OVERFLOW}; }
 
   // Long division in 64-bit digits, after shifting so that the top bit of the divisor is set.
   // Since `hi < divisor`, shifting `hi` by the same amount can't overflow.
@@ -182,9 +189,8 @@ __device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint
  * `lhs * 10^exponent / rhs`, computed exactly and then rounded using `method`, where
  * `exponent = lhs scale - rhs scale - output scale`.
  *
- * Returns no value if `rhs` is zero, or if the rounded quotient has more digits than `OutRep` can
- * always hold. With `decimal_intermediate::STANDARD`, also returns no value if
- * `lhs * 10^exponent` does not fit in the magnitude type of `CompRep`.
+ * With `decimal_intermediate::STANDARD`, `lhs * 10^exponent` must also fit in the magnitude type of
+ * `CompRep`.
  *
  * @tparam OutRep The representation type of the output
  * @tparam RhsRep The representation type of the divisor, before widening
@@ -194,20 +200,23 @@ __device__ __noinline__ cuda::std::optional<OutRep> divide_and_round_wide(__uint
  * @param exponent The power of 10 to rescale the quotient by
  * @param method The rounding method to use
  * @param intermediate The width of the intermediate value used to rescale the dividend
- * @return The quotient's representation at the output scale, or no value
+ * @return `errc::DIVISION_BY_ZERO` if `rhs` is zero, `errc::ARITHMETIC_OVERFLOW` if the rounded
+ * quotient has more digits than `OutRep` can always hold or the rescaled dividend does not fit in
+ * the intermediate, else the quotient's representation at the output scale
  */
 template <typename OutRep, typename RhsRep, typename CompRep>
-__device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
-                                                               CompRep rhs,
-                                                               int32_t exponent,
-                                                               rounding_method method,
-                                                               decimal_intermediate intermediate)
+__device__ inline cuda::std::expected<OutRep, errc> divide_and_round(
+  CompRep lhs,
+  CompRep rhs,
+  int32_t exponent,
+  rounding_method method,
+  decimal_intermediate intermediate)
 {
   using U = division_magnitude_t<CompRep>;
 
   auto const magnitude = [](CompRep value) { return static_cast<U>(cuda::uabs(value)); };
 
-  if (rhs == 0) { return cuda::std::nullopt; }
+  if (rhs == 0) { return cuda::std::unexpected{errc::DIVISION_BY_ZERO}; }
   if (lhs == 0) { return OutRep{0}; }
 
   bool const negative = (lhs < 0) != (rhs < 0);
@@ -225,7 +234,7 @@ __device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
             magnitude(lhs), magnitude(rhs), exponent, negative, method);
         }
       }
-      return cuda::std::nullopt;
+      return cuda::std::unexpected{errc::ARITHMETIC_OVERFLOW};
     }
   } else if (!checked_power<U>(factor, -exponent) || cuda::mul_overflow(divisor, divisor, factor)) {
     // The divisor is more than twice the largest possible dividend, so the quotient rounds to 0.
@@ -235,4 +244,6 @@ __device__ inline cuda::std::optional<OutRep> divide_and_round(CompRep lhs,
   return round_quotient<OutRep>(dividend / divisor, dividend % divisor, divisor, negative, method);
 }
 
-}  // namespace cudf::detail
+}  // namespace ops
+}  // namespace detail
+}  // namespace CUDF_EXPORT cudf

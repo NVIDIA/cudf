@@ -3,14 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include "math_ops.cuh"
-
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/decimal_division.cuh>
 #include <cudf/detail/transform.hpp>
 #include <cudf/fixed_point/math_ops.hpp>
 #include <cudf/scalar/scalar.hpp>
@@ -79,15 +78,18 @@ struct divide_decimal_fn {
 
   __device__ void operator()(size_type i) const
   {
-    auto const l        = lhs[i];
-    auto const r        = rhs[i];
-    auto const quotient = (l.has_value() && r.has_value())
-                            ? divide_and_round<OutRep, RhsRep>(static_cast<CompRep>(l->value()),
-                                                               static_cast<CompRep>(r->value()),
-                                                               exponent,
-                                                               method,
-                                                               intermediate)
-                            : cuda::std::optional<OutRep>{};
+    auto const l = lhs[i];
+    auto const r = rhs[i];
+    if (!l.has_value() || !r.has_value()) {
+      output[i]       = OutRep{0};
+      output_valid[i] = false;
+      return;
+    }
+    auto const quotient = ops::divide_and_round<OutRep, RhsRep>(static_cast<CompRep>(l->value()),
+                                                                static_cast<CompRep>(r->value()),
+                                                                exponent,
+                                                                method,
+                                                                intermediate);
     output[i]           = quotient.value_or(OutRep{0});
     output_valid[i]     = quotient.has_value();
   }

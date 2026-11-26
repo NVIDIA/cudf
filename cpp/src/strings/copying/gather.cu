@@ -141,6 +141,17 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
   auto const columns = input.num_columns();
   CUDF_EXPECTS(gather_map.size() == static_cast<std::size_t>(rows),
                "Permutation size must match the input row count");
+  constexpr size_type max_copy_columns = 65'535;
+  CUDF_EXPECTS(columns <= max_copy_columns, "Input must have at most 65,535 columns");
+  for (auto const& column : input) {
+    CUDF_EXPECTS(column.type().id() == type_id::STRING, "Input columns must have STRING type");
+    CUDF_EXPECTS(not column.has_nulls(), "Input columns must not contain nulls");
+    // Empty STRING columns need not have an offsets child.
+    if (rows != 0) {
+      CUDF_EXPECTS(strings_column_view(column).offsets().type().id() == type_id::INT32,
+                   "Input columns must use INT32 offsets");
+    }
+  }
   if (columns == 0) {
     return std::make_unique<table>(std::vector<std::unique_ptr<column>>{}, rows);
   }

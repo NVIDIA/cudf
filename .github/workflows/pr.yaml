@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-stream-order
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-stream-trace
   cancel-in-progress: true
 
 jobs:
@@ -21,7 +21,6 @@ jobs:
       matrix:
         trial:
           - order-reference
-          - sanitizer-order
           - order-probe-03
           - order-probe-04
           - order-probe-05
@@ -70,8 +69,15 @@ jobs:
           path: replay-source
           persist-credentials: false
       - name: Install the fault reporter compiler
-        if: steps.gpu.outputs.replay == 'true'
-        run: conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge 'gcc_linux-aarch64=14.*'
+        if: steps.gpu.outputs.replay == 'true' && startsWith(steps.gpu.outputs.trial, 'signal-')
+        env:
+          TRIAL: ${{ steps.gpu.outputs.trial }}
+        run: |
+          packages=('gcc_linux-aarch64=14.*')
+          if [[ "$TRIAL" == signal-order-* ]]; then
+              packages+=('cuda-cupti-dev=13.4.92=hc1d3098_0' 'cuda-cudart-dev=13.4.92=hae6cbe8_1' 'cuda-driver-dev=13.4.92=hae6cbe8_1')
+          fi
+          conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge "${packages[@]}"
       - name: Replay the Conda Polars job
         if: steps.gpu.outputs.replay == 'true'
         env:

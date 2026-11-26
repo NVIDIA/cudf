@@ -21,10 +21,11 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
     export CUDF_POLARS_FAULT_LIBRARY
     tracing=()
     if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-* ]]; then
-        tracing=(-DSTREAM_ORDER_TRACE -I/usr/local/cuda/include ci/arm64_polars_diagnostics/stream_order.c -ldl)
+        tracing=(-DSTREAM_ORDER_TRACE ci/arm64_polars_diagnostics/stream_order.c -ldl)
         export CUDF_POLARS_STREAM_TRACE=1
     fi
-    conda run --no-capture-output --name fault-compiler aarch64-conda-linux-gnu-gcc \
+    conda run --no-capture-output --name fault-compiler bash -c \
+        'exec aarch64-conda-linux-gnu-gcc -I"$CONDA_PREFIX/targets/sbsa-linux/include" "$@"' gcc \
         -std=c11 -Wall -Wextra -O2 -fPIC -shared \
         ci/arm64_polars_diagnostics/fault_address.c "${tracing[@]}" -o "$CUDF_POLARS_FAULT_LIBRARY"
 fi

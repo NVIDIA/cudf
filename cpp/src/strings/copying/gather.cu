@@ -8,15 +8,14 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
-#include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
-#include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/detail/gather.cuh>
 #include <cudf/strings/detail/gather.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/pinned_memory.hpp>
 
 #include <rmm/device_buffer.hpp>
 
@@ -119,17 +118,6 @@ CUDF_KERNEL void copy_characters(gather_string_column const* columns,
 
 }  // namespace gather_strings_plan
 
-CUDF_KERNEL void gather_string_sizes(gather_string_column const* columns,
-                                     size_type num_columns,
-                                     size_type num_rows,
-                                     size_type* sizes)
-{
-  auto const column = cudf::detail::grid_1d::global_thread_id();
-  if (column < num_columns) {
-    sizes[column] = columns[column].input_offsets[num_rows] - columns[column].input_offsets[0];
-  }
-}
-
 }  // namespace
 
 std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
@@ -172,22 +160,37 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
                            nullptr,
                            nullptr});
   }
-  cuda::device_buffer<gather_string_column> device_columns(stream, temp_mr, columns, cuda::no_init);
-  cuda::device_buffer<size_type> device_sizes(stream, temp_mr, columns, cuda::no_init);
-  auto char_sizes = cudf::detail::make_pinned_vector_async<size_type>(columns, stream);
-  try {
-    cudf::detail::cuda_memcpy_async<gather_string_column>(
-      device_columns, host_span<gather_string_column const>{descriptors}, stream);
-    gather_string_sizes<<<cudf::detail::grid_1d{columns, 256}.num_blocks, 256, 0, stream.get()>>>(
-      device_columns.data(), columns, rows, device_sizes.data());
-    CUDF_CUDA_TRY(cudaPeekAtLastError());
-    cudf::detail::cuda_memcpy<size_type>(char_sizes, device_sizes, stream);
-  } catch (...) {
-    // CUDA 13 can defer reading descriptors until the stream reaches its upload. If a later
-    // operation throws, wait before unwinding so descriptors and the pinned readback buffer
-    // remain alive until all queued copies complete.
+  std::vector<size_type> char_sizes(columns);
+  {
+    auto const boundary_count = std::size_t{2} * columns;
+    // Avoid the host-vector allocator's stream wait for CPU initialization.
+    cuda::device_buffer<size_type> boundaries(
+      stream, cudf::get_pinned_memory_resource(), boundary_count, cuda::no_init);
+    std::vector<void*> destinations;
+    std::vector<void const*> sources;
+    destinations.reserve(boundary_count);
+    sources.reserve(boundary_count);
+    for (size_type i = 0; i < columns; ++i) {
+      auto const index = std::size_t{2} * i;
+      destinations.push_back(boundaries.data() + index + 1);
+      sources.push_back(descriptors[i].input_offsets + rows);
+      // A prefix slice also has offset zero; its first offset is still known to be zero.
+      if (input.column(i).offset() != 0) {
+        destinations.push_back(boundaries.data() + index);
+        sources.push_back(descriptors[i].input_offsets);
+      }
+    }
+    std::vector<std::size_t> copy_sizes(sources.size(), sizeof(size_type));
+    auto const status = cudf::detail::memcpy_batch_async(
+      destinations.data(), sources.data(), copy_sizes.data(), sources.size(), stream);
+    // Drain even a partially submitted batch before checking its status or releasing destinations.
     cudf::detail::sync_stream(stream);
-    throw;
+    CUDF_CUDA_TRY(status);
+    for (size_type i = 0; i < columns; ++i) {
+      auto const index = std::size_t{2} * i;
+      auto const first = input.column(i).offset() == 0 ? 0 : boundaries.data()[index];
+      char_sizes[i]    = boundaries.data()[index + 1] - first;
+    }
   }
 
   // Let the offsets utility construct the scan iterator to avoid nested index arithmetic.
@@ -226,6 +229,8 @@ std::unique_ptr<table> gather_non_null_permutation(table_view const& input,
   }
 
   if (!copy_columns.empty()) {
+    cuda::device_buffer<gather_string_column> device_columns(
+      stream, temp_mr, copy_columns.size(), cuda::no_init);
     // Complete this upload before releasing or reusing its pageable host source on every path.
     cudf::detail::cuda_memcpy<gather_string_column>(
       device_span<gather_string_column>{device_columns.data(), copy_columns.size()},

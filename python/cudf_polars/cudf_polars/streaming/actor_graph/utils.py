@@ -11,10 +11,10 @@ import math
 import operator
 import struct
 from collections import deque
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import pylibcudf as plc
 import rmm.mr
@@ -29,6 +29,7 @@ from cudf_streaming.table_chunk import (
     TableChunk,
     make_table_chunks_available_or_wait,
 )
+from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.memory_reservation import opaque_memory_usage
 from rapidsmpf.memory.packed_data import PackedData
 from rapidsmpf.streaming.coll.allgather import AllGather
@@ -45,6 +46,7 @@ from cudf_polars.streaming.actor_graph.tracing import (
     send_chunk,
 )
 from cudf_polars.streaming.utils import _concat
+from cudf_polars.utils.config import RankLocalCPUComputeMode
 from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
@@ -417,7 +419,7 @@ def _make_hash_shuffle_metadata(
             if metadata_in.partitioning is None
             else metadata_in.partitioning.inter_rank
         )
-        local_scheme: HashScheme | str = HashScheme(
+        local_scheme: HashScheme | Literal["inherit"] = HashScheme(
             column_indices=key_indices, modulus=modulus
         )
         local_output_count = modulus
@@ -482,6 +484,22 @@ async def evaluate_chunk(
     """
     Make chunk available, reserve memory, and evaluate.
 
+    Where the IR nodes run, by ``ir_context.rank_local_cpu_compute``:
+
+    +--------------+----------------------------+-----------------------+
+    | Mode         | Reservation fits           | Reservation overbooks |
+    +==============+============================+=======================+
+    | ``"never"``  | GPU                        | GPU                   |
+    +--------------+----------------------------+-----------------------+
+    | ``"always"`` | CPU                        | CPU                   |
+    +--------------+----------------------------+-----------------------+
+    | ``"on_oom"`` | GPU, CPU after MemoryError | CPU                   |
+    +--------------+----------------------------+-----------------------+
+
+    CPU applies only to CPU capable IR nodes, the others run on the GPU. With
+    ``"on_oom"``, the reservation overbooks after the timeout even when
+    ``allow_overbooking_by_default`` is off.
+
     Parameters
     ----------
     context
@@ -506,9 +524,20 @@ async def evaluate_chunk(
     The resulting table chunk after evaluation.
     """
     assert len(irs) > 0, "Expected at least one IR node"
-    if already_available:
-        if not chunk.is_available():
-            raise ValueError("already_available=True requires an available TableChunk")
+    on_oom = ir_context.rank_local_cpu_compute == RankLocalCPUComputeMode.ON_OOM
+    overbooked = 0
+    if already_available and not chunk.is_available():
+        raise ValueError("already_available=True requires an available TableChunk")
+    if on_oom:
+        size = chunk.data_alloc_size()
+        if not already_available:
+            size += chunk.make_available_cost()
+        reservation, overbooked = await context.memory(
+            MemoryType.DEVICE
+        ).reserve_or_wait_or_overbook(size, net_memory_delta=0)
+        if not already_available:
+            chunk = chunk.make_available(reservation)
+    elif already_available:
         reservation = await reserve_memory(
             context, size=chunk.data_alloc_size(), net_memory_delta=0
         )
@@ -518,6 +547,13 @@ async def evaluate_chunk(
             chunk,
             reserve_extra=chunk.data_alloc_size(),
             net_memory_delta=0,
+        )
+    if overbooked > 0:
+        # Run the IR nodes in `irs` on the CPU, if they are CPU capable. They still
+        # use the reservation, since the CPU path needs the input and the result
+        # on the device.
+        ir_context = replace(
+            ir_context, rank_local_cpu_compute=RankLocalCPUComputeMode.ALWAYS
         )
     with opaque_memory_usage(reservation):
         for single_ir in irs:
@@ -563,12 +599,15 @@ async def allgather_and_reduce(
     -------
     The chunk produced by evaluating ``reduce_ir`` on the gathered result.
     """
-    allgather = AllGatherManager(context, comm, collective_id)
-    with allgather.inserting() as inserter:
-        await inserter.insert(0, local_chunk)
     stream = ir_context.get_cuda_stream()
+    async with AllGatherManager(context, comm, collective_id) as allgather:
+        with allgather.inserting() as inserter:
+            await inserter.insert(0, local_chunk)
+        concat_table = await allgather.extract_concatenated(
+            stream, ir_context=ir_context
+        )
     concat_chunk = TableChunk.from_pylibcudf_table(
-        await allgather.extract_concatenated(stream, ir_context=ir_context),
+        concat_table,
         stream,
         exclusive_view=True,
         br=context.br(),
@@ -1378,13 +1417,10 @@ async def allgather_reduce(
     data = struct.pack(fmt, *local_values)
     packed = PackedData.from_host_bytes(data, context.br())
 
-    allgather = AllGather(context, comm, op_id)
-    try:
-        allgather.insert(0, packed)
-    finally:
-        allgather.insert_finished()
-
-    results = await allgather.extract_all(context, ordered=False)
+    async with aclosing(AllGather(context, comm, op_id)) as allgather:
+        with allgather:
+            allgather.insert(0, packed)
+        results = await allgather.extract_all(ordered=False)
 
     totals = [0] * n
     for packed_result in results:

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import operator
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
@@ -21,10 +22,12 @@ import polars as pl
 import polars.selectors as cs
 
 import pylibcudf as plc
+from rapidsmpf.statistics import Formatter
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.dsl import expr, ir
 from cudf_polars.dsl.expressions.base import ExecutionContext
+from cudf_polars.utils.config import RankLocalCPUComputeMode
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -450,11 +453,24 @@ def evaluate_ir(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataF
     """
     Evaluate an IR node given its evaluated children.
 
-    Calls ``node.do_evaluate``, or :func:`cpu_evaluate` when the execution
-    context requests CPU fallback and ``node`` is CPU capable. A node is not
-    CPU capable when it, or one of its expressions, has no Polars conversion.
-    Such a node is evaluated on the GPU, and the fallback still applies to
-    the other nodes.
+    Depending on ``context.rank_local_cpu_compute``:
+
+    - ``"never"``: calls ``node.do_evaluate``.
+    - ``"always"``: calls :func:`cpu_evaluate` if ``node`` is CPU capable,
+      otherwise ``node.do_evaluate``.
+    - ``"on_oom"``: calls ``node.do_evaluate``, and :func:`cpu_evaluate` if that
+      raises ``MemoryError`` and ``node`` is CPU capable.
+
+    A node is not CPU capable when it, or one of its expressions, has no
+    Polars conversion. The fallback still applies to the other nodes.
+
+    Each evaluation on the CPU adds to two statistics of ``context.statistics``:
+
+    - ``rank-local-cpu-compute-time``: the seconds spent in :func:`cpu_evaluate`.
+    - ``rank-local-cpu-compute-bytes``: the bytes copied between device and host,
+      that is, the size of the inputs and the result.
+
+    The count of either statistic is the number of evaluations on the CPU.
 
     Parameters
     ----------
@@ -469,8 +485,47 @@ def evaluate_ir(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataF
     -------
     The result of evaluating ``node``.
     """
+    mode = context.rank_local_cpu_compute
     # is_cpu_capable and cpu_evaluate each build the Polars plan. That is
     # cheap compared to copying the data to the host and back.
-    if context.rank_local_cpu_compute == "always" and is_cpu_capable(node):
-        return cpu_evaluate(node, *dfs, context=context)
-    return node.do_evaluate(*node._non_child_args, *dfs, context=context)
+    gpu_error: str | None = None
+    if mode == RankLocalCPUComputeMode.ON_OOM:
+        try:
+            return node.do_evaluate(*node._non_child_args, *dfs, context=context)
+        except MemoryError as e:
+            if not is_cpu_capable(node):
+                raise
+            # Keep only the message, so the frames of the GPU attempt are released.
+            gpu_error = str(e)
+    elif mode == RankLocalCPUComputeMode.NEVER or not is_cpu_capable(node):
+        return node.do_evaluate(*node._non_child_args, *dfs, context=context)
+
+    # At this point, the GPU ran out of memory or the mode is "always".
+    start = time.perf_counter()
+    try:
+        ret = cpu_evaluate(node, *dfs, context=context)
+    except Exception as e:
+        if gpu_error is not None:
+            e.add_note(
+                f"Raised while evaluating {type(node).__name__} on the CPU after "
+                f"the GPU ran out of memory: {gpu_error}"
+            )
+        raise
+    stats = context.statistics
+    if stats is not None and stats.enabled:
+        stats.add_report_entry(
+            "rank-local-cpu-compute-time",
+            ["rank-local-cpu-compute-time"],
+            Formatter.Duration,
+        )
+        stats.add_report_entry(
+            "rank-local-cpu-compute-bytes",
+            ["rank-local-cpu-compute-bytes"],
+            Formatter.Bytes,
+        )
+        stats.add_stat("rank-local-cpu-compute-time", time.perf_counter() - start)
+        stats.add_stat(
+            "rank-local-cpu-compute-bytes",
+            sum(df._size_bytes for df in dfs) + ret._size_bytes,
+        )
+    return ret

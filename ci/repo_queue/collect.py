@@ -25,12 +25,16 @@ def timestamp():
 class GitHub:
     """Use gh's existing authentication and pagination without a shell."""
 
-    def get(self, endpoint, *, paginate=False, key=None):
+    def get(self, endpoint, *, paginate=False, key=None, timeout=180):
         command = ["gh", "api", "--method", "GET", endpoint]
         if paginate:
             command.extend(["--paginate", "--slurp"])
         result = subprocess.run(
-            command, capture_output=True, text=True, timeout=180, check=False
+            command,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
         if result.returncode:
             raise RuntimeError(result.stderr.strip())

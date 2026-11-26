@@ -165,34 +165,36 @@ async def do_shuffle(
     *,
     partition_assignment: PartitionAssignment = PartitionAssignment.ROUND_ROBIN,
 ) -> None:
-    shuffle = ShufflerAsync(
+    async with ShufflerAsync(
         context,
         comm,
         op_id,
         num_partitions,
         partition_assignment=partition_assignment,
-    )
-    while (msg := await ch_in.recv(context)) is not None:
-        chunk = TableChunk.from_message(msg, br=context.br())
-        num_rows = chunk.table_view().num_rows()
-        part_size = num_rows // num_partitions + (num_rows % num_partitions)
-        splits = range(part_size, num_rows, part_size)
-        shuffle.insert(
-            split_and_pack(
-                chunk.table_view(), splits, chunk.stream, context.br()
+    ) as shuffle:
+        while (msg := await ch_in.recv(context)) is not None:
+            chunk = TableChunk.from_message(msg, br=context.br())
+            num_rows = chunk.table_view().num_rows()
+            part_size = num_rows // num_partitions + (
+                num_rows % num_partitions
             )
-        )
-    await shuffle.insert_finished(context)
-    for pid in shuffle.local_partitions():
-        data = shuffle.extract(pid)
-        stream = context.br().stream_pool.get_stream()
-        unpacked = TableChunk.from_pylibcudf_table(
-            unpack_and_concat(data, stream, context.br()),
-            stream,
-            exclusive_view=True,
-            br=context.br(),
-        )
-        await ch_out.send(context, Message(pid, unpacked))
+            splits = range(part_size, num_rows, part_size)
+            shuffle.insert(
+                split_and_pack(
+                    chunk.table_view(), splits, chunk.stream, context.br()
+                )
+            )
+        await shuffle.insert_finished()
+        for pid in shuffle.local_partitions():
+            data = shuffle.extract(pid)
+            stream = context.br().stream_pool.get_stream()
+            unpacked = TableChunk.from_pylibcudf_table(
+                unpack_and_concat(data, stream, context.br()),
+                stream,
+                exclusive_view=True,
+                br=context.br(),
+            )
+            await ch_out.send(context, Message(pid, unpacked))
     await ch_out.drain(context)
 
 

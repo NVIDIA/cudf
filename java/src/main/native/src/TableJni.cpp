@@ -27,6 +27,7 @@
 #include <cudf/io/orc.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/join/conditional_join.hpp>
+#include <cudf/join/direct_join.hpp>
 #include <cudf/join/distinct_hash_join.hpp>
 #include <cudf/join/filtered_join.hpp>
 #include <cudf/join/hash_join.hpp>
@@ -39,6 +40,7 @@
 #include <cudf/replace.hpp>
 #include <cudf/reshape.hpp>
 #include <cudf/rolling.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/search.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/stream_compaction.hpp>
@@ -496,22 +498,45 @@ class native_arrow_ipc_reader_handle final {
   }
 };
 
+namespace {
+
+/**
+ * @brief Detach all columns from the specified table and return pointers to them, optionally
+ * preceded by the table's row count.
+ */
+jlongArray release_table_for_return(JNIEnv* env,
+                                    std::unique_ptr<cudf::table>&& table_result,
+                                    std::vector<std::unique_ptr<cudf::column>>&& extra_columns,
+                                    bool with_row_count)
+{
+  // A table without columns does not know the row count of the extra columns.
+  auto const num_rows = table_result->num_columns() == 0 && !extra_columns.empty()
+                          ? extra_columns.front()->size()
+                          : table_result->num_rows();
+  std::vector<std::unique_ptr<cudf::column>> ret = table_result->release();
+  int prefix                                     = with_row_count ? 1 : 0;
+  int table_cols                                 = ret.size();
+  int num_entries                                = prefix + table_cols + extra_columns.size();
+  cudf::jni::native_jlongArray outcol_handles(env, num_entries);
+  if (with_row_count) { outcol_handles[0] = num_rows; }
+  std::transform(ret.begin(), ret.end(), outcol_handles.begin() + prefix, [](auto& col) {
+    return release_as_jlong(col);
+  });
+  std::transform(extra_columns.begin(),
+                 extra_columns.end(),
+                 outcol_handles.begin() + prefix + table_cols,
+                 [](auto& col) { return release_as_jlong(col); });
+  return outcol_handles.get_jArray();
+}
+
+}  // namespace
+
 jlongArray convert_table_for_return(JNIEnv* env,
                                     std::unique_ptr<cudf::table>&& table_result,
                                     std::vector<std::unique_ptr<cudf::column>>&& extra_columns)
 {
-  std::vector<std::unique_ptr<cudf::column>> ret = table_result->release();
-  int table_cols                                 = ret.size();
-  int num_columns                                = table_cols + extra_columns.size();
-  cudf::jni::native_jlongArray outcol_handles(env, num_columns);
-  std::transform(ret.begin(), ret.end(), outcol_handles.begin(), [](auto& col) {
-    return release_as_jlong(col);
-  });
-  std::transform(
-    extra_columns.begin(), extra_columns.end(), outcol_handles.begin() + table_cols, [](auto& col) {
-      return release_as_jlong(col);
-    });
-  return outcol_handles.get_jArray();
+  return release_table_for_return(
+    env, std::move(table_result), std::move(extra_columns), /*with_row_count=*/false);
 }
 
 jlongArray convert_table_for_return(JNIEnv* env,
@@ -526,6 +551,31 @@ jlongArray convert_table_for_return(JNIEnv* env,
                                     std::unique_ptr<cudf::table>& second_table)
 {
   return convert_table_for_return(env, first_table, second_table->release());
+}
+
+jlongArray convert_table_with_row_count_for_return(
+  JNIEnv* env,
+  std::unique_ptr<cudf::table>&& table_result,
+  std::vector<std::unique_ptr<cudf::column>>&& extra_columns)
+{
+  return release_table_for_return(
+    env, std::move(table_result), std::move(extra_columns), /*with_row_count=*/true);
+}
+
+jlongArray convert_table_with_row_count_for_return(
+  JNIEnv* env,
+  std::unique_ptr<cudf::table>& table_result,
+  std::vector<std::unique_ptr<cudf::column>>&& extra_columns)
+{
+  return convert_table_with_row_count_for_return(
+    env, std::move(table_result), std::move(extra_columns));
+}
+
+jlongArray convert_table_with_row_count_for_return(JNIEnv* env,
+                                                   std::unique_ptr<cudf::table>& first_table,
+                                                   std::unique_ptr<cudf::table>& second_table)
+{
+  return convert_table_with_row_count_for_return(env, first_table, second_table->release());
 }
 
 // Convert the JNI boolean array of key column sort order to a vector of cudf::order
@@ -1086,6 +1136,7 @@ void set_nullable(ArrowSchema* schema)
 }  // namespace cudf
 
 using cudf::jni::convert_table_for_return;
+using cudf::jni::convert_table_with_row_count_for_return;
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
 
@@ -1113,9 +1164,14 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_removeNullMasksIfNeeded(J
 
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_createCudfTableView(JNIEnv* env,
                                                                       jclass,
-                                                                      jlongArray j_cudf_columns)
+                                                                      jlongArray j_cudf_columns,
+                                                                      jlong j_row_count)
 {
   JNI_NULL_CHECK(env, j_cudf_columns, "columns are null", 0);
+  JNI_ARG_CHECK(env,
+                j_row_count >= 0 && j_row_count <= std::numeric_limits<cudf::size_type>::max(),
+                "row count out of range",
+                0);
 
   JNI_TRY
   {
@@ -1123,7 +1179,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_createCudfTableView(JNIEnv* en
     cudf::jni::native_jpointerArray<cudf::column_view> n_cudf_columns(env, j_cudf_columns);
 
     std::vector<cudf::column_view> column_views = n_cudf_columns.get_dereferenced();
-    return ptr_as_jlong(new cudf::table_view(column_views));
+    return ptr_as_jlong(
+      new cudf::table_view(column_views, static_cast<cudf::size_type>(j_row_count)));
   }
   JNI_CATCH(env, 0);
 }
@@ -1151,11 +1208,21 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_columnViewsFromPacked(JNI
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
-    void const* metadata_address = env->GetDirectBufferAddress(buffer_obj);
-    JNI_NULL_CHECK(env, metadata_address, "metadata buffer address is null", nullptr);
-    cudf::table_view table = cudf::unpack(static_cast<uint8_t const*>(metadata_address),
-                                          reinterpret_cast<uint8_t const*>(j_data_address));
-    cudf::jni::native_jlongArray views(env, table.num_columns());
+    // A table with no columns and no rows packs to empty metadata, whose buffer has no address.
+    // The span overload of unpack returns an empty table for it.
+    auto const metadata_size = env->GetDirectBufferCapacity(buffer_obj);
+    auto const* metadata_address =
+      static_cast<uint8_t const*>(env->GetDirectBufferAddress(buffer_obj));
+    JNI_ARG_CHECK(env, metadata_size >= 0, "metadata is not a direct buffer", nullptr);
+    if (metadata_size > 0) {
+      JNI_NULL_CHECK(env, metadata_address, "metadata buffer address is null", nullptr);
+    }
+    cudf::table_view table = cudf::unpack(
+      std::span<uint8_t const>{metadata_address, static_cast<std::size_t>(metadata_size)},
+      reinterpret_cast<uint8_t const*>(j_data_address));
+    // The row count goes first so that a table with zero columns keeps it.
+    cudf::jni::native_jlongArray views(env, table.num_columns() + 1);
+    views[0] = table.num_rows();
     for (int i = 0; i < table.num_columns(); i++) {
       // TODO Exception handling is not ideal, if no exceptions are thrown ownership of the new cv
       // is passed to Java. If an exception is thrown we need to free it, but this needs to be
@@ -1166,7 +1233,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_columnViewsFromPacked(JNI
       // In the ideal case we would keep the view where it is at, and pass in a pointer to it
       // That pointer would then be copied when Java takes ownership of it, but that adds an
       // extra JNI call that I would like to avoid for performance reasons.
-      views[i] = ptr_as_jlong(new cudf::column_view(table.column(i)));
+      views[i + 1] = ptr_as_jlong(new cudf::column_view(table.column(i)));
     }
     views.commit();
 
@@ -1213,6 +1280,14 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Table_sortOrder(JNIEnv* env,
     std::vector<cudf::null_order> null_order =
       n_are_nulls_smallest.transform_if_else(cudf::null_order::BEFORE, cudf::null_order::AFTER);
 
+    // Without sort keys all rows compare equal, so any order is sorted. Keep the input order.
+    // cudf::sorted_order would return an empty gather map instead, which drops every row.
+    if (num_columns == 0) {
+      auto const input_table = reinterpret_cast<cudf::table_view const*>(j_input_table);
+      return release_as_jlong(
+        cudf::sequence(input_table->num_rows(), cudf::numeric_scalar<cudf::size_type>(0)));
+    }
+
     std::vector<cudf::column_view> sort_keys = n_sort_keys_columns.get_dereferenced();
     return release_as_jlong(cudf::sorted_order(cudf::table_view{sort_keys}, order, null_order));
   }
@@ -1258,11 +1333,19 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_orderBy(JNIEnv* env,
     std::vector<cudf::null_order> null_order =
       n_are_nulls_smallest.transform_if_else(cudf::null_order::BEFORE, cudf::null_order::AFTER);
 
+    auto const input_table = reinterpret_cast<cudf::table_view const*>(j_input_table);
+    // Without sort keys all rows compare equal, so any order is sorted. Keep the input order.
+    // cudf::sorted_order would return an empty gather map instead, which drops every row.
+    if (num_columns == 0) {
+      return convert_table_with_row_count_for_return(env,
+                                                     std::make_unique<cudf::table>(*input_table));
+    }
+
     std::vector<cudf::column_view> sort_keys = n_sort_keys_columns.get_dereferenced();
     auto sorted_col = cudf::sorted_order(cudf::table_view{sort_keys}, order, null_order);
 
-    auto const input_table = reinterpret_cast<cudf::table_view const*>(j_input_table);
-    return convert_table_for_return(env, cudf::gather(*input_table, sorted_col->view()));
+    return convert_table_with_row_count_for_return(env,
+                                                   cudf::gather(*input_table, sorted_col->view()));
   }
   JNI_CATCH(env, NULL);
 }
@@ -1310,7 +1393,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_merge(JNIEnv* env,
       n_are_nulls_smallest.transform_if_else(cudf::null_order::BEFORE, cudf::null_order::AFTER);
     std::vector<cudf::table_view> tables = n_table_handles.get_dereferenced();
 
-    return convert_table_for_return(env, cudf::merge(tables, indexes, order, null_order));
+    return convert_table_with_row_count_for_return(env,
+                                                   cudf::merge(tables, indexes, order, null_order));
   }
   JNI_CATCH(env, NULL);
 }
@@ -1387,7 +1471,7 @@ Java_ai_rapids_cudf_Table_readCSVFromDataSource(JNIEnv* env,
                                           .comment(comment)
                                           .build();
 
-    return convert_table_for_return(env, cudf::io::read_csv(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_csv(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -1486,7 +1570,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readCSV(JNIEnv* env,
                                           .comment(comment)
                                           .build();
 
-    return convert_table_for_return(env, cudf::io::read_csv(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_csv(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -1825,11 +1909,10 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_TableWithMeta_releaseTable(JNIE
   {
     cudf::jni::auto_set_device(env);
     auto ptr = reinterpret_cast<cudf::io::table_with_metadata*>(handle);
-    if (ptr->tbl) {
-      return convert_table_for_return(env, ptr->tbl);
-    } else {
-      return nullptr;
-    }
+    if (!ptr->tbl) { return nullptr; }
+    // Move the table out so that later calls return null rather than an empty table
+    auto tbl = std::move(ptr->tbl);
+    return convert_table_with_row_count_for_return(env, std::move(tbl));
   }
   JNI_CATCH(env, nullptr);
 }
@@ -2105,7 +2188,7 @@ Java_ai_rapids_cudf_Table_readParquetFromDataSource(JNIEnv* env,
         // Ignore any missing projected column(s) by default
         .ignore_missing_columns(true)
         .build();
-    return convert_table_for_return(env, cudf::io::read_parquet(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_parquet(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -2165,7 +2248,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readParquet(JNIEnv* env,
     auto tbl = cudf::io::read_parquet(opts).tbl;
     n_col_binary_read.cancel();
     n_addrs_sizes.cancel();
-    return convert_table_for_return(env, tbl);
+    return convert_table_with_row_count_for_return(env, tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -2187,7 +2270,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readAvroFromDataSource(
     cudf::io::avro_reader_options opts = cudf::io::avro_reader_options::builder(source)
                                            .columns(n_filter_col_names.as_cpp_vector())
                                            .build();
-    return convert_table_for_return(env, cudf::io::read_avro(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_avro(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -2232,7 +2315,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_readAvro(JNIEnv* env,
     cudf::io::avro_reader_options opts = cudf::io::avro_reader_options::builder(source)
                                            .columns(n_filter_col_names.as_cpp_vector())
                                            .build();
-    return convert_table_for_return(env, cudf::io::read_avro(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_avro(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -2487,6 +2570,7 @@ Java_ai_rapids_cudf_Table_readORCFromDataSource(JNIEnv* env,
                                                 jint unit,
                                                 jobjectArray dec128_col_names,
                                                 jboolean ignore_timezone_in_stripe_footer,
+                                                jboolean convert_dates_to_proleptic,
                                                 jlong ds_handle)
 {
   JNI_NULL_CHECK(env, ds_handle, "no data source handle given", 0);
@@ -2513,8 +2597,9 @@ Java_ai_rapids_cudf_Table_readORCFromDataSource(JNIEnv* env,
         .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
         .decimal128_columns(n_dec128_col_names.as_cpp_vector())
         .ignore_timezone_in_stripe_footer(ignore_timezone_in_stripe_footer)
+        .convert_dates_to_proleptic(convert_dates_to_proleptic)
         .build();
-    return convert_table_for_return(env, cudf::io::read_orc(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_orc(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -2529,7 +2614,8 @@ Java_ai_rapids_cudf_Table_readORC(JNIEnv* env,
                                   jboolean usingNumPyTypes,
                                   jint unit,
                                   jobjectArray dec128_col_names,
-                                  jboolean ignore_timezone_in_stripe_footer)
+                                  jboolean ignore_timezone_in_stripe_footer,
+                                  jboolean convert_dates_to_proleptic)
 {
   bool read_buffer = true;
   if (buffer == 0) {
@@ -2573,8 +2659,9 @@ Java_ai_rapids_cudf_Table_readORC(JNIEnv* env,
         .timestamp_type(cudf::data_type(static_cast<cudf::type_id>(unit)))
         .decimal128_columns(n_dec128_col_names.as_cpp_vector())
         .ignore_timezone_in_stripe_footer(ignore_timezone_in_stripe_footer)
+        .convert_dates_to_proleptic(convert_dates_to_proleptic)
         .build();
-    return convert_table_for_return(env, cudf::io::read_orc(opts).tbl);
+    return convert_table_with_row_count_for_return(env, cudf::io::read_orc(opts).tbl);
   }
   JNI_CATCH(env, NULL);
 }
@@ -2593,6 +2680,7 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                               jbooleanArray j_is_map,
                                               jint j_stripe_size_rows,
                                               jstring j_writer_timezone,
+                                              jint j_calendar_kind,
                                               jobject consumer,
                                               jobject host_memory_allocator)
 {
@@ -2654,6 +2742,8 @@ Java_ai_rapids_cudf_Table_writeORCBufferBegin(JNIEnv* env,
                                         .stripe_size_rows(j_stripe_size_rows)
                                         .writer_timezone(writer_timezone.get())
                                         .build();
+    auto const calendar = static_cast<orc::CalendarKind>(j_calendar_kind);
+    if (calendar != orc::CalendarKind::UNKNOWN_CALENDAR) { opts.set_calendar_kind(calendar); }
     auto writer_ptr                          = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret = new cudf::jni::native_orc_writer_handle(
       std::move(writer_ptr), std::move(data_sink), std::move(stats));
@@ -2675,6 +2765,7 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                                                    jbooleanArray j_is_map,
                                                                    jint j_stripe_size_rows,
                                                                    jstring j_writer_timezone,
+                                                                   jint j_calendar_kind,
                                                                    jstring j_output_path)
 {
   JNI_NULL_CHECK(env, j_col_names, "null columns", 0);
@@ -2732,6 +2823,8 @@ JNIEXPORT long JNICALL Java_ai_rapids_cudf_Table_writeORCFileBegin(JNIEnv* env,
                                         .stripe_size_rows(j_stripe_size_rows)
                                         .writer_timezone(writer_timezone.get())
                                         .build();
+    auto const calendar = static_cast<orc::CalendarKind>(j_calendar_kind);
+    if (calendar != orc::CalendarKind::UNKNOWN_CALENDAR) { opts.set_calendar_kind(calendar); }
     auto writer_ptr = std::make_unique<cudf::io::orc_chunked_writer>(opts);
     cudf::jni::native_orc_writer_handle* ret =
       new cudf::jni::native_orc_writer_handle(std::move(writer_ptr), nullptr, std::move(stats));
@@ -3004,7 +3097,7 @@ Java_ai_rapids_cudf_Table_convertArrowTableToCudf(JNIEnv* env, jclass, jlong arr
     arr.release(&arr);
     sch.release(&sch);
 
-    return convert_table_for_return(env, ret);
+    return convert_table_with_row_count_for_return(env, ret);
   }
   JNI_CATCH(env, 0);
 }
@@ -3280,6 +3373,23 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_innerDistinctJoinGatherMa
       cudf::distinct_hash_join hash(right, nulleq, load_factor);
       return hash.inner_join(left);
     });
+}
+
+JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_directInnerJoinGatherMaps(
+  JNIEnv* env, jclass, jlong j_left_keys, jlong j_right_keys, jlong j_capacity)
+{
+  JNI_NULL_CHECK(env, j_left_keys, "left keys column is null", NULL);
+  JNI_NULL_CHECK(env, j_right_keys, "right keys column is null", NULL);
+  JNI_ARG_CHECK(env, j_capacity >= 0, "capacity must not be negative", NULL);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    auto left_keys  = reinterpret_cast<cudf::column_view const*>(j_left_keys);
+    auto right_keys = reinterpret_cast<cudf::column_view const*>(j_right_keys);
+    return cudf::jni::gather_maps_to_java(
+      env, cudf::direct_inner_join(*left_keys, *right_keys, static_cast<std::size_t>(j_capacity)));
+  }
+  JNI_CATCH(env, NULL);
 }
 
 JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_innerDistinctHashJoinGatherMaps(
@@ -3880,7 +3990,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_crossJoin(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     auto const left  = reinterpret_cast<cudf::table_view const*>(left_table);
     auto const right = reinterpret_cast<cudf::table_view const*>(right_table);
-    return convert_table_for_return(env, cudf::cross_join(*left, *right));
+    return convert_table_with_row_count_for_return(env, cudf::cross_join(*left, *right));
   }
   JNI_CATCH(env, NULL);
 }
@@ -3909,7 +4019,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_concatenate(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     cudf::jni::native_jpointerArray<cudf::table_view> tables(env, table_handles);
     std::vector<cudf::table_view> const to_concat = tables.get_dereferenced();
-    return convert_table_for_return(env, cudf::concatenate(to_concat));
+    return convert_table_with_row_count_for_return(env, cudf::concatenate(to_concat));
   }
   JNI_CATCH(env, NULL);
 }
@@ -3938,7 +4048,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_partition(JNIEnv* env,
     cudf::jni::native_jintArray n_output_offsets(env, output_offsets);
     std::copy(partition_offsets.begin(), partition_offsets.end(), n_output_offsets.begin());
 
-    return convert_table_for_return(env, partitioned_table);
+    return convert_table_with_row_count_for_return(env, partitioned_table);
   }
   JNI_CATCH(env, NULL);
 }
@@ -3975,7 +4085,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_hashPartition(JNIEnv* env
     cudf::jni::native_jintArray n_output_offsets(env, output_offsets);
     std::copy(partition_offsets.begin(), partition_offsets.end(), n_output_offsets.begin());
 
-    return convert_table_for_return(env, partitioned_table);
+    return convert_table_with_row_count_for_return(env, partitioned_table);
   }
   JNI_CATCH(env, NULL);
 }
@@ -4003,7 +4113,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_roundRobinPartition(JNIEn
     cudf::jni::native_jintArray n_output_offsets(env, output_offsets);
     std::copy(partition_offsets.begin(), partition_offsets.end(), n_output_offsets.begin());
 
-    return convert_table_for_return(env, partitioned_table);
+    return convert_table_with_row_count_for_return(env, partitioned_table);
   }
   JNI_CATCH(env, NULL);
 }
@@ -4084,7 +4194,7 @@ Java_ai_rapids_cudf_Table_groupByAggregate(JNIEnv* env,
         result_columns.push_back(std::move(result.second[agg_result_index].results[col_agg_index]));
       }
     }
-    return convert_table_for_return(env, result.first, std::move(result_columns));
+    return convert_table_with_row_count_for_return(env, result.first, std::move(result_columns));
   }
   JNI_CATCH(env, NULL);
 }
@@ -4166,7 +4276,7 @@ Java_ai_rapids_cudf_Table_groupByScan(JNIEnv* env,
         result_columns.push_back(std::move(result.second[agg_result_index].results[col_agg_index]));
       }
     }
-    return convert_table_for_return(env, result.first, std::move(result_columns));
+    return convert_table_with_row_count_for_return(env, result.first, std::move(result_columns));
   }
   JNI_CATCH(env, NULL);
 }
@@ -4224,7 +4334,7 @@ Java_ai_rapids_cudf_Table_groupByReplaceNulls(JNIEnv* env,
       cudf::replace_policy::PRECEDING, cudf::replace_policy::FOLLOWING);
 
     auto [keys, results] = grouper.replace_nulls(n_replace_table, policies);
-    return convert_table_for_return(env, keys, results);
+    return convert_table_with_row_count_for_return(env, keys, results);
   }
   JNI_CATCH(env, NULL);
 }
@@ -4241,7 +4351,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_filter(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     auto const input = reinterpret_cast<cudf::table_view const*>(input_jtable);
     auto const mask  = reinterpret_cast<cudf::column_view const*>(mask_jcol);
-    return convert_table_for_return(env, cudf::apply_retention_mask(*input, *mask));
+    return convert_table_with_row_count_for_return(env, cudf::apply_retention_mask(*input, *mask));
   }
   JNI_CATCH(env, 0);
 }
@@ -4299,7 +4409,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_dropDuplicates(
                      cudf::nan_equality::ALL_EQUAL,
                      cudf::get_default_stream(),
                      cudf::get_current_device_resource_ref());
-    return convert_table_for_return(env, result);
+    return convert_table_with_row_count_for_return(env, result);
   }
   JNI_CATCH(env, 0);
 }
@@ -4316,7 +4426,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_gather(
     auto const map   = reinterpret_cast<cudf::column_view const*>(j_map);
     auto bounds_policy =
       check_bounds ? cudf::out_of_bounds_policy::NULLIFY : cudf::out_of_bounds_policy::DONT_CHECK;
-    return convert_table_for_return(env, cudf::gather(*input, *map, bounds_policy));
+    return convert_table_with_row_count_for_return(env, cudf::gather(*input, *map, bounds_policy));
   }
   JNI_CATCH(env, 0);
 }
@@ -4333,7 +4443,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_scatterTable(
     auto const input  = reinterpret_cast<cudf::table_view const*>(j_input);
     auto const map    = reinterpret_cast<cudf::column_view const*>(j_map);
     auto const target = reinterpret_cast<cudf::table_view const*>(j_target);
-    return convert_table_for_return(env, cudf::scatter(*input, *map, *target));
+    return convert_table_with_row_count_for_return(env, cudf::scatter(*input, *map, *target));
   }
   JNI_CATCH(env, 0);
 }
@@ -4355,7 +4465,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_scatterScalars(
       });
     auto const map    = reinterpret_cast<cudf::column_view const*>(j_map);
     auto const target = reinterpret_cast<cudf::table_view const*>(j_target);
-    return convert_table_for_return(env, cudf::scatter(input, *map, *target));
+    return convert_table_with_row_count_for_return(env, cudf::scatter(input, *map, *target));
   }
   JNI_CATCH(env, 0);
 }
@@ -4370,7 +4480,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_repeatStaticCount(JNIEnv*
   {
     cudf::jni::auto_set_device(env);
     auto const input = reinterpret_cast<cudf::table_view const*>(input_jtable);
-    return convert_table_for_return(env, cudf::repeat(*input, count));
+    return convert_table_with_row_count_for_return(env, cudf::repeat(*input, count));
   }
   JNI_CATCH(env, 0);
 }
@@ -4387,7 +4497,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_repeatColumnCount(JNIEnv*
     cudf::jni::auto_set_device(env);
     auto const input = reinterpret_cast<cudf::table_view const*>(input_jtable);
     auto const count = reinterpret_cast<cudf::column_view const*>(count_jcol);
-    return convert_table_for_return(env, cudf::repeat(*input, *count));
+    return convert_table_with_row_count_for_return(env, cudf::repeat(*input, *count));
   }
   JNI_CATCH(env, 0);
 }
@@ -4566,7 +4676,7 @@ Java_ai_rapids_cudf_Table_rollingWindowAggregate(JNIEnv* env,
     }
 
     auto result_table = std::make_unique<cudf::table>(std::move(result_columns));
-    return convert_table_for_return(env, result_table);
+    return convert_table_with_row_count_for_return(env, result_table);
   }
   JNI_CATCH(env, NULL);
 }
@@ -4785,7 +4895,7 @@ Java_ai_rapids_cudf_Table_rangeRollingWindowAggregate(JNIEnv* env,
     }
 
     auto result_table = std::make_unique<cudf::table>(std::move(result_columns));
-    return convert_table_for_return(env, result_table);
+    return convert_table_with_row_count_for_return(env, result_table);
   }
   JNI_CATCH(env, NULL);
 }
@@ -4801,7 +4911,7 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_explode(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     auto const input_table = reinterpret_cast<cudf::table_view const*>(input_jtable);
     auto const col_index   = static_cast<cudf::size_type>(column_index);
-    return convert_table_for_return(env, cudf::explode(*input_table, col_index));
+    return convert_table_with_row_count_for_return(env, cudf::explode(*input_table, col_index));
   }
   JNI_CATCH(env, 0);
 }
@@ -4817,7 +4927,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_explodePosition(JNIEnv* e
     cudf::jni::auto_set_device(env);
     auto const input_table = reinterpret_cast<cudf::table_view const*>(input_jtable);
     auto const col_index   = static_cast<cudf::size_type>(column_index);
-    return convert_table_for_return(env, cudf::explode_position(*input_table, col_index));
+    return convert_table_with_row_count_for_return(env,
+                                                   cudf::explode_position(*input_table, col_index));
   }
   JNI_CATCH(env, 0);
 }
@@ -4833,7 +4944,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_explodeOuter(JNIEnv* env,
     cudf::jni::auto_set_device(env);
     auto const input_table = reinterpret_cast<cudf::table_view const*>(input_jtable);
     auto const col_index   = static_cast<cudf::size_type>(column_index);
-    return convert_table_for_return(env, cudf::explode_outer(*input_table, col_index));
+    return convert_table_with_row_count_for_return(env,
+                                                   cudf::explode_outer(*input_table, col_index));
   }
   JNI_CATCH(env, 0);
 }
@@ -4849,7 +4961,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_explodeOuterPosition(JNIE
     cudf::jni::auto_set_device(env);
     auto const input_table = reinterpret_cast<cudf::table_view const*>(input_jtable);
     auto const col_index   = static_cast<cudf::size_type>(column_index);
-    return convert_table_for_return(env, cudf::explode_outer_position(*input_table, col_index));
+    return convert_table_with_row_count_for_return(
+      env, cudf::explode_outer_position(*input_table, col_index));
   }
   JNI_CATCH(env, 0);
 }
@@ -5056,7 +5169,8 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_Table_sample(
     auto const input = reinterpret_cast<cudf::table_view const*>(j_input);
     auto sample_with_replacement =
       replacement ? cudf::sample_with_replacement::TRUE : cudf::sample_with_replacement::FALSE;
-    return convert_table_for_return(env, cudf::sample(*input, n, sample_with_replacement, seed));
+    return convert_table_with_row_count_for_return(
+      env, cudf::sample(*input, n, sample_with_replacement, seed));
   }
   JNI_CATCH(env, 0);
 }

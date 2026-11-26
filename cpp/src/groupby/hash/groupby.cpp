@@ -73,6 +73,7 @@ bool needs_stable_groups(aggregation::Kind kind)
     case aggregation::MEDIAN:
     case aggregation::NUNIQUE:
     case aggregation::TDIGEST:
+    case aggregation::MERGE_M2:
     case aggregation::COVARIANCE:
     case aggregation::CORRELATION: return false;
     default: return true;
@@ -444,13 +445,8 @@ void aggregate_result_functor::operator()<aggregation::MERGE_M2>(aggregation con
 {
   if (cache.has_result(values, agg)) { return; }
 
-  cache.add_result(values,
-                   agg,
-                   detail::group_merge_m2(get_grouped_values(),
-                                          helper.group_offsets(stream, mr),
-                                          helper.num_groups(stream, mr),
-                                          stream,
-                                          mr.get_output_mr()));
+  cache.add_result(
+    values, agg, detail::group_merge_m2(values, helper.reduction_groups(stream, mr), stream, mr));
 }
 
 /**

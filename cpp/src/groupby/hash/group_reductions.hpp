@@ -246,15 +246,13 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
  * results of input aggregations (`COUNT_VALID`, `MEAN`, and `M2`). As such, the output will be a
  * structs column containing children columns of merged `COUNT_VALID`, `MEAN`, and `M2` values.
  *
- * @param values Grouped values (tuples of values `(valid_count, mean, M2)`) to merge.
- * @param group_offsets Offsets of groups' starting points within @p values.
- * @param num_groups Number of groups.
+ * @param values Ungrouped values (tuples of values `(valid_count, mean, M2)`) to merge.
+ * @param grouped The input rows grouped by key with their reduction schedule.
  * @param stream CUDA stream used for device memory operations and kernel launches.
- * @param mr Device memory resource used to allocate the returned column's device memory
+ * @param mr Memory resources used for output and temporary allocations.
  */
 std::unique_ptr<column> group_merge_m2(column_view const& values,
-                                       cudf::device_span<size_type const> group_offsets,
-                                       size_type num_groups,
+                                       hash::grouped_rows const& grouped,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr);
 

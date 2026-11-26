@@ -128,6 +128,11 @@ struct CsvFixedPointReaderTest : public CsvReaderTest {
 TYPED_TEST_SUITE(CsvFixedPointReaderTest, cudf::test::FixedPointTypes);
 
 namespace {
+cudf::io::source_info csv_source(std::string const& buffer)
+{
+  return cudf::io::source_info{cudf::host_span<char const>{buffer.data(), buffer.size()}};
+}
+
 // Generates a vector of uniform random values of type T
 template <typename T>
 inline auto random_values(std::size_t size)
@@ -1325,9 +1330,7 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesOriginalFixture)
     "\"number\"\n1\n 2\n 3,\n4 \n5 ,\n\"6\"\n \"7\"\n"
     "\"8\" \n\"9\" ,\n 10 \n  11\n  12  \n \"13\" ,\n"
     "             \"14\"                  ,\n15\n";
-  auto const options = cudf::io::csv_reader_options::builder(
-                         cudf::io::source_info{cudf::host_span<std::byte const>{
-                           reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+  auto const options = cudf::io::csv_reader_options::builder(csv_source(buffer))
                          .names({"number"})
                          .dtypes({dtype<cudf::string_view>()})
                          .header(0)
@@ -1379,9 +1382,7 @@ TEST_P(CsvWhitespaceAfterQuotesTest, StringFields)
     buffer += "row," + field + "," + field + "\n";
   }
   auto builder =
-    cudf::io::csv_reader_options::builder(
-      cudf::io::source_info{cudf::host_span<std::byte const>{
-        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+    cudf::io::csv_reader_options::builder(csv_source(buffer))
       .names({"id", "middle", "last"})
       .dtypes({dtype<cudf::string_view>(), dtype<cudf::string_view>(), dtype<cudf::string_view>()})
       .header(-1)
@@ -1451,9 +1452,7 @@ TEST_P(CsvWhitespaceAfterQuotesNATest, EmptyAndCustomNullValues)
   std::vector<std::string> null_values{"NULL", "\"missing\"", "\"raw\" \t"};
   if (empty_na) { null_values.emplace_back(""); }
   auto const options =
-    cudf::io::csv_reader_options::builder(
-      cudf::io::source_info{cudf::host_span<std::byte const>{
-        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+    cudf::io::csv_reader_options::builder(csv_source(buffer))
       .names({"id", "value"})
       .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
       .header(-1)
@@ -1501,10 +1500,9 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesPreservesAroundQuotes)
 {
   std::string const buffer = " \"A\" \t,\" B \" \t\n\"\" \t, \"\" \t\n";
   for (bool const after_quotes : {false, true}) {
+    SCOPED_TRACE(after_quotes);
     auto const options =
-      cudf::io::csv_reader_options::builder(
-        cudf::io::source_info{cudf::host_span<std::byte const>{
-          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      cudf::io::csv_reader_options::builder(csv_source(buffer))
         .names({"a", "b"})
         .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
         .header(-1)
@@ -1528,12 +1526,11 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesPreservesAroundQuotes)
 TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesInferenceUnaffected)
 {
   for (bool const after_quotes : {false, true}) {
+    SCOPED_TRACE(after_quotes);
     // Main already recognizes padded quoted empty values as NA during inference.
     std::string const default_na_buffer = "1\n\"\" \t\n";
     auto const default_na_options =
-      cudf::io::csv_reader_options::builder(
-        cudf::io::source_info{cudf::host_span<std::byte const>{
-          reinterpret_cast<std::byte const*>(default_na_buffer.data()), default_na_buffer.size()}})
+      cudf::io::csv_reader_options::builder(csv_source(default_na_buffer))
         .header(-1)
         .detect_whitespace_after_quotes(after_quotes)
         .build();
@@ -1544,9 +1541,7 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesInferenceUnaffected)
     CUDF_TEST_EXPECT_COLUMNS_EQUAL(default_na_expected, default_na_result.tbl->view().column(0));
 
     std::string const buffer = "1\n\"missing\" \t\n";
-    auto const options       = cudf::io::csv_reader_options::builder(
-                           cudf::io::source_info{cudf::host_span<std::byte const>{
-                             reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+    auto const options       = cudf::io::csv_reader_options::builder(csv_source(buffer))
                            .header(-1)
                            .keep_default_na(false)
                            .na_values({"\"missing\""})
@@ -1565,10 +1560,9 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesDisabledQuoting)
 {
   std::string const buffer = "\"A\" \t, \"B\" \t\n";
   for (bool const null_quote : {false, true}) {
+    SCOPED_TRACE(null_quote);
     auto const options =
-      cudf::io::csv_reader_options::builder(
-        cudf::io::source_info{cudf::host_span<std::byte const>{
-          reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      cudf::io::csv_reader_options::builder(csv_source(buffer))
         .names({"a", "b"})
         .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
         .header(-1)
@@ -1593,20 +1587,17 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesLoneQuote)
           SCOPED_TRACE(::testing::Message()
                        << "after_quotes=" << after_quotes << ", around_quotes=" << around_quotes
                        << ", doublequote=" << doublequote << ", field=" << field);
-          auto const buffer = "row," + field;
-          auto const options =
-            cudf::io::csv_reader_options::builder(
-              cudf::io::source_info{cudf::host_span<std::byte const>{
-                reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
-              .names({"id", "value"})
-              .dtypes(
-                std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
-              .header(-1)
-              .na_filter(false)
-              .doublequote(doublequote)
-              .detect_whitespace_around_quotes(around_quotes)
-              .detect_whitespace_after_quotes(after_quotes)
-              .build();
+          auto const buffer  = "row," + field;
+          auto const options = cudf::io::csv_reader_options::builder(csv_source(buffer))
+                                 .names({"id", "value"})
+                                 .dtypes(std::vector<data_type>{dtype<cudf::string_view>(),
+                                                                dtype<cudf::string_view>()})
+                                 .header(-1)
+                                 .na_filter(false)
+                                 .doublequote(doublequote)
+                                 .detect_whitespace_around_quotes(around_quotes)
+                                 .detect_whitespace_after_quotes(after_quotes)
+                                 .build();
           auto const result = cudf::io::read_csv(options);
           ASSERT_EQ(2, result.tbl->num_columns());
           cudf::test::strings_column_wrapper const expected({field});
@@ -1624,9 +1615,7 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesEscapedQuoteAtEof)
       std::string const field = closed ? "\"A\"\"\" \t" : "\"A\"\" \t";
       auto const buffer       = "row," + field;
       auto options =
-        cudf::io::csv_reader_options::builder(
-          cudf::io::source_info{cudf::host_span<std::byte const>{
-            reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+        cudf::io::csv_reader_options::builder(csv_source(buffer))
           .names({"id", "value"})
           .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
           .header(-1)
@@ -1654,9 +1643,7 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesUnpaddedFieldWithInteriorQuote
 {
   std::string const buffer = "row,\"a\"b\"";
   auto options =
-    cudf::io::csv_reader_options::builder(
-      cudf::io::source_info{cudf::host_span<std::byte const>{
-        reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+    cudf::io::csv_reader_options::builder(csv_source(buffer))
       .names({"id", "value"})
       .dtypes(std::vector<data_type>{dtype<cudf::string_view>(), dtype<cudf::string_view>()})
       .header(-1)
@@ -1683,9 +1670,7 @@ TEST_F(CsvReaderTest, StringsWhitespaceAfterQuotesWhitespaceQuoteCharacter)
          {cudf::type_id::EMPTY, cudf::type_id::STRING, cudf::type_id::INT64}) {
       SCOPED_TRACE(::testing::Message() << "quotechar=" << static_cast<int>(quotechar)
                                         << ", middle_type=" << static_cast<int>(middle_type));
-      auto options = cudf::io::csv_reader_options::builder(
-                       cudf::io::source_info{cudf::host_span<std::byte const>{
-                         reinterpret_cast<std::byte const*>(buffer.data()), buffer.size()}})
+      auto options = cudf::io::csv_reader_options::builder(csv_source(buffer))
                        .header(0)
                        .quotechar(quotechar)
                        .build();

@@ -182,11 +182,12 @@ with opaque_memory_usage(
 - Only `AvailableTableChunk` has `table_view()`. It is a type in the
   `cudf_streaming` stubs, returned by `make_available*`,
   `make_table_chunks_available_or_wait` and `from_pylibcudf_table`. Annotate
-  a chunk that is known to be on device as `AvailableTableChunk`. Do not use
-  `cast` or `# type: ignore` to call `table_view()` on a chunk that has not
-  been checked with `is_available()`. mypy does not catch `table_view()`
-  after the chunk is consumed by a call such as `make_available()`, or moved
-  into a `Message` or `ChunkStore`, because the variable keeps its type.
+  a chunk that is known to be on device as `AvailableTableChunk`, and check a
+  chunk with `TableChunk.is_available(chunk)`, which narrows it. Do not use
+  `cast` or `# type: ignore` to call `table_view()` on a `TableChunk`. mypy
+  does not catch `table_view()` after the chunk is consumed by a call such as
+  `make_available()`, or moved into a `Message` or `ChunkStore`, because the
+  variable keeps its type.
 
 ```python
 # Bad: unspills just to count rows

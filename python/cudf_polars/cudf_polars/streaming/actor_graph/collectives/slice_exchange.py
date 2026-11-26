@@ -101,7 +101,7 @@ class SparseExchange:
             raise RuntimeError("Cannot insert after finishing a sparse exchange")
         if not routes:
             return
-        if not chunk.is_available():
+        if not TableChunk.is_available(chunk):
             raise ValueError("insert_slices requires an available TableChunk")
 
         nrows = chunk.shape[0]

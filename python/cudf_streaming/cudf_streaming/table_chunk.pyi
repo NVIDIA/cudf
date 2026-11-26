@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from typing import overload
 
 from pylibcudf.table import Table
+from typing_extensions import TypeIs
 
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import BufferResource
@@ -36,7 +37,8 @@ class TableChunk:
     @property
     def stream(self) -> Stream: ...
     def data_alloc_size(self, mem_type: MemoryType | None = None) -> int: ...
-    def is_available(self) -> bool: ...
+    @staticmethod
+    def is_available(chunk: TableChunk) -> TypeIs[AvailableTableChunk]: ...
     def make_available_cost(self) -> int: ...
     def make_available(
         self, reservation: MemoryReservation

@@ -54,7 +54,7 @@ def test_roundtrip(
         expect, stream, exclusive_view=exclusive_view, br=context.br()
     )
     assert is_equal_streams(table_chunk.stream, stream)
-    assert table_chunk.is_available()
+    assert TableChunk.is_available(table_chunk)
     assert table_chunk.make_available_cost() == 0
     assert table_chunk.is_spillable() == exclusive_view
     assert_eq(expect, table_chunk.table_view())
@@ -83,7 +83,7 @@ def test_roundtrip(
     # msg1 is availabe
     table_chunk2 = TableChunk.from_message(msg1, br=context.br())
     assert is_equal_streams(table_chunk2.stream, stream)
-    assert table_chunk2.is_available()
+    assert TableChunk.is_available(table_chunk2)
     assert table_chunk2.make_available_cost() == 0
     assert_eq(expect, table_chunk2.table_view())
 
@@ -98,7 +98,7 @@ def test_roundtrip(
     # msg2 is on host and is not availabe
     table_chunk3 = TableChunk.from_message(msg2, br=context.br())
     assert is_equal_streams(table_chunk3.stream, stream)
-    assert not table_chunk3.is_available()
+    assert not TableChunk.is_available(table_chunk3)
     assert table_chunk3.make_available_cost() == 1024
     # but we can make its table available using `make_available()`.
     res, _ = context.br().reserve(
@@ -106,7 +106,7 @@ def test_roundtrip(
     )
     table_chunk4 = table_chunk3.make_available(res)
     assert is_equal_streams(table_chunk4.stream, stream)
-    assert table_chunk4.is_available()
+    assert TableChunk.is_available(table_chunk4)
     assert table_chunk4.make_available_cost() == 0
     assert_eq(expect, table_chunk4.table_view())
 
@@ -114,12 +114,12 @@ def test_roundtrip(
     # is made available trivially.
     table_chunk5 = TableChunk.from_message(msg3, br=context.br())
     assert is_equal_streams(table_chunk5.stream, stream)
-    assert table_chunk5.is_available()
+    assert TableChunk.is_available(table_chunk5)
     # and it cost no device memory to make available.
     assert table_chunk5.make_available_cost() == 0
     res, _ = context.br().reserve(MemoryType.DEVICE, 0, allow_overbooking=True)
     table_chunk6 = table_chunk5.make_available(res)
-    assert table_chunk6.is_available()
+    assert TableChunk.is_available(table_chunk6)
     assert table_chunk6.make_available_cost() == 0
     assert_eq(expect, table_chunk6.table_view())
 
@@ -426,7 +426,7 @@ def test_shape_accessor(
         device_chunk = TableChunk.from_pylibcudf_table(
             expect, stream, exclusive_view=True, br=context.br()
         )
-    assert device_chunk.is_available()
+    assert TableChunk.is_available(device_chunk)
     assert device_chunk.shape == expected_shape
 
     res, _ = context.br().reserve(
@@ -435,7 +435,7 @@ def test_shape_accessor(
         allow_overbooking=True,
     )
     host_chunk = device_chunk.copy(res)
-    assert not host_chunk.is_available()
+    assert not TableChunk.is_available(host_chunk)
     assert host_chunk.shape == expected_shape
 
     res, _ = context.br().reserve(
@@ -444,7 +444,7 @@ def test_shape_accessor(
         allow_overbooking=True,
     )
     device_chunk = host_chunk.make_available(res)
-    assert device_chunk.is_available()
+    assert TableChunk.is_available(device_chunk)
     assert device_chunk.shape == expected_shape
 
 
@@ -464,7 +464,7 @@ def test_into_packed_data(
         chunk = TableChunk.from_pylibcudf_table(
             expect, stream, exclusive_view=True, br=context.br()
         )
-    assert chunk.is_available()
+    assert TableChunk.is_available(chunk)
 
     # Already-packed data is moved out, so only the unpacked case allocates.
     cost = chunk.into_packed_data_cost()
@@ -479,7 +479,7 @@ def test_into_packed_data(
 
     # Wrap the PackedData back into a TableChunk and verify contents.
     result_chunk = TableChunk.from_packed_data(result, br=context.br())
-    assert result_chunk.is_available()
+    assert TableChunk.is_available(result_chunk)
     assert_eq(expect, result_chunk.table_view())
 
 
@@ -516,7 +516,7 @@ def test_make_table_chunks_available_or_wait_single_chunk(
 
     run_actor_network(context, actors=[test_actor(context)])
     chunk, res = result_holder[0]
-    assert chunk.is_available()
+    assert TableChunk.is_available(chunk)
     assert_eq(expect, chunk.table_view())
     # Reservation should be consumed by making the chunk available.
     assert res.size == 0
@@ -565,7 +565,7 @@ def test_make_table_chunks_available_or_wait_multiple_chunks(
     run_actor_network(context, actors=[test_actor(context)])
     chunks, res = result_holder[0]
     assert len(chunks) == num_chunks
-    assert all(chunk.is_available() for chunk in chunks)
+    assert all(TableChunk.is_available(chunk) for chunk in chunks)
     for i, expect in enumerate(expects):
         assert_eq(expect, chunks[i].table_view())
     # Reservation should be consumed.
@@ -621,7 +621,7 @@ def test_make_table_chunks_available_or_wait(
 
     run_actor_network(context, actors=[test_actor(context)])
     chunk, res = result_holder[0]
-    assert chunk.is_available()
+    assert TableChunk.is_available(chunk)
     assert_eq(expect, chunk.table_view())
     # Reservation should have reserve_extra bytes remaining.
     assert res.size == reserve_extra
@@ -663,7 +663,7 @@ def test_make_table_chunks_available_or_wait_mixed_availability(
     run_actor_network(context, actors=[test_actor(context)])
     chunks, res = result_holder[0]
     assert len(chunks) == 2
-    assert all(chunk.is_available() for chunk in chunks)
+    assert all(TableChunk.is_available(chunk) for chunk in chunks)
     assert_eq(expect1, chunks[0].table_view())
     assert_eq(expect2, chunks[1].table_view())
     # Only the host chunk required device memory.

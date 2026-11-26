@@ -153,7 +153,7 @@ def test_make_spill_function(
         spilled_msg: Message[TableChunk] = buffers[1].extract(mid=spilled_mid)
 
         spilled_chunk = TableChunk.from_message(spilled_msg, br=context.br())
-        assert not spilled_chunk.is_available()  # Should be on host
+        assert not TableChunk.is_available(spilled_chunk)  # Should be on host
 
         # Make it available should bring it back to device
         cost = spilled_chunk.make_available_cost()
@@ -161,7 +161,7 @@ def test_make_spill_function(
         res, _ = context.br().reserve(MemoryType.DEVICE, cost, allow_overbooking=True)
         chunk_available = spilled_chunk.make_available(res)
 
-        assert chunk_available.is_available()
+        assert TableChunk.is_available(chunk_available)
         # Verify we got a valid table back
         assert chunk_available.table_view().num_rows() > 0
 

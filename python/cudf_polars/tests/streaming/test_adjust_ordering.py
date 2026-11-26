@@ -756,7 +756,7 @@ def test_send_remote_partition_spilled_single_piece(
     )
     spilled = chunk.copy(reservation)
     del df, chunk
-    assert not spilled.is_available()
+    assert not TableChunk.is_available(spilled)
     store = ChunkStore(context)
     store.insert(Message(0, spilled))
     exchange = _RecordingExchange()

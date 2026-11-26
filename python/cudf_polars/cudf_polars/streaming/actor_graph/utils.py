@@ -14,7 +14,7 @@ from collections import deque
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
 from functools import reduce
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import pylibcudf as plc
 import rmm.mr
@@ -527,23 +527,21 @@ async def evaluate_chunk(
     assert len(irs) > 0, "Expected at least one IR node"
     on_oom = ir_context.rank_local_cpu_compute == RankLocalCPUComputeMode.ON_OOM
     overbooked = 0
-    if already_available and not chunk.is_available():
-        raise ValueError("already_available=True requires an available TableChunk")
-    available: AvailableTableChunk
+    available: AvailableTableChunk | None = None
+    if already_available:
+        if not TableChunk.is_available(chunk):
+            raise ValueError("already_available=True requires an available TableChunk")
+        available = chunk
     if on_oom:
         size = chunk.data_alloc_size()
-        if not already_available:
+        if available is None:
             size += chunk.make_available_cost()
         reservation, overbooked = await context.memory(
             MemoryType.DEVICE
         ).reserve_or_wait_or_overbook(size, net_memory_delta=0)
-        available = (
-            cast("AvailableTableChunk", chunk)
-            if already_available
-            else chunk.make_available(reservation)
-        )
-    elif already_available:
-        available = cast("AvailableTableChunk", chunk)
+        if available is None:
+            available = chunk.make_available(reservation)
+    elif available is not None:
         reservation = await reserve_memory(
             context, size=available.data_alloc_size(), net_memory_delta=0
         )

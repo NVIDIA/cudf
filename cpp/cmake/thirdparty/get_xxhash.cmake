@@ -5,6 +5,7 @@
 # cmake-format: on
 # =============================================================================
 
+# Keep JIT cache-key behavior consistent when using installed xxHash headers.
 function(find_and_configure_xxhash)
 
   if(NOT TARGET xxhash

@@ -14,6 +14,24 @@ function(find_and_configure_zstd)
   endif()
 
   if(NOT CPM_DOWNLOAD_zstd)
+    # gold can resolve hidden weak tracing references to non-null, invalid callbacks.
+    foreach(config IN ITEMS "${CMAKE_BUILD_TYPE}" ${CMAKE_CONFIGURATION_TYPES})
+      string(TOUPPER "${config}" config)
+      foreach(flag IN ITEMS CMAKE_CXX_FLAGS CMAKE_EXE_LINKER_FLAGS CMAKE_SHARED_LINKER_FLAGS
+                            CMAKE_MODULE_LINKER_FLAGS
+      )
+        if(CMAKE_CXX_COMPILER_LINKER_ID STREQUAL "GNUgold"
+           OR CMAKE_LINKER_TYPE STREQUAL "GOLD"
+           OR "${${flag}} ${${flag}_${config}}" MATCHES "-fuse-ld=([^ ;]*/)?(ld[.])?gold([ ;]|$)"
+        )
+          message(
+            FATAL_ERROR
+              "Packaged Zstd is unsupported with gold. Use BFD or LLD, or set CUDF_DOWNLOAD_ZSTD=ON."
+          )
+        endif()
+      endforeach()
+    endforeach()
+
     find_package(zstd 1.5.7 EXACT CONFIG REQUIRED)
     # Conda omits the static target in 1.5.7. Once we upgrade to 1.6, use zstd::libzstd_static
     # instead of reconstructing its interface here.

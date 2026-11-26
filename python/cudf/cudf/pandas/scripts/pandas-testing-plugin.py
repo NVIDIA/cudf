@@ -3000,7 +3000,6 @@ NODEIDS_THAT_FAIL = {
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-category-None-False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object--False]": "AssertionError: Attributes of Series are different",
     "tests/strings/test_cat.py::test_str_cat_categorical[series-category-object-None-False]": "AssertionError: Attributes of Series are different",
-    "tests/strings/test_extract.py::test_extract_dataframe_capture_groups_index[datetime-string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_False_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True[string=object]": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",
     "tests/strings/test_extract.py::test_extract_expand_True_mixed_object": "AssertionError: DataFrame.iloc[:, 0] (column name='0') are different",

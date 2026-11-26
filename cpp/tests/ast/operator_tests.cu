@@ -34,7 +34,7 @@ void test_separate_rounding()
   auto const eps    = std::numeric_limits<T>::epsilon();
   auto input        = cudf::test::fixed_width_column_wrapper<T>{1 + eps, 1 - eps, T{-1}};
   auto const data   = static_cast<cudf::column_view>(input).data<T>();
-  auto result       = cudf::make_numeric_column(cudf::data_type{cudf::type_to_id<T>()}, 7);
+  auto result       = cudf::make_numeric_column(cudf::data_type{cudf::type_to_id<T>()}, 12);
 
   thrust::tabulate(rmm::exec_policy_nosync(stream),
                    result->mutable_view().begin<T>(),
@@ -52,13 +52,18 @@ void test_separate_rounding()
                        case 3: return cudf::detail::ops::add_overflow(a * b, c).value();
                        case 4: return cudf::detail::ops::sub_overflow(a * b, -c).value();
                        case 5: return cudf::detail::ops::mul_overflow(a, b).value() + c;
-                       default: return cuda::std::fma(a, b, c);
+                       case 6: return cudf::detail::ops::sub(-c, a * b);
+                       case 7: return -c - cudf::detail::ops::mul(a, b);
+                       case 8: return cudf::detail::ops::sub_overflow(-c, a * b).value();
+                       case 9: return -c - cudf::detail::ops::mul_overflow(a, b).value();
+                       case 10: return cuda::std::fma(a, b, c);
+                       default: return cuda::std::fma(-a, b, -c);
                      }
                    });
 
   // Separate rounding produces zero; explicit FMA retains the product's low bits.
-  auto expected =
-    cudf::test::fixed_width_column_wrapper<T>{T{0}, T{0}, T{0}, T{0}, T{0}, T{0}, -eps * eps};
+  auto expected = cudf::test::fixed_width_column_wrapper<T>{
+    T{0}, T{0}, T{0}, T{0}, T{0}, T{0}, T{0}, T{0}, T{0}, T{0}, -eps * eps, eps * eps};
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
 }
 

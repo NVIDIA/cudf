@@ -343,6 +343,10 @@ TYPED_TEST(TransformTest, FloatingPointRoundingBoundaries)
       auto expected =
         has_nulls ? column_wrapper<T>{{0, 0}, {true, false}} : column_wrapper<T>{0, 0};
       CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+
+      auto reverse_difference = cudf::ast::operation{cudf::ast::ast_operator::SUB, c_ref, product};
+      result                  = TypeParam::compute_column(table, reverse_difference);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
     }
   };
   check.template operator()<float>();

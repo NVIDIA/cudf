@@ -8,7 +8,7 @@ from rmm.pylibrmm.memory_resource import DeviceMemoryResource
 from pylibcudf.column import Column
 from pylibcudf.round import RoundingMethod
 from pylibcudf.scalar import Scalar
-from pylibcudf.types import DataType
+from pylibcudf.types import DataType, ErrorPolicy
 from pylibcudf.utils import CudaStreamLike
 
 class DecimalIntermediate(IntEnum):
@@ -19,6 +19,7 @@ def divide_decimal(
     lhs: Column,
     rhs: Column,
     output_type: DataType,
+    policy: ErrorPolicy,
     round_method: RoundingMethod = RoundingMethod.HALF_UP,
     intermediate: DecimalIntermediate = DecimalIntermediate.STANDARD,
     stream: CudaStreamLike | None = None,
@@ -28,6 +29,7 @@ def divide_decimal_column_scalar(
     lhs: Column,
     rhs: Scalar,
     output_type: DataType,
+    policy: ErrorPolicy,
     round_method: RoundingMethod = RoundingMethod.HALF_UP,
     intermediate: DecimalIntermediate = DecimalIntermediate.STANDARD,
     stream: CudaStreamLike | None = None,
@@ -37,6 +39,7 @@ def divide_decimal_scalar_column(
     lhs: Scalar,
     rhs: Column,
     output_type: DataType,
+    policy: ErrorPolicy,
     round_method: RoundingMethod = RoundingMethod.HALF_UP,
     intermediate: DecimalIntermediate = DecimalIntermediate.STANDARD,
     stream: CudaStreamLike | None = None,

@@ -13,6 +13,7 @@ from pylibcudf.libcudf.types cimport (
 from pylibcudf.libcudf.utilities.type_dispatcher cimport type_to_id
 
 from pylibcudf.libcudf.types import type_id as TypeId  # no-cython-lint, isort:skip
+from pylibcudf.libcudf.types import error_policy as ErrorPolicy  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import nan_policy as NanPolicy  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import null_policy as NullPolicy  # no-cython-lint, isort:skip
 from pylibcudf.libcudf.types import interpolation as Interpolation  # no-cython-lint, isort:skip
@@ -80,6 +81,7 @@ except ImportError as e:
 
 __all__ = [
     "DataType",
+    "ErrorPolicy",
     "Interpolation",
     "MaskState",
     "NanEquality",
@@ -372,6 +374,7 @@ BITMASK_TYPE = DataType(type_to_id[bitmask_type]())
 
 
 TypeId.__str__ = TypeId.__repr__
+ErrorPolicy.__str__ = ErrorPolicy.__repr__
 NanPolicy.__str__ = NanPolicy.__repr__
 NullPolicy.__str__ = NullPolicy.__repr__
 Interpolation.__str__ = Interpolation.__repr__

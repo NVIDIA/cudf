@@ -14,6 +14,7 @@ from pylibcudf.libcudf.fixed_point.math_ops import \
 
 from pylibcudf.libcudf.round cimport rounding_method
 from pylibcudf.libcudf.scalar.scalar cimport scalar
+from pylibcudf.libcudf.types cimport error_policy
 
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
@@ -60,6 +61,7 @@ cpdef Column divide_decimal(
     Column lhs,
     Column rhs,
     DataType output_type,
+    error_policy policy,
     rounding_method round_method = rounding_method.HALF_UP,
     decimal_intermediate intermediate = decimal_intermediate.STANDARD,
     object stream: CudaStreamLike | None = None,
@@ -76,19 +78,23 @@ cpdef Column divide_decimal(
     rhs : Column
         The divisor column. Must be a decimal type, of any width and scale.
     output_type : DataType
-        The decimal type and scale of the result. Results with more digits
-        than this type can hold are null.
+        The decimal type and scale of the result. A row fails if its result
+        has more digits than this type can hold, or if its divisor is zero.
+    policy : ErrorPolicy
+        How failing rows are handled. ErrorPolicy.PROPAGATE raises if any row
+        fails, and ErrorPolicy.NULLIFY makes failing rows null. Null inputs
+        give null results and are never errors.
     round_method : RoundingMethod, optional
         How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
     intermediate : DecimalIntermediate, optional
         The width of the intermediate value used to rescale the dividend.
-        With DecimalIntermediate.STANDARD, a result is also null if the
+        With DecimalIntermediate.STANDARD, a row also fails if the
         magnitude of the rescaled dividend does not fit in an unsigned 64-bit
         integer (if all three types are DECIMAL32) or an unsigned 128-bit
         integer (otherwise).
-        DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
+        DecimalIntermediate.WIDE uses 256 bits, so a row fails only for
         a zero divisor or a quotient that does not fit ``output_type``.
         (default DecimalIntermediate.STANDARD)
     stream : Stream | None
@@ -105,6 +111,8 @@ cpdef Column divide_decimal(
     ------
     TypeError
         If either operand or ``output_type`` is None or is not a decimal type.
+    RuntimeError
+        If ``policy`` is ErrorPolicy.PROPAGATE and any row fails.
     """
     _check_decimal(lhs, "Left")
     _check_decimal(rhs, "Right")
@@ -122,6 +130,7 @@ cpdef Column divide_decimal(
             c_lhs,
             c_rhs,
             output_type.c_obj,
+            policy,
             round_method,
             intermediate,
             _cs,
@@ -135,6 +144,7 @@ cpdef Column divide_decimal_column_scalar(
     Column lhs,
     Scalar rhs,
     DataType output_type,
+    error_policy policy,
     rounding_method round_method = rounding_method.HALF_UP,
     decimal_intermediate intermediate = decimal_intermediate.STANDARD,
     object stream: CudaStreamLike | None = None,
@@ -151,19 +161,23 @@ cpdef Column divide_decimal_column_scalar(
     rhs : Scalar
         The divisor. Must be a decimal type, of any width and scale.
     output_type : DataType
-        The decimal type and scale of the result. Results with more digits
-        than this type can hold are null.
+        The decimal type and scale of the result. A row fails if its result
+        has more digits than this type can hold, or if its divisor is zero.
+    policy : ErrorPolicy
+        How failing rows are handled. ErrorPolicy.PROPAGATE raises if any row
+        fails, and ErrorPolicy.NULLIFY makes failing rows null. Null inputs
+        give null results and are never errors.
     round_method : RoundingMethod, optional
         How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
     intermediate : DecimalIntermediate, optional
         The width of the intermediate value used to rescale the dividend.
-        With DecimalIntermediate.STANDARD, a result is also null if the
+        With DecimalIntermediate.STANDARD, a row also fails if the
         magnitude of the rescaled dividend does not fit in an unsigned 64-bit
         integer (if all three types are DECIMAL32) or an unsigned 128-bit
         integer (otherwise).
-        DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
+        DecimalIntermediate.WIDE uses 256 bits, so a row fails only for
         a zero divisor or a quotient that does not fit ``output_type``.
         (default DecimalIntermediate.STANDARD)
     stream : Stream | None
@@ -180,6 +194,8 @@ cpdef Column divide_decimal_column_scalar(
     ------
     TypeError
         If either operand or ``output_type`` is None or is not a decimal type.
+    RuntimeError
+        If ``policy`` is ErrorPolicy.PROPAGATE and any row fails.
     """
     _check_decimal(lhs, "Left")
     _check_decimal(rhs, "Right")
@@ -197,6 +213,7 @@ cpdef Column divide_decimal_column_scalar(
             c_lhs,
             c_rhs[0],
             output_type.c_obj,
+            policy,
             round_method,
             intermediate,
             _cs,
@@ -210,6 +227,7 @@ cpdef Column divide_decimal_scalar_column(
     Scalar lhs,
     Column rhs,
     DataType output_type,
+    error_policy policy,
     rounding_method round_method = rounding_method.HALF_UP,
     decimal_intermediate intermediate = decimal_intermediate.STANDARD,
     object stream: CudaStreamLike | None = None,
@@ -226,19 +244,23 @@ cpdef Column divide_decimal_scalar_column(
     rhs : Column
         The divisor column. Must be a decimal type, of any width and scale.
     output_type : DataType
-        The decimal type and scale of the result. Results with more digits
-        than this type can hold are null.
+        The decimal type and scale of the result. A row fails if its result
+        has more digits than this type can hold, or if its divisor is zero.
+    policy : ErrorPolicy
+        How failing rows are handled. ErrorPolicy.PROPAGATE raises if any row
+        fails, and ErrorPolicy.NULLIFY makes failing rows null. Null inputs
+        give null results and are never errors.
     round_method : RoundingMethod, optional
         How to round the quotient to the scale of ``output_type``.
         Can be one of { RoundingMethod.HALF_UP, RoundingMethod.HALF_EVEN }
         (default RoundingMethod.HALF_UP)
     intermediate : DecimalIntermediate, optional
         The width of the intermediate value used to rescale the dividend.
-        With DecimalIntermediate.STANDARD, a result is also null if the
+        With DecimalIntermediate.STANDARD, a row also fails if the
         magnitude of the rescaled dividend does not fit in an unsigned 64-bit
         integer (if all three types are DECIMAL32) or an unsigned 128-bit
         integer (otherwise).
-        DecimalIntermediate.WIDE uses 256 bits, so a result is null only for
+        DecimalIntermediate.WIDE uses 256 bits, so a row fails only for
         a zero divisor or a quotient that does not fit ``output_type``.
         (default DecimalIntermediate.STANDARD)
     stream : Stream | None
@@ -255,6 +277,8 @@ cpdef Column divide_decimal_scalar_column(
     ------
     TypeError
         If either operand or ``output_type`` is None or is not a decimal type.
+    RuntimeError
+        If ``policy`` is ErrorPolicy.PROPAGATE and any row fails.
     """
     _check_decimal(lhs, "Left")
     _check_decimal(rhs, "Right")
@@ -272,6 +296,7 @@ cpdef Column divide_decimal_scalar_column(
             c_lhs[0],
             c_rhs,
             output_type.c_obj,
+            policy,
             round_method,
             intermediate,
             _cs,

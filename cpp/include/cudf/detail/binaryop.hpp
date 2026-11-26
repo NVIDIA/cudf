@@ -15,17 +15,6 @@ namespace cudf {
 namespace detail {
 
 /**
- * @copydoc cudf::binary_operation(column_view const&, column_view const&,
- * transform_udf const&, data_type, cuda::stream_ref, cudf::memory_resources)
- */
-std::unique_ptr<column> binary_operation(column_view const& lhs,
-                                         column_view const& rhs,
-                                         transform_udf const& udf,
-                                         data_type output_type,
-                                         cuda::stream_ref stream,
-                                         cudf::memory_resources mr);
-
-/**
  * @copydoc cudf::binary_operation(scalar const&, column_view const&, binary_operator,
  * data_type, cuda::stream_ref, cudf::memory_resources)
  */

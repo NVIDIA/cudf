@@ -8,7 +8,6 @@
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
-#include <cudf/udf.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
@@ -331,40 +330,6 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   error_policy policy,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Performs a binary operation between two columns using a
- * compiled user-defined device function.
- *
- * @deprecated in release 26.12 and will be removed in a future release. Use `cudf::transform`
- * instead.
- *
- * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
- *
- * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands
- *
- * @param lhs         The left operand column
- * @param rhs         The right operand column
- * @param udf         The user-defined device function to apply
- * @param output_type The desired data type of the output column. It is assumed
- *                    that output_type is compatible with the output data type
- *                    of the function
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Memory resources used for temporary allocations and the returned column
- * @return            Output column of `output_type` type containing the result of
- *                    the binary operation
- * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
- * @throw cudf::logic_error if @p lhs and @p rhs dtypes aren't numeric
- * @throw cudf::logic_error if @p output_type dtype isn't numeric
- */
-[[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
-  column_view const& lhs,
-  column_view const& rhs,
-  transform_udf const& udf,
-  data_type output_type,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

@@ -353,23 +353,6 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
   return binops::compiled::binary_operation<column_view, column_view>(
     lhs, rhs, op, output_type, stream, mr);
 }
-
-std::unique_ptr<column> binary_operation(column_view const& lhs,
-                                         column_view const& rhs,
-                                         transform_udf const& udf,
-                                         data_type output_type,
-                                         cuda::stream_ref stream,
-                                         cudf::memory_resources mr)
-{
-  CUDF_EXPECTS(
-    is_fixed_width(lhs.type()) && is_fixed_width(rhs.type()) && is_fixed_width(output_type),
-    "Binary UDFs require fixed-width types",
-    std::invalid_argument);
-  std::array<transform_input, 2> inputs{lhs, rhs};
-  std::array<transform_output, 1> outputs{transform_output{.type = output_type}};
-  return std::move(
-    cudf::transform(udf, inputs, outputs, {}, std::nullopt, stream, mr)->release().front());
-}
 }  // namespace detail
 
 int32_t binary_operation_fixed_point_scale(binary_operator op,
@@ -463,17 +446,6 @@ std::unique_ptr<column> binary_operation(column_view const& lhs,
   CUDF_FUNC_RANGE();
   return detail::checked_arithmetic::binary_operation(
     lhs, rhs, op, output_type, policy, stream, mr);
-}
-
-std::unique_ptr<column> binary_operation(column_view const& lhs,
-                                         column_view const& rhs,
-                                         transform_udf const& udf,
-                                         data_type output_type,
-                                         cuda::stream_ref stream,
-                                         cudf::memory_resources mr)
-{
-  CUDF_FUNC_RANGE();
-  return detail::binary_operation(lhs, rhs, udf, output_type, stream, mr);
 }
 
 }  // namespace cudf

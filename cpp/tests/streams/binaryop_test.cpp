@@ -52,24 +52,4 @@ TEST_F(BinaryopTest, ScalarColumn)
                          cudf::test::get_default_stream());
 }
 
-class BinaryopPTXTest : public BinaryopTest {};
-
-// Exercise the deprecated binary UDF API until its removal.
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
-TEST_F(BinaryopPTXTest, ColumnColumnPTX)
-{
-  cudf::test::fixed_width_column_wrapper<int32_t> lhs{10, 20, 30, 40, 50};
-  cudf::test::fixed_width_column_wrapper<int64_t> rhs{15, 25, 35, 45, 55};
-
-  cudf::binary_operation(lhs,
-                         rhs,
-                         cudf::test::get_ptx_udf("add_i32_i64"),
-                         cudf::data_type(cudf::type_to_id<int64_t>()),
-                         cudf::test::get_default_stream());
-}
-
-#pragma GCC diagnostic pop
-
 CUDF_TEST_PROGRAM_MAIN()

@@ -75,7 +75,11 @@ jobs:
         run: |
           packages=('gcc_linux-aarch64=14.*')
           if [[ "$TRIAL" == signal-order-* ]]; then
-              packages+=('cuda-cupti-dev=13.4.92=hc1d3098_0' 'cuda-cudart-dev=13.4.92=hae6cbe8_1' 'cuda-driver-dev=13.4.92=hae6cbe8_1')
+              packages+=(
+                  'cuda-cupti-dev=13.4.92=hc1d3098_0'
+                  'cuda-cudart-dev=13.4.92=hae6cbe8_1'
+                  'cuda-crt-dev_linux-aarch64=13.4.92=h579c4fd_0'
+              )
           fi
           conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge "${packages[@]}"
       - name: Replay the Conda Polars job

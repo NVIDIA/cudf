@@ -19,6 +19,7 @@
 
 #include <cuda/std/utility>
 
+#include <functional>
 #include <random>
 #include <string>
 #include <string_view>
@@ -133,6 +134,18 @@ std::unique_ptr<cudf::column> make_parquet_list_list_col(
  */
 void read_footer(std::unique_ptr<cudf::io::datasource> const& source,
                  cudf::io::parquet::FileMetaData* file_meta_data);
+
+/**
+ * @brief Rewrites the footer of an in-memory Parquet file
+ *
+ * Decodes the trailing footer of `buffer`, applies `edit` to it, and replaces it with the
+ * re-encoded footer, keeping the data pages as is.
+ *
+ * @param buffer Parquet file bytes to update in place
+ * @param edit Callable that modifies the decoded footer
+ */
+void edit_footer(std::vector<char>& buffer,
+                 std::function<void(cudf::io::parquet::FileMetaData&)> const& edit);
 
 /**
  * @brief Returns the number of bits used for dictionary encoding the uncompressed page at
@@ -254,7 +267,7 @@ cudf::table_view get_row_group_slice(ordered_rg_source const& src, cudf::size_ty
  * inner vector contributes nothing). `sources[i]` pairs with `rg_selection[i]`; pointers must be
  * non-null.
  */
-std::unique_ptr<cudf::table> build_expected_ordered_table(
+std::unique_ptr<cudf::table> create_expected_ordered_table(
   cudf::host_span<ordered_rg_source const* const> sources,
   cudf::host_span<std::vector<cudf::size_type> const> rg_selection);
 

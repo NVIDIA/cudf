@@ -1203,6 +1203,62 @@ TEST_F(StringOperationTest, OutputNullAware)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
 }
 
+TEST_F(StringOperationTest, OutputPtx)
+{
+  auto input = cudf::test::strings_column_wrapper{{"abcdef", "ignored", "", "xy", "123"},
+                                                  {true, false, true, true, true}};
+
+  // Compiled with `nvcc -arch=sm_75 -rdc=true -ptx -O3`, then retargeted to sm_70:
+  //
+  // extern "C" __device__ int prefix3(cudf::string_view* output, cudf::string_view input)
+  // {
+  //   auto const size = input.size_bytes() < 3 ? input.size_bytes() : 3;
+  //   *output         = cudf::string_view{input.data(), size};
+  //   return 0;
+  // }
+  std::string const ptx = R"***(
+.version 6.3
+.target sm_70
+.address_size 64
+
+.visible .func  (.param .b32 func_retval0) prefix3(
+	.param .b64 prefix3_param_0,
+	.param .align 8 .b8 prefix3_param_1[16]
+)
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [prefix3_param_0];
+	ld.param.v2.u32 	{%r1, %r2}, [prefix3_param_1+8];
+	ld.param.u64 	%rd2, [prefix3_param_1];
+	st.u64 	[%rd1], %rd2;
+	min.s32 	%r4, %r1, 3;
+	mov.u32 	%r5, 0;
+	mov.u32 	%r6, -1;
+	st.v2.u32 	[%rd1+8], {%r4, %r6};
+	st.param.b32 	[func_retval0+0], %r5;
+	ret;
+}
+)***";
+
+  cudf::transform_input inputs[]   = {input};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::PRESERVE}};
+  auto result = cudf::transform(ptx,
+                                cudf::udf_source_type::PTX,
+                                cudf::null_aware::NO,
+                                std::nullopt,
+                                inputs,
+                                outputs,
+                                {},
+                                std::nullopt);
+
+  auto expected = cudf::test::strings_column_wrapper{{"abc", "", "", "xy", "123"},
+                                                     {true, false, true, true, true}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0));
+}
+
 TEST_F(StringOperationTest, OutputOffsetted)
 {
   auto a = cudf::test::strings_column_wrapper{"x", "xx", "xxx", "xxxx", "xxxxx", "xxxxxx"};
@@ -1210,7 +1266,7 @@ TEST_F(StringOperationTest, OutputOffsetted)
   auto c = cudf::test::strings_column_wrapper{"1", "2", "3", "4", "5", "6"};
 
   std::string cuda = R"***(
-    __device__ void concat(cuda::std::span<char> * out, cudf::string_view a, cudf::string_view b, cudf::string_view c){
+    __device__ void concat(cudf::mutable_string_view * out, cudf::string_view a, cudf::string_view b, cudf::string_view c){
       auto iter = out->data();
       memcpy(iter, a.data(), a.size_bytes());
       iter += a.size_bytes();
@@ -1268,7 +1324,7 @@ TEST_F(StringOperationTest, OutputOffsettedMixed)
   auto c = cudf::test::strings_column_wrapper{"1", "2", "3", "4", "5", "67"};
 
   std::string cuda = R"***(
-    __device__ void concat(int32_t * ab_size, cuda::std::span<char> * out, bool * is_odd, cudf::string_view a, cudf::string_view b, cudf::string_view c){
+    __device__ void concat(int32_t * ab_size, cudf::mutable_string_view * out, bool * is_odd, cudf::string_view a, cudf::string_view b, cudf::string_view c){
       auto iter = out->data();
       auto begin = iter;
       memcpy(iter, a.data(), a.size_bytes());

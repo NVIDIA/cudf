@@ -78,7 +78,10 @@ try:
     from cudf_polars.dsl.ir import IRExecutionContext
     from cudf_polars.dsl.translate import Translator
     from cudf_polars.engine.core import StreamingEngine
-    from cudf_polars.quent._export import write_quent_export
+    from cudf_polars.quent._export import (
+        write_quent_browser_bundle,
+        write_quent_export,
+    )
     from cudf_polars.streaming.benchmarks.asserts import (
         ValidationError,
         assert_tpch_result_equal,
@@ -96,6 +99,7 @@ if TYPE_CHECKING:
 
     from cudf_polars.engine.options import StreamingOptions
     from cudf_polars.quent import QuentConfig
+    from cudf_polars.quent._export import BrowserBundleInfo
 
 POLARS_VALIDATION_OPTIONS: dict[str, Any] = {
     "check_row_order": True,
@@ -167,33 +171,22 @@ _CPU_ENGINES = frozenset({"polars-cpu", "duckdb"})
 EXIT_SUCCESS = 0
 EXIT_QUERY_FAILURE = 3
 EXIT_VALIDATION_FAILURE = 4
+EXIT_OUTPUT_FAILURE = 5
 
 
 def benchmark_exit_code(
     query_failures: list[tuple[int, int]],
     validation_failures: list[int],
+    *,
+    output_failed: bool = False,
 ) -> int:
-    """
-    Map a run's failures to the process exit code.
-
-    Parameters
-    ----------
-    query_failures
-        ``(query, iteration)`` pairs for queries that raised while running.
-    validation_failures
-        Queries whose results did not match the expected answer.
-
-    Returns
-    -------
-    int
-        0: Success
-        3: Query failure
-        4: Validation failure
-    """
+    """Map a run's failures to the process exit code."""
     if query_failures:
         return EXIT_QUERY_FAILURE
     if validation_failures:
         return EXIT_VALIDATION_FAILURE
+    if output_failed:
+        return EXIT_OUTPUT_FAILURE
     return EXIT_SUCCESS
 
 
@@ -220,7 +213,25 @@ class QuentRole:
     filename: str
 
 
-Role = NightlyRole | NsysRole | QuentRole
+@dataclasses.dataclass
+class QuentBrowserRole:
+    """Role indicating a serverless Quent browser payload."""
+
+    type: Literal["quent-browser"] = dataclasses.field(
+        default="quent-browser", init=False
+    )
+    filename: str
+    engine_id: str
+    schema_digest: str
+    format_version: int
+    context_count: int
+    event_count: int
+    model_name: Literal["cudf-polars"] = dataclasses.field(
+        default="cudf-polars", init=False
+    )
+
+
+Role = NightlyRole | NsysRole | QuentRole | QuentBrowserRole
 
 
 @dataclasses.dataclass
@@ -1352,7 +1363,7 @@ def run_polars_query(
                         quent_context,
                         query=dataclasses.replace(
                             quent_context.query,
-                            query_name=f"Iteration {i + 1}",
+                            query_name=f"Q{q_id:02d} Iteration {i + 1}",
                         ),
                     )
                 )
@@ -1441,7 +1452,7 @@ def _run_query_loop(
                         query=dataclasses.replace(
                             quent_context.query,
                             query_group_id=uuid.uuid4(),
-                            query_group_name=f"PDSH Query {q_id}",
+                            query_group_name=f"Query {q_id}",
                         ),
                     )
                 )
@@ -1522,8 +1533,14 @@ def _finalize_benchmark_run(
     serializable_engine_config: dict[str, Any],
     startup_duration_ms: float | None,
     shutdown_duration_ms: float | None,
+    artifact_error: Exception | None = None,
 ) -> None:
-    """Summarize, serialize, and exit after a benchmark run."""
+    """
+    Summarize, serialize, and exit after a benchmark run.
+
+    ``artifact_error`` is a failure while writing Quent traces. The run summary
+    is still written before that error is re-raised.
+    """
     if run_options.summarize:
         run_config.summarize()
     if (
@@ -1552,11 +1569,23 @@ def _finalize_benchmark_run(
     serializable_engine_config["startup_duration_ms"] = startup_duration_ms
     serializable_engine_config["shutdown_duration_ms"] = shutdown_duration_ms
 
+    output_errors = [artifact_error] if artifact_error is not None else []
     if run_options.output is not None:
-        with run_options.output.open("a") as f:
-            f.write(json.dumps(serializable_engine_config))
-            f.write("\n")
-    sys.exit(benchmark_exit_code(query_failures, validation_failures))
+        try:
+            with run_options.output.open("a") as f:
+                f.write(json.dumps(serializable_engine_config))
+                f.write("\n")
+        except Exception as error_:
+            output_errors.append(error_)
+    for error in output_errors:
+        traceback.print_exception(error)
+    sys.exit(
+        benchmark_exit_code(
+            query_failures,
+            validation_failures,
+            output_failed=bool(output_errors),
+        )
+    )
 
 
 def run_polars_cpu(
@@ -1698,11 +1727,13 @@ def run_polars_spmd(
         )
         shutdown_time_begin = time.monotonic()
 
+    artifact_error = None
     if is_rank_0 and quent_archive is not None:
-        _write_quent_traces(
+        artifact_error = _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
             quent_archive=quent_archive,
+            serializable_engine_config=serializable_engine_config,
         )
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
@@ -1713,6 +1744,7 @@ def run_polars_spmd(
         serializable_engine_config=serializable_engine_config,
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=shutdown_duration_ms,
+        artifact_error=artifact_error,
     )
 
 
@@ -1771,11 +1803,13 @@ def run_polars_ray(
         )
         shutdown_time_begin = time.monotonic()
 
+    artifact_error = None
     if quent_archive is not None:
-        _write_quent_traces(
+        artifact_error = _write_quent_traces(
             engine=engine,
             run_id=run_config.run_id,
             quent_archive=quent_archive,
+            serializable_engine_config=serializable_engine_config,
         )
     shutdown_duration_ms = _elapsed_ms(shutdown_time_begin)
     _finalize_benchmark_run(
@@ -1786,6 +1820,7 @@ def run_polars_ray(
         serializable_engine_config=serializable_engine_config,
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=shutdown_duration_ms,
+        artifact_error=artifact_error,
     )
 
 
@@ -1824,6 +1859,7 @@ def run_polars_dask(
         )
 
     start_time_begin = time.monotonic()
+    artifact_error = None
     try:
         with DaskEngine(
             rapidsmpf_options=run_config.streaming_options.to_rapidsmpf_options(),
@@ -1848,10 +1884,11 @@ def run_polars_dask(
             shutdown_time_begin = time.monotonic()
 
         if quent_archive is not None:
-            _write_quent_traces(
+            artifact_error = _write_quent_traces(
                 engine=engine,
                 run_id=run_config.run_id,
                 quent_archive=quent_archive,
+                serializable_engine_config=serializable_engine_config,
             )
     finally:
         if dask_client is not None:
@@ -1865,6 +1902,7 @@ def run_polars_dask(
         serializable_engine_config=serializable_engine_config,
         startup_duration_ms=startup_duration_ms,
         shutdown_duration_ms=shutdown_duration_ms,
+        artifact_error=artifact_error,
     )
 
 
@@ -1873,16 +1911,50 @@ def _write_quent_traces(
     run_id: uuid.UUID,
     *,
     quent_archive: Path,
-) -> Path | None:
-    """Write collected Quent events to a ``logs/<run_id>.zip`` archive."""
+    serializable_engine_config: dict[str, Any],
+) -> Exception | None:
+    """
+    Write the Quent ZIP, then the browser bundle derived from that ZIP.
+
+    The ZIP writer removes the collector directory, so the bundle is generated
+    from the archive. A bundle failure leaves the ZIP in place. The failure is
+    returned so the caller can still record the run and exit non-zero.
+    """
     export_root = engine._quent_output_root
     if export_root is None:
         return None
+    try:
+        _check_quent_output_root(export_root, run_id)
+        output_path = write_quent_export(export_root, quent_archive)
+        print(f"Wrote Quent trace archive to {output_path}")
+        bundle_info = write_quent_browser_bundle(
+            output_path, quent_archive.with_suffix(".quent-browser")
+        )
+        print(f"Wrote Quent browser bundle to {bundle_info.path}")
+        _add_browser_bundle_metadata(serializable_engine_config, bundle_info)
+    except Exception as exc:
+        return exc
+    return None
+
+
+def _check_quent_output_root(export_root: Path, run_id: uuid.UUID) -> None:
+    """Raise if the collector directory does not belong to ``run_id``."""
     if export_root.name != str(run_id):
         raise ValueError(f"Quent output {export_root} does not match run {run_id}")
-    output_path = write_quent_export(export_root, quent_archive)
-    print(f"Wrote Quent trace archive to {output_path}")
-    return output_path
+
+
+def _add_browser_bundle_metadata(
+    serializable_engine_config: dict[str, Any],
+    bundle: BrowserBundleInfo,
+) -> None:
+    """Add a generated browser bundle to benchmark output metadata."""
+    recorded = dataclasses.asdict(bundle)
+    path = Path(recorded.pop("path"))
+    role = QuentBrowserRole(filename=path.name, **recorded)
+    serializable_engine_config["roles"].append(dataclasses.asdict(role))
+    serializable_engine_config["extra_info"]["quent-browser-bundle"] = str(
+        path.absolute()
+    )
 
 
 PDSDS_TABLE_NAMES: list[str] = [
@@ -2201,14 +2273,6 @@ def build_parser(num_queries: int = 22) -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="Cudf-Polars PDS-H/PDS-DS Benchmarks",
-        description=textwrap.dedent(f"""\
-            Exit code description:
-            - {EXIT_SUCCESS} : Success
-            - 1 : Unhandled exception during query run
-            - 2 : Invalid command line arguments
-            - {EXIT_QUERY_FAILURE} : Query failure (setup or execution)
-            - {EXIT_VALIDATION_FAILURE} : Validation failure
-            """),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument(
@@ -2515,7 +2579,12 @@ def run_polars(benchmark: Any, args: argparse.Namespace) -> None:
         raise ValueError(
             f"--collect-traces is not supported with --frontend {run_config.frontend}; "
             "cudf-polars tracing only applies to GPU frontends "
-            "(in-memory, dask, ray, spmd)."
+            "(dask, ray, spmd)."
+        )
+    elif run_config.collect_traces and run_config.frontend == "in-memory":
+        raise ValueError(
+            "--collect-traces is not yet supported with --frontend in-memory; "
+            "use dask, ray, or spmd."
         )
 
     elif (

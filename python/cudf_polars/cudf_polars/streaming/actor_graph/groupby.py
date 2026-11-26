@@ -415,56 +415,58 @@ async def _shuffle_reduce(
     )
     await send_metadata(ch_out, context, metadata_out)
 
-    shuffle = ShuffleManager(
+    extract_irs = [decomposed.reduction_ir] + (
+        [decomposed.select_ir] if decomposed.select_ir else []
+    )
+    async with ShuffleManager(
         shuffle_context,
         shuffle_comm,
         modulus,
         collective_id,
-    )
-    async with shuffle.inserting() as inserter:
-        await inserter.insert_hash(
-            _enforce_schema(
-                aggregated,
-                decomposed.reduction_ir.schema,
-                context.br(),
-            ),
-            decomposed.shuffle_indices,
-        )
-        del aggregated
-
-        while not input_drained:
-            aggregated, input_drained, _ = await _local_aggregation(
-                context,
-                decomposed,
-                ir_context,
-                ch_in,
-                target_partition_size,
-            )
+    ) as shuffle:
+        async with shuffle.inserting() as inserter:
             await inserter.insert_hash(
                 _enforce_schema(
-                    aggregated, decomposed.reduction_ir.schema, context.br()
+                    aggregated,
+                    decomposed.reduction_ir.schema,
+                    context.br(),
                 ),
                 decomposed.shuffle_indices,
             )
             del aggregated
-    extract_irs = [decomposed.reduction_ir] + (
-        [decomposed.select_ir] if decomposed.select_ir else []
-    )
-    for partition_id in shuffle.local_partitions():
-        stream = ir_context.get_cuda_stream()
-        partition_chunk = TableChunk.from_pylibcudf_table(
-            await shuffle.extract_chunk(partition_id, stream),
-            stream,
-            exclusive_view=True,
-            br=context.br(),
-        )
-        partition_chunk = await evaluate_chunk(
-            context,
-            partition_chunk,
-            *extract_irs,
-            ir_context=ir_context,
-        )
-        await send_chunk(context, ch_out, partition_chunk, partition_id, tracer=tracer)
+
+            while not input_drained:
+                aggregated, input_drained, _ = await _local_aggregation(
+                    context,
+                    decomposed,
+                    ir_context,
+                    ch_in,
+                    target_partition_size,
+                )
+                await inserter.insert_hash(
+                    _enforce_schema(
+                        aggregated, decomposed.reduction_ir.schema, context.br()
+                    ),
+                    decomposed.shuffle_indices,
+                )
+                del aggregated
+        for partition_id in shuffle.local_partitions():
+            stream = ir_context.get_cuda_stream()
+            partition_chunk = TableChunk.from_pylibcudf_table(
+                await shuffle.extract_chunk(partition_id, stream),
+                stream,
+                exclusive_view=True,
+                br=context.br(),
+            )
+            partition_chunk = await evaluate_chunk(
+                context,
+                partition_chunk,
+                *extract_irs,
+                ir_context=ir_context,
+            )
+            await send_chunk(
+                context, ch_out, partition_chunk, partition_id, tracer=tracer
+            )
 
     await ch_out.drain(context)
 
@@ -668,8 +670,9 @@ class _OrderedGroupCursor:
         exchange: SparseExchange,
         destination: int,
     ) -> None:
+        rest: TableChunk | None = chunk
         if self.send_first:
-            first, chunk = await _split_key_run(
+            first, rest = await _split_key_run(
                 groupby.context,
                 groupby.ir_context,
                 chunk,
@@ -680,7 +683,7 @@ class _OrderedGroupCursor:
             await exchange.insert_chunk(destination, first)
             self.send_first = False
             exchange.start_finish()
-        await self.emit(groupby, chunk)
+        await self.emit(groupby, rest)
 
 
 @dataclass(frozen=True)
@@ -840,7 +843,7 @@ class _OrderedGroupBy:
         keys: tuple[OrderKey, ...],
         stream: Stream,
         boundaries: TableChunk | None,
-        context: Context,
+        ir_context: IRExecutionContext,
     ) -> dict[int, int]:
         """Route leading runs using gathered keys and optional rank boundaries."""
         first_keys = plc.Table(gathered.columns()[1:])
@@ -859,7 +862,7 @@ class _OrderedGroupBy:
             }
 
         with stream_ordered_after(
-            context.br().stream_pool.get_stream,
+            ir_context.get_cuda_stream,
             upstreams=(stream, boundaries.stream),
         ) as search_stream:
             boundary_table = boundaries.table_view()
@@ -912,15 +915,24 @@ class _OrderedGroupBy:
                 exclusive_view=False,
                 br=self.context.br(),
             )
-        gather = AllGatherManager(self.context, self.comm, self.first_key_id)
-        with gather.inserting() as inserter:
-            await inserter.insert(0, first_chunk)
-        gathered = await gather.extract_concatenated(stream, ir_context=self.ir_context)
+        async with AllGatherManager(
+            self.context, self.comm, self.first_key_id
+        ) as gather:
+            with gather.inserting() as inserter:
+                await inserter.insert(0, first_chunk)
+            gathered = await gather.extract_concatenated(
+                stream, ir_context=self.ir_context
+            )
         if gathered.num_rows() == 0:
             return {}, chunk
         if self.inter_rank_ordering is None:
             routes = await self.ir_context.to_thread(
-                self._route_first_keys, gathered, self.keys, stream, None, self.context
+                self._route_first_keys,
+                gathered,
+                self.keys,
+                stream,
+                None,
+                self.ir_context,
             )
             return routes, chunk
 
@@ -937,7 +949,7 @@ class _OrderedGroupBy:
                 self.keys,
                 stream,
                 boundaries,
-                self.context,
+                self.ir_context,
             )
         return routes, chunk
 
@@ -1401,10 +1413,10 @@ async def groupby_actor(
             tracer,
         )
 
-        # RapidsMPF permits ID reuse after AllGather.extract_all completes.
-        # Any strategy-selection AllGather finishes before reduction starts.
+        # RapidsMPF permits ID reuse after the AllGather is closed.
+        # Any strategy-selection AllGather is closed before reduction starts.
         if output_count == 1:
-            await _tree_reduce(
+            tree_reduce = _tree_reduce(
                 context,
                 comm,
                 decomposed,
@@ -1416,6 +1428,8 @@ async def groupby_actor(
                 aggregated=aggregated,
                 tracer=tracer,
             )
+            del aggregated
+            await tree_reduce
         elif ordered_keys is not None:
             local_count = (
                 min(2, max(1, aggregated.shape[0]))
@@ -1456,7 +1470,7 @@ async def groupby_actor(
             del aggregated
             await ordered_run
         else:
-            await _shuffle_reduce(
+            shuffle_reduce = _shuffle_reduce(
                 context,
                 comm,
                 decomposed,
@@ -1472,6 +1486,8 @@ async def groupby_actor(
                 input_drained=input_drained,
                 tracer=tracer,
             )
+            del aggregated
+            await shuffle_reduce
 
 
 @generate_ir_sub_network.register(GroupBy)

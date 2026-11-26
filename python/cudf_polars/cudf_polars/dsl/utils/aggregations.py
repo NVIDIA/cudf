@@ -23,12 +23,12 @@ from cudf_polars.dsl.expressions.aggregation import (
     UniqueLiteral,
 )
 from cudf_polars.dsl.expressions.base import ExecutionContext
-from cudf_polars.dsl.traversal import traversal
+from cudf_polars.dsl.traversal import CachingVisitor, reuse_if_unchanged, traversal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable, Sequence
+    from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 
-    from cudf_polars.typing import Schema
+    from cudf_polars.typing import GenericTransformer, Schema
 
 __all__ = ["apply_pre_evaluation", "decompose_aggs", "decompose_single_agg"]
 
@@ -83,6 +83,28 @@ def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
     return expr.UnaryFunction(
         col.dtype, "fill_null", (), col, expr.Literal(col.dtype, value)
     )
+
+
+def _replace_slice_with_agg(
+    node: expr.Expr,
+    rec: GenericTransformer[expr.Expr, expr.Expr, Mapping[str, expr.Agg]],
+) -> expr.Expr:
+    agg = rec.state["agg"]
+    if (
+        isinstance(node, expr.Slice)
+        and isinstance(node.children[0], expr.Col)
+        and (node.offset, node.length) == (0 if agg.name == "first" else -1, 1)
+    ):
+        (child,) = node.children
+        return expr.Agg(node.dtype, agg.name, agg.options, agg.context, child)
+    if isinstance(node, expr.UnaryFunction) and node.name == "set_sorted":
+        # Sortedness within a group does not imply sortedness across groups.
+        return node
+    if node.is_pointwise and all(
+        isinstance(c, expr.Literal) for c in node.children[1:]
+    ):
+        return reuse_if_unchanged(node, rec)
+    return node
 
 
 def decompose_single_agg(
@@ -444,6 +466,17 @@ def decompose_single_agg(
             child = agg.children[0]
         else:
             (child,) = agg.children
+        if context == ExecutionContext.GROUPBY and agg.name in {"first", "last"}:
+            # Polars plans x.f().first() as x.slice(0, 1).f().first(). Rewrite
+            # it as f(x.first()), so f runs on the same row as in Polars.
+            value = CachingVisitor(_replace_slice_with_agg, state={"agg": agg})(child)
+            if value != child:
+                return decompose_single_agg(
+                    named_expr.reconstruct(value),
+                    name_generator,
+                    is_top=is_top,
+                    context=context,
+                )
         if (
             context == ExecutionContext.GROUPBY
             and agg.name in {"first", "last"}

@@ -48,7 +48,7 @@ repos:
           "pyarrow-stubs>=19.0",
           "pyarrow>=19.0.0,<24.0.0",  # https://github.com/NVIDIA/cudf/issues/22229
           "pytest>=8.0.0,<9.1.0",
-          "types-cachetools>=5.5.0",
+          "typing_extensions>=4.12.0",
           "rmm-cu12==27.2.*,>=0.0.0a0; sys_platform=='linux'",
           "--extra-index-url=https://pypi.anaconda.org/rapidsai-wheels-nightly/simple/"
         ]
@@ -230,7 +230,6 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        additional_dependencies: [tomli]
         args: ["--toml", "pyproject.toml"]
         exclude: |
           (?x)^(
@@ -344,7 +343,7 @@ repos:
             [.](md|rst|avro|parquet|png|orc|gz|pkl|sas7bdat)$|
             ^python/cudf/cudf/tests|
             ^python/cudf/cudf/VERSION$|
-            ^python/cudf_polars/quent/bridge/Cargo[.]lock$
+            ^python/cudf_polars/quent/Cargo[.]lock$
       - id: verify-pyproject-license
         # ignore the top-level pyproject.toml, which doesn't
         # have or need a [project] table

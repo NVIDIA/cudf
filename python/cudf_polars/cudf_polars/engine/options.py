@@ -283,6 +283,12 @@ class StreamingOptions:
         Env: ``CUDF_POLARS__EXECUTOR__FALLBACK_MODE``.
         Default: ``"warn"``.
         Category: executor.
+    rank_local_cpu_compute
+        When to evaluate operations on the CPU with Polars (``"never"``,
+        ``"on_oom"``, ``"always"``).
+        Env: ``CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE``.
+        Default: ``"never"``.
+        Category: executor.
     max_rows_per_partition
         Maximum rows per partition.
         Env: ``CUDF_POLARS__EXECUTOR__MAX_ROWS_PER_PARTITION``.
@@ -438,6 +444,9 @@ class StreamingOptions:
     )
     fallback_mode: str | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__FALLBACK_MODE"
+    )
+    rank_local_cpu_compute: str | Unspecified = _opt(
+        "executor", "CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE"
     )
     max_rows_per_partition: int | Unspecified = _opt(
         "executor", "CUDF_POLARS__EXECUTOR__MAX_ROWS_PER_PARTITION", int
@@ -861,6 +870,16 @@ class StreamingOptions:
             help=textwrap.dedent("""\
                 Behavior when a query node cannot run on the GPU.
                 Env: CUDF_POLARS__EXECUTOR__FALLBACK_MODE. Built-in default: warn."""),
+        )
+        g.add_argument(
+            "--rank-local-cpu-compute",
+            dest="rank_local_cpu_compute",
+            default=None,
+            type=str,
+            choices=["never", "on_oom", "always"],
+            help=textwrap.dedent("""\
+                When to evaluate operations on the CPU with Polars.
+                Env: CUDF_POLARS__EXECUTOR__RANK_LOCAL_CPU_COMPUTE. Built-in default: never."""),
         )
         g.add_argument(
             "--max-rows-per-partition",

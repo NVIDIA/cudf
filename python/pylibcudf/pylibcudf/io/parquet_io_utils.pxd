@@ -6,6 +6,14 @@ from pylibcudf.io.types cimport SourceInfo
 from pylibcudf.libcudf.io.parquet_io_utils cimport io_submission_policy
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
+cpdef list fetch_bloom_filters_to_device(
+    SourceInfo source_info,
+    list byte_ranges,
+    io_submission_policy policy,
+    object stream=*,
+    DeviceMemoryResource mr=*,
+)
+
 cpdef list fetch_byte_ranges_to_device(
     SourceInfo source_info,
     list byte_ranges,

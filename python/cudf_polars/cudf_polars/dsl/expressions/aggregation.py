@@ -383,6 +383,8 @@ class Agg(Expr):
             req = plc.aggregation.correlation(
                 plc.aggregation.CorrelationType.PEARSON, 1
             )
+        elif name == "cov":
+            req = plc.aggregation.covariance(options + 1, options)
         elif name == "m2":  # pragma: no cover; doesn't have a direct polars equivalent
             req = plc.aggregation.m2()
         elif (
@@ -454,6 +456,7 @@ class Agg(Expr):
             "product",
             "count",
             "corr",
+            "cov",
             "std",
             "var",
             "quantile",

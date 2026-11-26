@@ -244,8 +244,8 @@ struct transform_program {
  *
  * For both null-aware and non-null-aware UDFs, output values have the following initialization:
  * - Fixed-width outputs have uninitialized values.
- * - Mutable string outputs (`cuda::std::span<char>`, used with preallocated string offsets) contain
- *   a valid data pointer and size, but the character data is uninitialized.
+ * - Mutable string outputs (`cudf::mutable_string_view`, used with preallocated string offsets)
+ *   contain a valid data pointer and byte count, but the character data is uninitialized.
  * - String-view outputs (`cudf::string_view`) have uninitialized values.
  *
  * @throws std::invalid_argument if any of the input columns have different sizes (except scalars)
@@ -255,10 +255,9 @@ struct transform_program {
  * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
  * this case.
  * @throws std::invalid_argument if any of the output or input types are not supported.
- * CUDA-supported input types are fixed-width, string, and their dictionary types. PTX-supported
- * input types are integrals, floats, and their dictionary types. CUDA-supported output types are
- * fixed-width, string, and their dictionary types. PTX-supported output types are integrals,
- * floats, and their dictionary types.
+ * Supported input types are fixed-width, string, and their dictionary types. Supported output
+ * types are fixed-width and string. String outputs are `cudf::string_view`, or
+ * `cudf::mutable_string_view` when that output's `string_offsets` entry is non-null.
  * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
  * if the number of string offsets does not match the number of output columns.
  * @throws cudf::evaluation_error if the UDF produces an error during execution.

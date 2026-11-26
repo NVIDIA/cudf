@@ -843,11 +843,21 @@ def test_groupby_unique_merges_partitions(streaming_engine_factory) -> None:
     assert_gpu_result_equal(q, engine=engine)
 
 
-def test_groupby_unique_mixed_literal_column_raises(
+@pytest.mark.parametrize(
+    "value",
+    [
+        (pl.col("value") + pl.lit(pl.Series([1, 2]))).unique(),
+        pl.col("value").unique().abs().sum(),
+        pl.lit(pl.Series([2, 1, 2])).unique().sum(),
+    ],
+    ids=["mixed-literal-column", "nested-unique", "literal-unique-reduction"],
+)
+def test_groupby_unique_unsupported_raises(
     in_memory_engine: pl.GPUEngine,
+    value: pl.Expr,
 ) -> None:
     df = pl.LazyFrame({"key": [0, 1, 0, 1], "value": [2, 5, 1, 4]})
-    q = df.group_by("key").agg((pl.col("value") + pl.lit(pl.Series([1, 2]))).unique())
+    q = df.group_by("key").agg(value)
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 

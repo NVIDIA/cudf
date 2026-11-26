@@ -17,6 +17,7 @@ from cudf_polars.containers import DataType
 from cudf_polars.dsl.expressions.aggregation import Agg, SortedAgg
 from cudf_polars.dsl.expressions.base import Col, ExecutionContext, NamedExpr
 from cudf_polars.dsl.utils.aggregations import decompose_single_agg
+from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
@@ -716,7 +717,13 @@ def test_groupby_unary_non_pointwise_raises(engine: pl.GPUEngine, df, expr):
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_groupby_unique(engine: pl.GPUEngine, empty: bool) -> None:  # noqa: FBT001
+@pytest.mark.parametrize("maintain_order", [False, True])
+def test_groupby_unique(
+    engine: pl.GPUEngine,
+    *,
+    empty: bool,
+    maintain_order: bool,
+) -> None:
     df = pl.LazyFrame(
         {
             "key": [2, 1, 2, 1, 2, 1, 2, 3, 3],
@@ -726,8 +733,13 @@ def test_groupby_unique(engine: pl.GPUEngine, empty: bool) -> None:  # noqa: FBT
     if empty:
         df = df.clear()
     q = df.group_by("key").agg(
-        pl.col("key").unique().alias("key_values"), pl.col("value").unique()
+        pl.col("key").unique(maintain_order=maintain_order).alias("key_values"),
+        pl.col("value").unique(maintain_order=maintain_order),
     )
+
+    if maintain_order:
+        assert_gpu_result_equal(q.sort("key"), engine=engine)
+        return
 
     # The group order and the order within each unique list are unspecified.
     sort_values = pl.col("value").list.sort()
@@ -737,23 +749,71 @@ def test_groupby_unique(engine: pl.GPUEngine, empty: bool) -> None:  # noqa: FBT
     )
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
-        pl.col("int").unique(maintain_order=True),
-        pl.col("int").sum().unique(),
-        pl.col("int").unique().sum(),
-        pl.lit(pl.Series([1, 2])).unique(),
-    ],
-)
-def test_groupby_unique_unsupported(
-    in_memory_engine: pl.GPUEngine, df: pl.LazyFrame, value: pl.Expr
+@pytest.mark.parametrize("empty", [False, True])
+def test_groupby_unique_reductions(
+    engine: pl.GPUEngine,
+    empty: bool,  # noqa: FBT001
 ) -> None:
-    assert_ir_translation_raises(
-        df.group_by("key1").agg(value.alias("value")),
-        in_memory_engine,
-        NotImplementedError,
+    df = pl.LazyFrame(
+        {
+            "key": [2, 1, 2, 1, 2, 1, 2, 3, 3],
+            "value": [5, None, 2, 7, 5, None, 2, None, None],
+        }
     )
+    if empty:
+        df = df.clear()
+    value = pl.col("value")
+    q = df.group_by("key").agg(
+        value.sum().unique().alias("unique_sum"),
+        value.unique().sum().alias("sum_unique"),
+        value.unique(maintain_order=True).first().alias("first_unique"),
+    )
+    assert_gpu_result_equal(q.sort("key"), engine=engine)
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_groupby_unique_literal(
+    engine: pl.GPUEngine,
+    empty: bool,  # noqa: FBT001
+) -> None:
+    df = pl.LazyFrame({"key": [2, 1, 2, 1, 2, 1, 2, 3, 3]})
+    if empty:
+        df = df.clear()
+    series = pl.lit(pl.Series([2, 1, 2, None, None]))
+    q = df.group_by("key").agg(series.unique(maintain_order=True).alias("values"))
+    assert_gpu_result_equal(q.sort("key"), engine=engine)
+
+
+def test_groupby_unique_pointwise_parent(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"key": [1, 2, 1, 2, 1], "value": [2, 1, -2, -1, 2]})
+    q = df.group_by("key").agg(pl.col("value").unique(maintain_order=True).abs())
+    assert_gpu_result_equal(q.sort("key"), engine=engine)
+
+
+def test_groupby_unique_merges_partitions(streaming_engine_factory) -> None:
+    engine = streaming_engine_factory(
+        StreamingOptions(max_rows_per_partition=2, fallback_mode="raise")
+    )
+    df = pl.LazyFrame(
+        {
+            "key": [2, 1, 2, 1, 2, 1, 2, 1, 2],
+            "value": [5, 4, 2, None, 5, 3, None, 4, 7],
+        }
+    )
+    value = pl.col("value")
+    q = df.group_by("key", maintain_order=True).agg(
+        value.unique(maintain_order=True),
+        value.unique().sum().alias("sum_unique"),
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_groupby_unique_mixed_literal_column_raises(
+    in_memory_engine: pl.GPUEngine,
+) -> None:
+    df = pl.LazyFrame({"key": [0, 1, 0, 1], "value": [2, 5, 1, 4]})
+    q = df.group_by("key").agg((pl.col("value") + pl.lit(pl.Series([1, 2]))).unique())
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
 def test_groupby_agg_broadcast_raises(engine: pl.GPUEngine, df):

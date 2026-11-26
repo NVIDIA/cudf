@@ -17,7 +17,7 @@ from polars.exceptions import ComputeError
 
 import pylibcudf as plc
 
-from cudf_polars.containers import Column
+from cudf_polars.containers import Column, DataFrame
 from cudf_polars.dsl.expressions.base import ExecutionContext, Expr
 from cudf_polars.dsl.expressions.literal import Literal
 from cudf_polars.utils.sorting import nulls_at_start
@@ -25,9 +25,185 @@ from cudf_polars.utils.sorting import nulls_at_start
 if TYPE_CHECKING:
     from rmm.pylibrmm.stream import Stream
 
-    from cudf_polars.containers import DataFrame, DataType
+    from cudf_polars.containers import DataType
+    from cudf_polars.dsl.expressions.base import NamedExpr
 
-__all__ = ["Agg", "Item", "Kurtosis", "Skew", "SortedAgg"]
+__all__ = [
+    "Agg",
+    "Item",
+    "Kurtosis",
+    "ListReduction",
+    "ListSingleton",
+    "ListUnique",
+    "Skew",
+    "SortedAgg",
+    "UniqueLiteral",
+]
+
+
+class ListSingleton(Expr):
+    """Wrap each input value in its own list, including null values."""
+
+    __slots__ = ()
+
+    def __init__(self, dtype: DataType, child: Expr) -> None:
+        self.dtype = dtype
+        self.children = (child,)
+        self.is_pointwise = True
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate the singleton lists."""
+        values = self.children[0].evaluate(df, context=context)
+        size_type = plc.DataType(plc.TypeId.INT32)
+        offsets = plc.filling.sequence(
+            values.size + 1,
+            plc.Scalar.from_py(0, size_type, stream=df.stream),
+            plc.Scalar.from_py(1, size_type, stream=df.stream),
+            stream=df.stream,
+        )
+        return Column(
+            plc.Column(
+                self.dtype.plc_type,
+                values.size,
+                None,
+                None,
+                0,
+                0,
+                [offsets, values.obj],
+            ),
+            dtype=self.dtype,
+        )
+
+
+class UniqueLiteral(Expr):
+    """Evaluate a constant expression once and return its distinct values as one list."""
+
+    __slots__ = ("maintain_order",)
+    _non_child = ("dtype", "maintain_order")
+
+    def __init__(self, dtype: DataType, maintain_order: bool, child: Expr) -> None:  # noqa: FBT001
+        self.dtype = dtype
+        self.maintain_order = maintain_order
+        self.children = (child,)
+        self.is_pointwise = True
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate the distinct constant values."""
+        from cudf_polars.dsl.expressions.unary import UnaryFunction
+
+        (child,) = self.children
+        unique = UnaryFunction(child.dtype, "unique", (self.maintain_order,), child)
+        return Agg(
+            self.dtype, "implode", None, ExecutionContext.FRAME, unique
+        ).evaluate(df)
+
+
+def _explode_groups(values: plc.Column, stream: Stream) -> plc.Table:
+    size_type = plc.DataType(plc.TypeId.INT32)
+    group_ids = plc.filling.sequence(
+        values.size(),
+        plc.Scalar.from_py(0, size_type, stream=stream),
+        plc.Scalar.from_py(1, size_type, stream=stream),
+        stream=stream,
+    )
+    return plc.lists.explode_outer(plc.Table([group_ids, values]), 1, stream=stream)
+
+
+class ListReduction(Expr):
+    """Evaluate a grouped expression independently on each nonempty list."""
+
+    __slots__ = ("key", "requests", "result", "value")
+    _non_child = ("dtype", "key", "value", "requests", "result")
+
+    def __init__(
+        self,
+        dtype: DataType,
+        key: NamedExpr,
+        value: NamedExpr,
+        requests: tuple[NamedExpr, ...],
+        result: NamedExpr,
+        lists: Expr,
+    ) -> None:
+        self.dtype = dtype
+        self.key = key
+        self.value = value
+        self.requests = requests
+        self.result = result
+        self.children = (lists,)
+        self.is_pointwise = True
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Evaluate one reduction per list."""
+        from cudf_polars.dsl.ir import GroupBy, IRExecutionContext
+
+        lists = self.children[0].evaluate(df, context=context)
+        keys, values = _explode_groups(lists.obj, df.stream).columns()
+        group_keys = Column(keys, name=self.key.name, dtype=self.key.value.dtype)
+        group_keys.set_sorted(
+            is_sorted=plc.types.Sorted.YES,
+            order=plc.types.Order.ASCENDING,
+            null_order=plc.types.NullOrder.BEFORE,
+        )
+        flat = DataFrame(
+            [
+                group_keys,
+                Column(values, name=self.value.name, dtype=self.value.value.dtype),
+            ],
+            stream=df.stream,
+        )
+        grouped = GroupBy.do_evaluate(
+            {ne.name: ne.value.dtype for ne in (self.key, *self.requests)},
+            (self.key,),
+            self.requests,
+            False,  # noqa: FBT003
+            None,
+            flat,
+            context=IRExecutionContext(),
+        )
+        return self.result.evaluate(grouped)
+
+
+class ListUnique(Expr):
+    """Keep the first occurrence of each value in a collected group."""
+
+    __slots__ = ()
+
+    def __init__(self, dtype: DataType, child: Expr) -> None:
+        self.dtype = dtype
+        self.children = (child,)
+        self.is_pointwise = True
+
+    def do_evaluate(
+        self, df: DataFrame, *, context: ExecutionContext = ExecutionContext.FRAME
+    ) -> Column:
+        """Deduplicate each group while preserving input order."""
+        values = self.children[0].evaluate(df, context=context)
+        if values.size == 0:
+            return values
+        # Each input list comes from a non-empty group. Exploding gives ordered
+        # (group, value) pairs, so stable distinct keeps each group's first occurrences.
+        pairs = _explode_groups(values.obj, df.stream)
+        keys, distinct = plc.stream_compaction.stable_distinct(
+            pairs,
+            [0, 1],
+            plc.stream_compaction.DuplicateKeepOption.KEEP_FIRST,
+            plc.types.NullEquality.EQUAL,
+            plc.types.NanEquality.ALL_EQUAL,
+            stream=df.stream,
+        ).columns()
+        _, (result,) = plc.groupby.GroupBy(
+            plc.Table([keys]), keys_are_sorted=plc.types.Sorted.YES
+        ).aggregate(
+            [plc.groupby.GroupByRequest(distinct, [plc.aggregation.collect_list()])],
+            stream=df.stream,
+        )
+        return Column(result.columns()[0], dtype=self.dtype)
 
 
 class Item(Expr):
@@ -167,7 +343,7 @@ class Agg(Expr):
             )
         elif name in {"first", "last", "item", "first_non_null"}:
             req = None
-        elif name == "implode":
+        elif name in {"implode", "collect_list"}:
             req = plc.aggregation.collect_list(plc.types.NullPolicy.INCLUDE)
         elif name == "collect_set":
             req = plc.aggregation.collect_set(
@@ -175,6 +351,12 @@ class Agg(Expr):
                 plc.types.NullEquality.EQUAL,
                 plc.types.NanEquality.ALL_EQUAL,
             )
+        elif name == "merge_sets":
+            req = plc.aggregation.merge_sets(
+                plc.types.NullEquality.EQUAL, plc.types.NanEquality.ALL_EQUAL
+            )
+        elif name == "merge_lists":
+            req = plc.aggregation.merge_lists()
         elif name == "mean":
             req = plc.aggregation.mean()
         elif name == "sum":
@@ -262,6 +444,9 @@ class Agg(Expr):
             "implode",
             "last",
             "collect_set",
+            "collect_list",
+            "merge_sets",
+            "merge_lists",
             "mean",
             "m2",
             "merge_m2",

@@ -16,6 +16,12 @@ import pylibcudf as plc
 
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr, ir
+from cudf_polars.dsl.expressions.aggregation import (
+    ListReduction,
+    ListSingleton,
+    ListUnique,
+    UniqueLiteral,
+)
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.traversal import traversal
 
@@ -323,24 +329,114 @@ def decompose_single_agg(
         return [(named_expr, True)], named_expr.reconstruct(expr.Col(agg.dtype, name))
     if isinstance(agg, (expr.Literal, expr.LiteralColumn)):
         return [], named_expr
-    if isinstance(agg, expr.UnaryFunction) and agg.name == "unique":
+    if (
+        context == ExecutionContext.GROUPBY
+        and isinstance(agg, expr.UnaryFunction)
+        and agg.name == "unique"
+    ):
         (maintain_order,) = agg.options
         (child,) = agg.children
-        if context != ExecutionContext.GROUPBY or not is_top or maintain_order:
-            raise NotImplementedError(
-                "Grouped unique only supports a top-level groupby aggregation "
-                "with maintain_order=False"
+        dtype = DataType(pl.List(child.dtype.polars_type))
+        if (
+            not any(isinstance(node, expr.Col) for node in traversal([child]))
+            and child.all_pointwise()
+        ):
+            return [], named_expr.reconstruct(
+                UniqueLiteral(dtype, maintain_order, child)
             )
         if any(isinstance(node, expr.LiteralColumn) for node in traversal([child])):
-            raise NotImplementedError("Grouped unique with a literal column")
-        agg = expr.Agg(
-            DataType(pl.List(child.dtype.polars_type)),
-            "collect_set",
+            raise NotImplementedError(
+                "Grouped unique mixing row-aligned values with a literal column"
+            )
+
+        child_aggs, child_post = decompose_single_agg(
+            expr.NamedExpr(next(name_generator), child),
+            name_generator,
+            is_top=False,
+            context=context,
+        )
+        if not child_aggs or any(has_agg for _, has_agg in child_aggs):
+            return child_aggs, named_expr.reconstruct(
+                ListSingleton(dtype, child_post.value)
+            )
+        if not is_top:
+            raise NotImplementedError(
+                "Grouped unique requires a list-aware parent expression"
+            )
+        request = expr.Agg(
+            dtype,
+            "collect_list" if maintain_order else "collect_set",
             None,
             context,
             child,
         )
-        named_expr = named_expr.reconstruct(agg)
+        unique_result: expr.Expr = expr.Col(dtype, name)
+        if maintain_order:
+            unique_result = ListUnique(dtype, unique_result)
+        return [(named_expr.reconstruct(request), True)], named_expr.reconstruct(
+            unique_result
+        )
+    if context == ExecutionContext.GROUPBY and (
+        isinstance(agg, expr.Agg) or (is_top and agg.is_pointwise)
+    ):
+        unique_children = {
+            node
+            for node in agg.children
+            if isinstance(node, expr.UnaryFunction) and node.name == "unique"
+        }
+        if len(unique_children) == 1:
+            (unique,) = unique_children
+            if all(
+                node == unique or isinstance(node, expr.Literal)
+                for node in agg.children
+            ):
+                lists_aggs, lists = decompose_single_agg(
+                    expr.NamedExpr(next(name_generator), unique),
+                    name_generator,
+                    is_top=True,
+                    context=context,
+                )
+                if not lists_aggs:
+                    raise NotImplementedError(
+                        "Using unique of a literal expression inside a grouped expression"
+                    )
+                key_name, value_name, result_name = (
+                    next(name_generator) for _ in range(3)
+                )
+                key = expr.NamedExpr(key_name, expr.Col(DataType(pl.Int32()), key_name))
+                flat_value = expr.NamedExpr(
+                    value_name, expr.Col(unique.dtype, value_name)
+                )
+                operation = agg.reconstruct(
+                    [
+                        flat_value.value if node == unique else node
+                        for node in agg.children
+                    ]
+                )
+                if not isinstance(agg, expr.Agg):
+                    operation = expr.Agg(
+                        DataType(pl.List(agg.dtype.polars_type)),
+                        "implode",
+                        None,
+                        context,
+                        operation,
+                    )
+                requests, result = decompose_single_agg(
+                    expr.NamedExpr(result_name, operation),
+                    name_generator,
+                    is_top=True,
+                    context=context,
+                )
+                return lists_aggs, named_expr.reconstruct(
+                    ListReduction(
+                        operation.dtype,
+                        key,
+                        flat_value,
+                        tuple(ne for ne, _ in requests),
+                        result,
+                        lists.value,
+                    )
+                )
     if isinstance(agg, expr.Agg):
         if agg.name == "quantile":
             # Second child the requested quantile (which is asserted

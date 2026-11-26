@@ -19,9 +19,14 @@ export PYTEST_PLUGINS=repro_diagnostics
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
     CUDF_POLARS_FAULT_LIBRARY=$(mktemp /tmp/cudf-polars-fault.XXXXXX.so)
     export CUDF_POLARS_FAULT_LIBRARY
+    tracing=()
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-* ]]; then
+        tracing=(-DSTREAM_ORDER_TRACE -I/usr/local/cuda/include ci/arm64_polars_diagnostics/stream_order.c -ldl)
+        export CUDF_POLARS_STREAM_TRACE=1
+    fi
     conda run --no-capture-output --name fault-compiler aarch64-conda-linux-gnu-gcc \
         -std=c11 -Wall -Wextra -O2 -fPIC -shared \
-        ci/arm64_polars_diagnostics/fault_address.c -o "$CUDF_POLARS_FAULT_LIBRARY"
+        ci/arm64_polars_diagnostics/fault_address.c "${tracing[@]}" -o "$CUDF_POLARS_FAULT_LIBRARY"
 fi
 if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then
     # Coverage gates do not apply to the selected worker history.
@@ -43,7 +48,9 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-dask-datetime ]]; then
     export CUDF_POLARS_PACKAGE_RUN_ID=45690010190
     export CUDF_POLARS_EXPLICIT_ENV="$PWD/ci/arm64_polars_diagnostics/dask-datetime-arm64-explicit.txt"
     # The test runner sees a closed connection when a separate Dask worker faults.
-    export DASK_DISTRIBUTED__WORKER__PRELOAD='["dask_fault_preload"]'
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
+        export DASK_DISTRIBUTED__WORKER__PRELOAD='["dask_fault_preload"]'
+    fi
     if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
         compat_root=$(mktemp -d /tmp/cudf-cuda-compat.XXXXXX)
         compat_deb="$compat_root/cuda-compat.deb"

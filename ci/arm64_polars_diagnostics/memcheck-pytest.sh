@@ -42,11 +42,19 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-aggregation ]]; then
     cases=('tests/expressions/test_agg.py::test_agg[nulls-max-Int8-unsorted-spmd-small]')
     kernel_filters=("${packed_size_filters[@]}")
 fi
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-order-dask-datetime ]]; then
+    # Preserve allocation, event, and use edges across kernels and child workers.
+    kernel_filters=(--track-stream-ordered-races all --target-processes all)
+    cases=(
+        'tests/expressions/test_datetime_basic.py::test_datetime_truncate[spmd-small-dtype42-25h]'
+        'tests/expressions/test_datetime_basic.py::test_datetime_offset_by[dask-dtype18-3us]'
+    )
+fi
 result=0
 for node in "${cases[@]}"; do
-    name=${node%%::*}
-    name=${name##*/}
-    name=${name%.py}
+    name=${node##*::}
+    name=${name//\[/_}
+    name=${name//\]/}
     status=0
     "${sanitizer[@]}" "${kernel_filters[@]}" \
         --log-file "$CUDF_POLARS_DIAGNOSTICS_DIR/memcheck-$name.log" \

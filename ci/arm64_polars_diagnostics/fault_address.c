@@ -8,12 +8,17 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdint.h>
+#include <sys/syscall.h>
 #include <time.h>
 #include <ucontext.h>
 #include <unistd.h>
 
 static int report_fd;
 static struct sigaction previous;
+#ifdef STREAM_ORDER_TRACE
+uint64_t stream_trace_position(void);
+uint64_t stream_trace_write_failures(void);
+#endif
 
 static ssize_t write_field(char const* name, uintptr_t value)
 {
@@ -65,6 +70,14 @@ static void report_segv(int sig, siginfo_t* info, void* context)
   }
   (void)write_field("si_code", (uintptr_t)info->si_code);
   (void)write_field("address", info->si_code > 0 ? (uintptr_t)info->si_addr : 0);
+#ifdef STREAM_ORDER_TRACE
+  (void)write_field("tid", (uintptr_t)syscall(SYS_gettid));
+  if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+    (void)write_field("trace_monotonic_ns", (uintptr_t)now.tv_sec * 1000000000u + now.tv_nsec);
+  }
+  (void)write_field("trace_sequence", stream_trace_position());
+  (void)write_field("trace_write_failures", stream_trace_write_failures());
+#endif
 #if defined(__aarch64__)
   (void)write_field("pc", frame->uc_mcontext.pc);
   (void)write_field("lr", frame->uc_mcontext.regs[30]);

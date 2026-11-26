@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-archived-shuffle
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-stream-order
   cancel-in-progress: true
 
 jobs:
@@ -20,18 +20,18 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - shuffle-probe-01
-          - shuffle-probe-02
-          - shuffle-probe-03
-          - shuffle-probe-04
-          - shuffle-probe-05
-          - shuffle-probe-06
-          - shuffle-probe-07
-          - shuffle-probe-08
-          - shuffle-probe-09
-          - shuffle-probe-10
-          - shuffle-probe-11
-          - shuffle-probe-12
+          - order-reference
+          - sanitizer-order
+          - order-probe-03
+          - order-probe-04
+          - order-probe-05
+          - order-probe-06
+          - order-probe-07
+          - order-probe-08
+          - order-probe-09
+          - order-probe-10
+          - order-probe-11
+          - order-probe-12
     permissions:
       actions: read
       contents: read

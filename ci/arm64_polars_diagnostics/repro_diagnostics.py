@@ -7,6 +7,7 @@ import ctypes
 import inspect
 import os
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -135,6 +136,21 @@ def _install_fault_report(worker):
         error = ctypes.get_errno()
         os.close(fd)
         raise OSError(error, os.strerror(error), str(path))
+    if os.environ.get("CUDF_POLARS_STREAM_TRACE"):
+        prefix = Path(sys.prefix)
+        candidates = sorted(prefix.glob("lib/libcupti.so.13*")) + sorted(
+            prefix.glob("targets/*/lib/libcupti.so.13*")
+        )
+        cupti = os.fsencode(candidates[0] if candidates else "libcupti.so.13")
+        trace = _output / f"{worker}.stream.bin"
+        trace_fd = os.open(trace, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        status = reporter.install_stream_trace(
+            trace_fd, ctypes.c_char_p(cupti)
+        )
+        if status != 0:
+            raise RuntimeError(
+                f"CUPTI stream trace failed to start: status {status}"
+            )
     return reporter
 
 

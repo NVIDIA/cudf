@@ -32,7 +32,21 @@ driver_gpus=(
     GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
     GPU-c546a04e-2234-c700-68f5-02cc3997c685
 )
-if [[ "$trial" == shuffle-probe-* ]]; then
+if [[ "$trial" == order-reference ]]; then
+    trial=signal-order-dask-datetime
+elif [[ "$trial" == sanitizer-order ]]; then
+    trial=memcheck-order-dask-datetime
+elif [[ "$trial" == order-probe-* ]]; then
+    for gpu in "${driver_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
+            trial=signal-order-dask-datetime
+            if [[ "$gpu" == "$shuffle_gpu" ]]; then
+                trial=signal-order-frozen-shuffle
+            fi
+            break
+        fi
+    done
+elif [[ "$trial" == shuffle-probe-* ]]; then
     for gpu in "${shuffle_gpus[@]}"; do
         if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
             # Preserve the archived test schedule while capturing a native stack on recurrence.
@@ -62,7 +76,7 @@ elif [[ "$trial" == *-dask-datetime ]]; then
     target_gpus=("${dask_gpus[@]}")
 fi
 repeat=false
-if [[ "$trial" == signal-driver-dask-datetime ]]; then
+if [[ "$trial" == signal-driver-dask-datetime || "$trial" == signal-order-* ]]; then
     repeat=true
 else
     for target_gpu in "${target_gpus[@]}"; do
@@ -74,6 +88,7 @@ else
 fi
 if [[ "$repeat" == false &&
     ( "$trial" == probe-* ||
+        "$trial" == order-probe-* ||
         "$trial" == shuffle-probe-* ||
         "$trial" == gdb-[0-9][0-9] ||
         "$trial" == plain-[0-9][0-9] ||

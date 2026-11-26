@@ -270,3 +270,28 @@ def test_group_by_struct_of_literals_empty_frame(engine: pl.GPUEngine) -> None:
     df = pl.LazyFrame({"g": [10, 10, 20], "n": [1, 2, 3]}).head(0)
     q = df.group_by("g").agg(pl.struct(pl.lit(7).alias("lhs"), pl.lit(7).alias("rhs")))
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
+
+
+def test_struct_of_sliced_children(engine: pl.GPUEngine) -> None:
+    # Sorting first makes the slice a view with a non-zero offset.
+    df = (
+        pl.LazyFrame(
+            {
+                "k": [1, 1, 1, 2, 1, 2, 2, 2, 2, 1],
+                "a": [10, None, 30, 40, 50, 60, 20, 70, 90, 80],
+                "b": ["x", "y", None, "w", "v", "u", "t", "s", "r", "q"],
+                "c": [1.0, 5.0, 2.0, 9.0, 3.0, 4.0, 7.0, 1.5, 2.5, 8.0],
+            }
+        )
+        .sort("c")
+        .slice(2, 7)
+    )
+    q = df.select(pl.struct("a", "b", lit=pl.lit(7)))
+    assert_gpu_result_equal(q, engine=engine)
+
+    q_corr = df.group_by("k").agg(pl.corr("a", "c")).sort("k")
+    assert_gpu_result_equal(q_corr, engine=engine, check_exact=False)
+
+    # Exercises _StructCreate on a sliced Float64 column in streaming mode.
+    q_std = df.group_by("k").agg(pl.col("c").std()).sort("k")
+    assert_gpu_result_equal(q_std, engine=engine, check_exact=False)

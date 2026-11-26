@@ -96,9 +96,15 @@ class _StructCreate(Expr):
         # Strip null masks from all children.  MERGE_M2 uses count to decide
         # whether to read MEAN or M2: it skips rows where count=0, so the
         # underlying values at those positions are never used.
+        # libcudf ignores a struct child's own offset, so copy sliced children.
         return Column(
             plc.Column.struct_from_children(
-                [c.obj.with_mask(None, 0) for c in child_columns]
+                [
+                    (
+                        c.obj.copy(stream=df.stream) if c.obj.offset() != 0 else c.obj
+                    ).with_mask(None, 0)
+                    for c in child_columns
+                ]
             ),
             dtype=self.dtype,
         )

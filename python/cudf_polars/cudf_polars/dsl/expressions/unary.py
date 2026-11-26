@@ -1673,6 +1673,7 @@ class UnaryFunction(Expr):
                 target_length=max(non_unit_sizes) if non_unit_sizes else None,
                 stream=df.stream,
             )
+            # libcudf ignores a struct child's own offset, so copy sliced children.
             return Column(
                 plc.Column(
                     data_type=self.dtype.plc_type,
@@ -1681,7 +1682,10 @@ class UnaryFunction(Expr):
                     mask=None,
                     null_count=0,
                     offset=0,
-                    children=[c.obj for c in broadcasted],
+                    children=[
+                        c.obj.copy(stream=df.stream) if c.obj.offset() != 0 else c.obj
+                        for c in broadcasted
+                    ],
                 ),
                 dtype=self.dtype,
             )

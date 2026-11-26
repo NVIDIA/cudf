@@ -1579,6 +1579,50 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
   JNI_CATCH(env, 0);
 }
 
+JNIEXPORT jlongArray JNICALL
+Java_ai_rapids_cudf_ColumnView_transformColumns(JNIEnv* env,
+                                                jclass,
+                                                jlongArray j_input_handles,
+                                                jstring j_udf,
+                                                jboolean j_is_ptx,
+                                                jboolean j_is_null_aware,
+                                                jintArray j_output_type_ids,
+                                                jintArray j_output_scales,
+                                                jintArray j_output_nullabilities)
+{
+  JNI_NULL_CHECK(env, j_udf, "udf is null", nullptr);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    cudf::jni::native_jpointerArray<cudf::column_view> n_inputs(env, j_input_handles);
+    cudf::jni::native_jintArray n_type_ids(env, j_output_type_ids);
+    cudf::jni::native_jintArray n_scales(env, j_output_scales);
+    cudf::jni::native_jintArray n_nullabilities(env, j_output_nullabilities);
+    cudf::jni::native_jstring n_j_udf(env, j_udf);
+    std::string n_udf = n_j_udf;
+
+    auto const input_views = n_inputs.get_dereferenced();
+    std::vector<cudf::transform_input> inputs(input_views.begin(), input_views.end());
+    std::vector<cudf::transform_output> outputs;
+    outputs.reserve(n_type_ids.size());
+    for (int i = 0; i < n_type_ids.size(); i++) {
+      outputs.push_back({cudf::jni::make_data_type(n_type_ids[i], n_scales[i]),
+                         static_cast<cudf::output_nullability>(n_nullabilities[i])});
+    }
+    return cudf::jni::convert_table_for_return(
+      env,
+      cudf::transform(n_udf,
+                      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
+                      j_is_null_aware ? cudf::null_aware::YES : cudf::null_aware::NO,
+                      std::nullopt,
+                      inputs,
+                      outputs,
+                      {},
+                      std::nullopt));
+  }
+  JNI_CATCH(env, nullptr);
+}
+
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_stringStartWith(JNIEnv* env,
                                                                        jobject j_object,
                                                                        jlong j_view_handle,

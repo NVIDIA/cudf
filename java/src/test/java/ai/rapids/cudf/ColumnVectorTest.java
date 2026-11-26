@@ -307,6 +307,202 @@ public class ColumnVectorTest extends CudfTestBase {
     }
   }
 
+  private static Table transformColumns(String udf, boolean isNullAware, ColumnView[] inputs,
+      TransformOutput... outputs) {
+    return ColumnView.transform(inputs, udf, false, isNullAware, outputs);
+  }
+
+  @Test
+  void testTransformColumnsSingleInputMatchesInstanceTransform() {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3, null, 4);
+         Table fromPtx = ColumnView.transform(new ColumnView[]{cv}, ptx, true, false,
+             new TransformOutput(DType.INT32));
+         Table fromCuda = ColumnView.transform(new ColumnView[]{cv}, cuda, false, false,
+             new TransformOutput(DType.INT32));
+         ColumnVector expected = cv.transform(cuda, false)) {
+      assertColumnsAreEqual(expected, fromPtx.getColumn(0));
+      assertColumnsAreEqual(expected, fromCuda.getColumn(0));
+    }
+  }
+
+  @Test
+  void testTransformColumnsMultipleInputs() {
+    String udf = "__device__ inline void f(double* out, int a, long long b, double c) {" +
+        "*out = a + b * c;" +
+        "}";
+    String subtract = "__device__ inline void f(int* out, int a, int b) { *out = a - b; }";
+    try (ColumnVector a = ColumnVector.fromInts(1, -2, 3);
+         ColumnVector b = ColumnVector.fromLongs(10L, 20L, 1L << 40);
+         ColumnVector c = ColumnVector.fromDoubles(0.5, -0.25, 2.0);
+         ColumnVector x = ColumnVector.fromInts(10, 20);
+         ColumnVector y = ColumnVector.fromInts(1, 2);
+         Table result = transformColumns(udf, false, new ColumnView[]{a, b, c},
+             new TransformOutput(DType.FLOAT64));
+         Table xy = transformColumns(subtract, false, new ColumnView[]{x, y},
+             new TransformOutput(DType.INT32));
+         Table yx = transformColumns(subtract, false, new ColumnView[]{y, x},
+             new TransformOutput(DType.INT32));
+         ColumnVector expected = ColumnVector.fromDoubles(6.0, -7.0, 3.0 + (1L << 41));
+         ColumnVector expectedXy = ColumnVector.fromInts(9, 18);
+         ColumnVector expectedYx = ColumnVector.fromInts(-9, -18)) {
+      assertColumnsAreEqual(expected, result.getColumn(0));
+      assertColumnsAreEqual(expectedXy, xy.getColumn(0));
+      assertColumnsAreEqual(expectedYx, yx.getColumn(0));
+    }
+  }
+
+  @Test
+  void testTransformColumnsMultipleOutputs() {
+    String udf = "__device__ inline void f(long long* sum, double* half, bool* positive," +
+        " cudf::string_view* sign, int a, int b) {" +
+        "*sum = static_cast<long long>(a) + b;" +
+        "*half = a / 2.0;" +
+        "*positive = a > 0;" +
+        "*sign = a < 0 ? cudf::string_view{\"-\", 1} : cudf::string_view{\"+\", 1};" +
+        "}";
+    try (ColumnVector a = ColumnVector.fromInts(3, -4, Integer.MAX_VALUE);
+         ColumnVector b = ColumnVector.fromInts(1, 2, Integer.MAX_VALUE);
+         Table result = transformColumns(udf, false, new ColumnView[]{a, b},
+             new TransformOutput(DType.INT64), new TransformOutput(DType.FLOAT64),
+             new TransformOutput(DType.BOOL8), new TransformOutput(DType.STRING));
+         Table expected = new Table.TestBuilder()
+             .column(4L, -2L, 2L * Integer.MAX_VALUE)
+             .column(1.5, -2.0, Integer.MAX_VALUE / 2.0)
+             .column(true, false, true)
+             .column("+", "-", "+")
+             .build()) {
+      assertTablesAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformColumnsNullUnaware() {
+    String udf = "__device__ inline void f(int* out, int a, int b) { *out = a + b; }";
+    try (ColumnVector a = ColumnVector.fromBoxedInts(1, null, 3, null);
+         ColumnVector b = ColumnVector.fromBoxedInts(10, 20, null, null);
+         Table nullable = transformColumns(udf, false, new ColumnView[]{a, b},
+             new TransformOutput(DType.INT32, OutputNullability.PRESERVE));
+         Table allValid = transformColumns(udf, false, new ColumnView[]{a, b},
+             new TransformOutput(DType.INT32, OutputNullability.ALL_VALID));
+         ColumnVector expectedNullable = ColumnVector.fromBoxedInts(11, null, null, null);
+         HostColumnVector allValidHost = allValid.getColumn(0).copyToHost()) {
+      assertColumnsAreEqual(expectedNullable, nullable.getColumn(0));
+      // ALL_VALID: no mask even though the inputs have nulls. The UDF is called for every row,
+      // so only the rows without a null input have a defined value.
+      assertFalse(allValid.getColumn(0).hasValidityVector());
+      assertEquals(11, allValidHost.getInt(0));
+    }
+  }
+
+  @Test
+  void testTransformColumnsNullAware() {
+    // The first output is null when a is null or b is negative, including for rows where no
+    // input is null. The second output replaces a null a with -1 and is never null.
+    String udf = "__device__ inline void f(cuda::std::optional<long long>* product," +
+        " cuda::std::optional<int>* aOrDefault," +
+        " cuda::std::optional<int> a, cuda::std::optional<long long> b) {" +
+        "if (a.has_value() && b.has_value() && *b >= 0) { *product = *a * *b; }" +
+        "else { *product = cuda::std::nullopt; }" +
+        "*aOrDefault = a.value_or(-1);" +
+        "}";
+    try (ColumnVector a = ColumnVector.fromBoxedInts(2, null, 3, 4, null);
+         ColumnVector b = ColumnVector.fromBoxedLongs(10L, 10L, -1L, null, null);
+         Table result = transformColumns(udf, true, new ColumnView[]{a, b},
+             new TransformOutput(DType.INT64, OutputNullability.PRESERVE),
+             new TransformOutput(DType.INT32, OutputNullability.ALL_VALID));
+         ColumnVector expectedProduct = ColumnVector.fromBoxedLongs(20L, null, null, null, null);
+         ColumnVector expectedAOrDefault = ColumnVector.fromInts(2, -1, 3, 4, -1)) {
+      assertColumnsAreEqual(expectedProduct, result.getColumn(0));
+      assertColumnsAreEqual(expectedAOrDefault, result.getColumn(1));
+      assertFalse(result.getColumn(1).hasValidityVector());
+    }
+  }
+
+  @Test
+  void testTransformColumnsZeroRows() {
+    String udf = "__device__ inline void f(long long* out, int a, long long b) { *out = a + b; }";
+    try (ColumnVector a = ColumnVector.fromInts();
+         ColumnVector b = ColumnVector.fromLongs();
+         Table result = transformColumns(udf, false, new ColumnView[]{a, b},
+             new TransformOutput(DType.INT64))) {
+      assertEquals(0, result.getRowCount());
+      assertEquals(DType.INT64, result.getColumn(0).getType());
+    }
+  }
+
+  @Test
+  void testTransformColumnsUdfError() {
+    String udf = "__device__ inline int f(cuda::std::optional<int>* out," +
+        " cuda::std::optional<int> a, cuda::std::optional<int> b) {" +
+        "if (!a.has_value() || !b.has_value()) { *out = cuda::std::nullopt; return 0; }" +
+        "if (*b == 0) { return 2; }" +  // cudf::errc::DIVISION_BY_ZERO
+        "*out = *a / *b;" +
+        "return 0;" +
+        "}";
+    try (ColumnVector a = ColumnVector.fromBoxedInts(10, 20, null);
+         ColumnVector b = ColumnVector.fromBoxedInts(2, 4, 0);
+         ColumnVector zero = ColumnVector.fromBoxedInts(2, 0, 5);
+         Table result = transformColumns(udf, true, new ColumnView[]{a, b},
+             new TransformOutput(DType.INT32));
+         ColumnVector expected = ColumnVector.fromBoxedInts(5, 5, null)) {
+      assertColumnsAreEqual(expected, result.getColumn(0));
+      CudfException ex = assertThrows(CudfException.class, () ->
+          transformColumns(udf, true, new ColumnView[]{a, zero},
+              new TransformOutput(DType.INT32)).close());
+      assertTrue(ex.getMessage().contains("DIVISION_BY_ZERO"), ex.getMessage());
+    }
+  }
+
+  @Test
+  void testTransformColumnsReleasesDeviceMemory() {
+    String udf = "__device__ inline int f(int* out, int a, int b) {" +
+        "if (b == 0) { return 2; }" +
+        "*out = a / b;" +
+        "return 0;" +
+        "}";
+    try (ColumnVector a = ColumnVector.fromInts(10, 20, 30);
+         ColumnVector b = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector zero = ColumnVector.fromInts(1, 0, 3)) {
+      // The first call compiles the kernel; only the following calls are measured.
+      transformColumns(udf, false, new ColumnView[]{a, b}, new TransformOutput(DType.INT32))
+          .close();
+      long before = Rmm.getTotalBytesAllocated();
+      for (int i = 0; i < 10; i++) {
+        transformColumns(udf, false, new ColumnView[]{a, b}, new TransformOutput(DType.INT32))
+            .close();
+        assertThrows(CudfException.class, () ->
+            transformColumns(udf, false, new ColumnView[]{a, zero},
+                new TransformOutput(DType.INT32)).close());
+      }
+      assertEquals(before, Rmm.getTotalBytesAllocated());
+    }
+  }
+
+  @Test
+  void testTransformColumnsRejectsInvalidArguments() {
+    String udf = "__device__ inline void f(int* out, int a, int b) { *out = a + b; }";
+    TransformOutput int32 = new TransformOutput(DType.INT32);
+    try (ColumnVector a = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector shorter = ColumnVector.fromInts(1, 2);
+         ColumnVector list = ColumnVector.fromLists(
+             new ListType(true, new BasicType(true, DType.INT32)),
+             Arrays.asList(1, 2), Arrays.asList(3), Arrays.asList(4))) {
+      assertThrows(IllegalArgumentException.class, () ->
+          transformColumns(udf, false, new ColumnView[0], int32));
+      assertThrows(IllegalArgumentException.class, () ->
+          transformColumns(udf, false, new ColumnView[]{a, a}));
+      IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+          new TransformOutput(DType.LIST));
+      assertEquals("transform only supports fixed-width and STRING output types, got LIST",
+          ex.getMessage());
+      // Checked by libcudf.
+      assertThrows(CudfException.class, () ->
+          transformColumns(udf, false, new ColumnView[]{a, shorter}, int32).close());
+      assertThrows(CudfException.class, () ->
+          transformColumns(udf, false, new ColumnView[]{a, list}, int32).close());
+    }
+  }
+
   @Test
   void testDistinctCount() {
     try (ColumnVector cv = ColumnVector.fromBoxedLongs(5L, 3L, null, null, 5L)) {

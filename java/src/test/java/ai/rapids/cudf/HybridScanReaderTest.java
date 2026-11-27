@@ -5,7 +5,6 @@
 
 package ai.rapids.cudf;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -159,9 +158,10 @@ public class HybridScanReaderTest extends CudfTestBase {
         new ColumnNameReference("zip_code"), Literal.ofInt(150000));
     try (OpenReader open = OpenReader.standard(tmp);
          CompiledExpression jitFilter = expr.compileJit()) {
-      assertThatThrownBy(() -> open.reader.setFilter(jitFilter))
-          .isInstanceOf(CudfException.class)
-          .hasMessage("JIT-compiled expressions cannot be used by a default AST consumer");
+      CudfException e = assertThrows(CudfException.class,
+          () -> open.reader.setFilter(jitFilter));
+      assertEquals("JIT-compiled expressions cannot be used by a default AST consumer",
+          e.getMessage());
     }
   }
 

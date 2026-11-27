@@ -16,7 +16,8 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.stream.Stream;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.params.provider.Arguments.arguments;
 
 /**
@@ -115,9 +116,9 @@ public class JitConditionTest extends CudfTestBase {
   @MethodSource("joinCalls")
   void testJitConditionUnsupported(String name, JoinCall call) {
     try (Fixture f = new Fixture()) {
-      assertThatThrownBy(() -> closeResult(call.call(f)))
-          .isInstanceOf(CudfException.class)
-          .hasMessage("JIT-compiled expressions cannot be used by a default AST consumer");
+      CudfException e = assertThrows(CudfException.class, () -> closeResult(call.call(f)));
+      assertEquals("JIT-compiled expressions cannot be used by a default AST consumer",
+          e.getMessage());
     }
   }
 

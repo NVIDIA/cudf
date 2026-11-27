@@ -1226,6 +1226,54 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   }
 
   /**
+   * Transform one or more columns using a custom function that produces one or more columns.
+   * The UDF takes a pointer to each output, in the order of {@code outputs}, followed by the
+   * value of each input, in the order of {@code inputs}, for example
+   * {@code __device__ void f(double* out, int a, double b)}.  Output types are not checked
+   * against the UDF, as in {@link #transform(String, boolean, DType)}.
+   * <p>
+   * Without {@code isNullAware}, the UDF takes plain values.  If any output is
+   * {@link OutputNullability#PRESERVE}, the UDF is not called for rows where an input is null:
+   * those rows are null in the {@code PRESERVE} outputs and undefined in the others.  Otherwise
+   * the UDF is called for every row, including rows where an input is null.
+   * <p>
+   * With {@code isNullAware}, the outputs are {@code cuda::std::optional<T>*} and the inputs
+   * {@code cuda::std::optional<T>}; the UDF is called for every row and decides which are null.
+   * <p>
+   * The UDF may return an integer instead of {@code void}.  A non-zero value is read as a
+   * {@code cudf::errc}, and makes this method throw a {@link CudfException}.
+   * @param inputs the input columns, all with the same row count.  At least one is required.
+   * @param udf the function applied to every row
+   * @param isPtx is the code of the function ptx? true or C/C++ false.
+   * @param isNullAware whether the UDF takes and produces optional values
+   * @param outputs the type and nullability of each output column.  At least one is required.
+   * @return a table with one column per output, in the order of {@code outputs}
+   */
+  public static Table transform(ColumnView[] inputs, String udf, boolean isPtx,
+      boolean isNullAware, TransformOutput... outputs) {
+    if (inputs == null || inputs.length == 0) {
+      throw new IllegalArgumentException("transform requires at least one input column");
+    }
+    if (outputs == null || outputs.length == 0) {
+      throw new IllegalArgumentException("transform requires at least one output");
+    }
+    long[] inputHandles = new long[inputs.length];
+    for (int i = 0; i < inputs.length; i++) {
+      inputHandles[i] = inputs[i].getNativeView();
+    }
+    int[] outputTypeIds = new int[outputs.length];
+    int[] outputScales = new int[outputs.length];
+    int[] outputNullabilities = new int[outputs.length];
+    for (int i = 0; i < outputs.length; i++) {
+      outputTypeIds[i] = outputs[i].getType().getTypeId().getNativeId();
+      outputScales[i] = outputs[i].getType().getScale();
+      outputNullabilities[i] = outputs[i].getNullability().nativeId;
+    }
+    return new Table(transformColumns(inputHandles, udf, isPtx, isNullAware, outputTypeIds,
+        outputScales, outputNullabilities));
+  }
+
+  /**
    * Multiple different unary operations. The output is the same type as input.
    * @param op      the operation to perform
    * @return the result
@@ -5280,6 +5328,9 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long transform(long viewHandle, String udf, boolean isPtx,
       int outputTypeId, int outputScale, boolean hasUserData, long userDataAddress,
       long stringOffsetsViewHandle);
+
+  private static native long[] transformColumns(long[] inputHandles, String udf, boolean isPtx,
+      boolean isNullAware, int[] outputTypeIds, int[] outputScales, int[] outputNullabilities);
 
   private static native long clamper(long nativeView, long loScalarHandle, long loScalarReplaceHandle,
                                      long hiScalarHandle, long hiScalarReplaceHandle);

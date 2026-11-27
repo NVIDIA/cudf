@@ -75,6 +75,7 @@
 #include <array>
 #include <numeric>
 #include <utility>
+#include <vector>
 
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
@@ -1557,7 +1558,10 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
                                                                  jboolean j_null_aware,
                                                                  jboolean j_indexed,
                                                                  jint j_dtype,
-                                                                 jint j_scale)
+                                                                 jint j_scale,
+                                                                 jboolean j_has_user_data,
+                                                                 jlong j_user_data,
+                                                                 jlong j_string_offsets)
 {
   JNI_NULL_CHECK(env, j_symbol, "UDF symbol is null", 0);
   JNI_NULL_CHECK(env, j_modules, "UDF modules are null", 0);
@@ -1584,7 +1588,19 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
       env->DeleteLocalRef(module_array);
       fragments.push_back({static_cast<cudf::lto_binary_type>(binary_types[i]), modules.back()});
     }
-    cudf::transform_input inputs[] = {*column};
+    std::vector<cudf::transform_input> inputs;
+    // An empty buffer can have a null address and must still be passed to the UDF.
+    if (j_has_user_data) {
+      inputs.emplace_back(cudf::user_data{reinterpret_cast<void*>(j_user_data)});
+    }
+    inputs.emplace_back(*column);
+    // The result owns its offsets. Copy without the all-valid mask checked by the Java layer.
+    std::vector<std::unique_ptr<cudf::column>> string_offsets;
+    if (j_string_offsets != 0) {
+      auto const& offsets = *reinterpret_cast<cudf::column_view*>(j_string_offsets);
+      string_offsets.push_back(std::make_unique<cudf::column>(cudf::column_view{
+        offsets.type(), offsets.size(), offsets.head(), nullptr, 0, offsets.offset()}));
+    }
     return release_as_jlong(
       std::move(cudf::transform(
                   cudf::transform_udf{n_symbol,
@@ -1594,7 +1610,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
                   inputs,
                   std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
                                                     cudf::output_nullability::PRESERVE}},
-                  {},
+                  std::move(string_offsets),
                   std::nullopt)
                   ->release()
                   .front()));

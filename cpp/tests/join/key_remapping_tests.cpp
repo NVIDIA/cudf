@@ -23,6 +23,7 @@
 #include <rmm/mr/statistics_resource_adaptor.hpp>
 
 #include <algorithm>
+#include <numeric>
 #include <set>
 #include <vector>
 
@@ -114,9 +115,10 @@ struct KeyRemappingTest : public cudf::test::BaseFixture {
     // Number of unique non-negative IDs should equal distinct key count
     EXPECT_EQ(static_cast<cudf::size_type>(unique_ids.size()), expected_distinct_count);
 
-    // All non-negative IDs should be valid (non-negative)
+    // All IDs should be sentinels or in [0, keys.num_rows())
     for (auto id : host_ids) {
       EXPECT_TRUE(id >= 0 || id == cudf::KEY_REMAP_NOT_FOUND || id == cudf::KEY_REMAP_RIGHT_NULL);
+      EXPECT_LT(id, keys.num_rows());
     }
   }
 
@@ -323,6 +325,7 @@ TEST_F(KeyRemappingTest, NullsUnequal)
 
   auto right_result = remap.remap_right_keys();
   auto host_ids     = to_host<int32_t>(*right_result);
+  verify_remapping_contract(right_table, *right_result, 2);
 
   // Rows with key=2 should have same ID
   EXPECT_EQ(host_ids[1], host_ids[3]);
@@ -405,23 +408,24 @@ TEST_F(KeyRemappingTest, AllDuplicates)
 
 TEST_F(KeyRemappingTest, AllUnique)
 {
-  column_wrapper<int32_t> right_col{1, 2, 3, 4, 5};
-  auto right_table = cudf::table_view{{right_col}};
+  // A slice with a nonzero offset that spans several thread blocks
+  std::vector<int32_t> data(10000);
+  std::iota(data.begin(), data.end(), 0);
+  column_wrapper<int32_t> right_col(data.begin(), data.end());
+  auto right_table = cudf::table_view{{cudf::slice(right_col, {100, 10000})[0]}};
 
   cudf::key_remapping remap{right_table};
 
-  EXPECT_EQ(remap.get_distinct_count(), 5);
+  EXPECT_EQ(remap.get_distinct_count(), 9900);
   EXPECT_EQ(remap.get_max_duplicate_count(), 1);
 
   auto right_result = remap.remap_right_keys();
   auto host_ids     = to_host<int32_t>(*right_result);
 
-  // All IDs should be unique and non-negative
-  std::set<int32_t> unique_ids(host_ids.begin(), host_ids.end());
-  EXPECT_EQ(unique_ids.size(), 5u);
-  for (auto id : host_ids) {
-    EXPECT_GE(id, 0);
-  }
+  // No duplicate keys: the ID of each key is its row index
+  std::vector<int32_t> expected(right_table.num_rows());
+  std::iota(expected.begin(), expected.end(), 0);
+  EXPECT_EQ(host_ids, expected);
 }
 
 TEST_F(KeyRemappingTest, LargeTable)
@@ -804,6 +808,7 @@ TEST_F(KeyRemappingTest, MetricsDisabledRemapStillWorks)
   // Remap right keys
   auto right_result = remap.remap_right_keys();
   auto right_ids    = to_host<int32_t>(right_result->view());
+  verify_remapping_contract(right_table, *right_result, 3);
 
   // Equal keys should have equal IDs
   EXPECT_EQ(right_ids[1], right_ids[2]);  // Both 20s

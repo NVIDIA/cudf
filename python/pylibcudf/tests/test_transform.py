@@ -104,7 +104,6 @@ def test_one_hot_encode():
 # compiled = op_ptx.compile_device((float64, float64, float64), return_type=float64)
 # ptx = compiled.library.get_asm_str(cc=(7, 0))  # Target sm_70
 # ```
-# match the CUDF ABI for this non-indexed, non-null-aware function.
 _TRANSFORM_UDF_PTX_SYMBOL = "op"
 _TRANSFORM_UDF_PTX = b"""\
 //
@@ -120,7 +119,7 @@ _TRANSFORM_UDF_PTX = b"""\
 .address_size 64
 
 // .globl	op
-.common .global .align 8 .u64 op;
+.common .global .align 8 .u64 NumbaEnv_op;
 .visible .func  (.param .b32 func_retval0) op(
 	.param .b64 op_param_0,
 	.param .b64 op_param_1,
@@ -174,7 +173,7 @@ _MULTI_OUTPUT_UDF_PTX = b"""\
 .address_size 64
 
 // .globl	op
-.common .global .align 8 .u64 op;
+.common .global .align 8 .u64 NumbaEnv_op;
 .visible .func  (.param .b32 func_retval0) op(
 	.param .b64 op_param_0,
 	.param .b64 op_param_1,

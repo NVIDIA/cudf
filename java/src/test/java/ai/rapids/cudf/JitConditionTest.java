@@ -14,6 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -25,11 +26,6 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
  * {@link ai.rapids.cudf.ast.AstExpression#compileJit()}.
  */
 public class JitConditionTest extends CudfTestBase {
-  @FunctionalInterface
-  private interface JoinCall {
-    Object call(Fixture f);
-  }
-
   private static Stream<Arguments> joinCalls() {
     return Stream.of(
         call("conditionalLeftJoinRowCount",
@@ -108,15 +104,15 @@ public class JitConditionTest extends CudfTestBase {
         }));
   }
 
-  private static Arguments call(String name, JoinCall call) {
+  private static Arguments call(String name, Function<Fixture, Object> call) {
     return arguments(name, call);
   }
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("joinCalls")
-  void testJitConditionUnsupported(String name, JoinCall call) {
+  void testJitConditionUnsupported(String name, Function<Fixture, Object> call) {
     try (Fixture f = new Fixture()) {
-      CudfException e = assertThrows(CudfException.class, () -> closeResult(call.call(f)));
+      CudfException e = assertThrows(CudfException.class, () -> closeResult(call.apply(f)));
       assertEquals("JIT-compiled expressions cannot be used by a default AST consumer",
           e.getMessage());
     }

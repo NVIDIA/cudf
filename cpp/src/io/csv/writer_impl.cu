@@ -52,6 +52,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <sstream>

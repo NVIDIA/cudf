@@ -241,8 +241,9 @@ struct transform_program {
  * `row_size` is not provided. This is because the row size cannot be inferred from the inputs in
  * this case.
  * @throws std::invalid_argument if any of the output or input types are not supported.
- * Supported input types are fixed-width, string, their dictionary types, and, `user_data`.
- * Supported output types are fixed-width and string.
+ * Supported input types are fixed-width, string, their dictionary types, and `user_data`.
+ * Supported output types are fixed-width and string. String outputs are `cudf::string_view`, or
+ * `cudf::mutable_string_view` when that output's `string_offsets` entry is non-null.
  * @throws std::invalid_argument if string offsets are provided for non-string output columns, or
  * if a nonempty string-offset vector does not match the number of output columns.
  * @throws std::runtime_error if JIT compilation or linking fails.

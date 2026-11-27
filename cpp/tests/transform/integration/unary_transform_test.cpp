@@ -679,6 +679,58 @@ TEST_F(StringOperationTest, OutputNullAware)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(input, result->get_column(0));
 }
 
+TEST_F(StringOperationTest, OutputPtx)
+{
+  auto input = cudf::test::strings_column_wrapper{{"abcdef", "ignored", "", "xy", "123"},
+                                                  {true, false, true, true, true}};
+
+  // Compiled with `nvcc -arch=sm_75 -rdc=true -ptx -O3`, then retargeted to sm_70:
+  //
+  // extern "C" __device__ int prefix3(cudf::string_view* output, cudf::string_view input)
+  // {
+  //   auto const size = input.size_bytes() < 3 ? input.size_bytes() : 3;
+  //   *output         = cudf::string_view{input.data(), size};
+  //   return 0;
+  // }
+  std::string const ptx = R"***(
+.version 6.3
+.target sm_70
+.address_size 64
+
+.visible .func  (.param .b32 func_retval0) prefix3(
+	.param .b64 prefix3_param_0,
+	.param .align 8 .b8 prefix3_param_1[16]
+)
+{
+	.reg .b32 	%r<7>;
+	.reg .b64 	%rd<3>;
+
+	ld.param.u64 	%rd1, [prefix3_param_0];
+	ld.param.v2.u32 	{%r1, %r2}, [prefix3_param_1+8];
+	ld.param.u64 	%rd2, [prefix3_param_1];
+	st.u64 	[%rd1], %rd2;
+	min.s32 	%r4, %r1, 3;
+	mov.u32 	%r5, 0;
+	mov.u32 	%r6, -1;
+	st.v2.u32 	[%rd1+8], {%r4, %r6};
+	st.param.b32 	[func_retval0+0], %r5;
+	ret;
+}
+)***";
+
+  cudf::transform_input inputs[]   = {input};
+  cudf::transform_output outputs[] = {
+    {cudf::data_type{cudf::type_id::STRING}, cudf::output_nullability::PRESERVE}};
+  cudf::lto_fragment const fragment{cudf::lto_binary_type::PTX,
+                                    {reinterpret_cast<uint8_t const*>(ptx.data()), ptx.size()}};
+  auto result = cudf::transform(
+    cudf::transform_udf{"prefix3", {&fragment, 1}}, inputs, outputs, {}, std::nullopt);
+
+  auto expected = cudf::test::strings_column_wrapper{{"abc", "", "", "xy", "123"},
+                                                     {true, false, true, true, true}};
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0));
+}
+
 TEST_F(StringOperationTest, OutputOffsetted)
 {
   auto a = cudf::test::strings_column_wrapper{"x", "xx", "xxx", "xxxx", "xxxxx", "xxxxxx"};

@@ -1117,19 +1117,23 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /**
    * Transform a vector using a precompiled custom function. Be careful this is not
    * simple to do.  You need to be positive you know what type of data you are
-   * processing and how the data is laid out.  This also only works on fixed
-   * length output types. The output type and scale must match the UDF's output parameter.
+   * processing and how the data is laid out. Only fixed-width and STRING output types are
+   * supported. The output type and scale must match the UDF's output parameter.
+   * For DECIMAL outputs the output parameter is a {@code numeric::decimal32/64/128} pointer;
+   * only its unscaled value is stored, so the UDF must produce it at outputType's scale.
+   * For STRING outputs the output parameter is a {@code cudf::string_view} pointer to device
+   * memory, e.g. a slice of a STRING input; its characters are copied into the result column.
    * @param udf the function applied to every element in the vector; see {@link TransformUDF}
    *            for the UDF contract
    * @param outputType the type of the output column
-   * @throws IllegalArgumentException if outputType is not a fixed-width type
+   * @throws IllegalArgumentException if outputType is neither a fixed-width type nor STRING
    */
   public final ColumnVector transform(TransformUDF udf, DType outputType) {
     Objects.requireNonNull(udf, "udf");
     Objects.requireNonNull(outputType, "outputType");
-    if (outputType.getSizeInBytes() == 0) {
+    if (outputType.getSizeInBytes() == 0 && !outputType.equals(DType.STRING)) {
       throw new IllegalArgumentException(
-          "transform only supports fixed-width output types, got " + outputType);
+          "transform only supports fixed-width and STRING output types, got " + outputType);
     }
     LtoFragment[] fragments = udf.getFragments();
     byte[][] modules = new byte[fragments.length][];

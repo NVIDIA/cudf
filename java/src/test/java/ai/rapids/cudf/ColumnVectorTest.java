@@ -125,6 +125,441 @@ public class ColumnVectorTest extends CudfTestBase {
       "*output = input*input - input;" +
       "}";
 
+  // The string output tests format INT32 values in [0, 100) as decimal digits, so the UDF writes
+  // new characters, one or two per row.
+  private static final int DIGITS_SLOT_SIZE = 2;
+
+  private static ColumnVector digitsInput() {
+    return ColumnVector.fromBoxedInts(7, 42, null, 0, 99);
+  }
+
+  /** Asserts the result has the digits of the input, and its characters have no gaps. */
+  private static void assertDigitsResult(ColumnVector result) {
+    try (ColumnVector expected = ColumnVector.fromStrings("7", "42", null, "0", "99")) {
+      assertColumnsAreEqual(expected, result);
+      assertEquals(expected.getData().getLength(), result.getData().getLength());
+    }
+  }
+
+  private static ColumnVector transformWithUserDataScratch(ColumnView input, String udf,
+      boolean isPtx) {
+    try (DeviceMemoryBuffer scratch =
+             DeviceMemoryBuffer.allocate(input.getRowCount() * DIGITS_SLOT_SIZE)) {
+      return input.transform(udf, isPtx, DType.STRING, scratch, null);
+    }
+  }
+
+  /** Writes the digits into the row's slot of the user data, as scratch space. */
+  private static final String DIGITS_SCRATCH_UDF = "__device__ inline void f(" +
+      "void* user_data," +
+      "cudf::size_type row," +
+      "cudf::string_view* output," +
+      "int input" +
+      "){" +
+      "char* slot = static_cast<char*>(user_data) + row * " + DIGITS_SLOT_SIZE + ";" +
+      "int size = 0;" +
+      "if (input >= 10) { slot[size++] = '0' + input / 10; }" +
+      "slot[size++] = '0' + input % 10;" +
+      "*output = cudf::string_view{slot, size};" +
+      "}";
+
+  /** Writes the digits into the row's slot of the result, sized by preallocated offsets. */
+  private static final String DIGITS_WRITE_UDF = "__device__ inline void f(" +
+      "cudf::mutable_string_view* output," +
+      "int input" +
+      "){" +
+      "char* out = output->data();" +
+      "if (input >= 10) { *out++ = '0' + input / 10; }" +
+      "*out = '0' + input % 10;" +
+      "}";
+
+  /** Computes the STRING output sizes of the digits UDFs. */
+  private static final String DIGITS_SIZE_UDF = "__device__ inline void f(" +
+      "int* output," +
+      "int input" +
+      "){" +
+      "*output = input >= 10 ? 2 : 1;" +
+      "}";
+
+  /** Builds the offsets of a STRING output from the output sizes computed by sizeUdf. */
+  private static ColumnVector stringOffsets(ColumnView input, String sizeUdf, boolean isPtx) {
+    try (ColumnVector sizes = input.transform(sizeUdf, isPtx, DType.INT32);
+         Scalar zero = Scalar.fromInt(0);
+         // The UDF is not called for null rows; their slots must be empty.
+         ColumnVector nonNullSizes = sizes.replaceNulls(zero);
+         ColumnVector ends = nonNullSizes.scan(ScanAggregation.sum(), ScanType.INCLUSIVE);
+         ColumnVector start = ColumnVector.fromInts(0)) {
+      return ColumnVector.concatenate(start, ends);
+    }
+  }
+
+  /** Computes the output sizes with sizeUdf, then writes the output with writeUdf. */
+  private static ColumnVector transformWithStringOffsets(ColumnView input, String sizeUdf,
+      String writeUdf, boolean isPtx) {
+    try (ColumnVector offsets = stringOffsets(input, sizeUdf, isPtx)) {
+      return input.transform(writeUdf, isPtx, DType.STRING, null, offsets);
+    }
+  }
+
+  @Test
+  void testTransformVectorStringOutputUserDataScratch() {
+    try (ColumnVector cv = digitsInput();
+         ColumnVector result = transformWithUserDataScratch(cv, DIGITS_SCRATCH_UDF, false)) {
+      assertDigitsResult(result);
+    }
+  }
+
+  @Test
+  void testTransformVectorPtxStringOutputUserDataScratch() {
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int digits_scratch(void* user_data, cudf::size_type row,
+    //                                            cudf::string_view* output, int input) {
+    //     char* slot = static_cast<char*>(user_data) + row * 2;
+    //     int size = 0;
+    //     if (input >= 10) { slot[size++] = static_cast<char>(48 + input / 10); }
+    //     slot[size++] = static_cast<char>(48 + input % 10);
+    //     *output = cudf::string_view{slot, size};
+    //     return 0;
+    //   }
+    String udf =
+        ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) digits_scratch(\n" +
+        "\t.param .b64 digits_scratch_param_0,\n" +
+        "\t.param .b32 digits_scratch_param_1,\n" +
+        "\t.param .b64 digits_scratch_param_2,\n" +
+        "\t.param .b32 digits_scratch_param_3\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .pred \t%p<2>;\n" +
+        "\t.reg .b16 \t%rs<5>;\n" +
+        "\t.reg .b32 \t%r<17>;\n" +
+        "\t.reg .b64 \t%rd<9>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd3, [digits_scratch_param_0];\n" +
+        "\tld.param.u32 \t%r4, [digits_scratch_param_1];\n" +
+        "\tld.param.u64 \t%rd2, [digits_scratch_param_2];\n" +
+        "\tld.param.u32 \t%r2, [digits_scratch_param_3];\n" +
+        "\tshl.b32 \t%r5, %r4, 1;\n" +
+        "\tcvt.s64.s32 \t%rd4, %r5;\n" +
+        "\tadd.s64 \t%rd1, %rd3, %rd4;\n" +
+        "\tsetp.lt.s32 \t%p1, %r2, 10;\n" +
+        "\tmov.u32 \t%r3, 0;\n" +
+        "\tmov.u32 \t%r16, %r3;\n" +
+        "\t@%p1 bra \t$L__BB0_2;\n" +
+        "\n" +
+        "\tmul.wide.u32 \t%rd5, %r2, -858993459;\n" +
+        "\tshr.u64 \t%rd6, %rd5, 35;\n" +
+        "\tcvt.u16.u64 \t%rs1, %rd6;\n" +
+        "\tadd.s16 \t%rs2, %rs1, 48;\n" +
+        "\tst.u8 \t[%rd1], %rs2;\n" +
+        "\tmov.u32 \t%r16, 1;\n" +
+        "\n" +
+        "$L__BB0_2:\n" +
+        "\tmul.hi.s32 \t%r7, %r2, 1717986919;\n" +
+        "\tshr.u32 \t%r8, %r7, 31;\n" +
+        "\tshr.u32 \t%r9, %r7, 2;\n" +
+        "\tadd.s32 \t%r10, %r9, %r8;\n" +
+        "\tmul.lo.s32 \t%r11, %r10, 10;\n" +
+        "\tsub.s32 \t%r12, %r2, %r11;\n" +
+        "\tcvt.u16.u32 \t%rs3, %r12;\n" +
+        "\tadd.s16 \t%rs4, %rs3, 48;\n" +
+        "\tcvt.u64.u32 \t%rd7, %r16;\n" +
+        "\tadd.s64 \t%rd8, %rd1, %rd7;\n" +
+        "\tst.u8 \t[%rd8], %rs4;\n" +
+        "\tst.u64 \t[%rd2], %rd1;\n" +
+        "\tadd.s32 \t%r13, %r16, 1;\n" +
+        "\tmov.u32 \t%r15, -1;\n" +
+        "\tst.v2.u32 \t[%rd2+8], {%r13, %r15};\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r3;\n" +
+        "\tret;\n" +
+        "\n" +
+        "}\n";
+    try (ColumnVector cv = digitsInput();
+         ColumnVector result = transformWithUserDataScratch(cv, udf, true)) {
+      assertDigitsResult(result);
+    }
+  }
+
+  @Test
+  void testTransformVectorStringOutputStringOffsets() {
+    try (ColumnVector cv = digitsInput();
+         ColumnVector result =
+             transformWithStringOffsets(cv, DIGITS_SIZE_UDF, DIGITS_WRITE_UDF, false)) {
+      assertDigitsResult(result);
+    }
+  }
+
+  @Test
+  void testTransformVectorStringOutputEmptyInput() {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts();
+         ColumnVector scratchResult = transformWithUserDataScratch(cv, DIGITS_SCRATCH_UDF, false);
+         ColumnVector offsetsResult =
+             transformWithStringOffsets(cv, DIGITS_SIZE_UDF, DIGITS_WRITE_UDF, false);
+         ColumnVector expected = ColumnVector.fromStrings()) {
+      assertColumnsAreEqual(expected, scratchResult);
+      assertColumnsAreEqual(expected, offsetsResult);
+    }
+  }
+
+  @Test
+  void testTransformVectorStringOutputSlicedInputAndOffsets() {
+    try (ColumnVector padded = ColumnVector.fromBoxedInts(1, 7, 42, null, 0, 99, 5)) {
+      ColumnView[] inputs = padded.splitAsViews(1, 6);
+      try {
+        ColumnView input = inputs[1];
+        try (ColumnVector scratchResult =
+                 transformWithUserDataScratch(input, DIGITS_SCRATCH_UDF, false);
+             ColumnVector offsets = stringOffsets(input, DIGITS_SIZE_UDF, false);
+             ColumnVector before = ColumnVector.fromInts(-1);
+             ColumnVector after = ColumnVector.fromInts(-1);
+             ColumnVector paddedOffsets = ColumnVector.concatenate(before, offsets, after)) {
+          assertDigitsResult(scratchResult);
+          ColumnView[] slicedOffsets =
+              paddedOffsets.splitAsViews(1, 1 + (int) offsets.getRowCount());
+          try (ColumnVector offsetsResult =
+                   input.transform(DIGITS_WRITE_UDF, false, DType.STRING, null, slicedOffsets[1])) {
+            assertDigitsResult(offsetsResult);
+          } finally {
+            for (ColumnView view : slicedOffsets) {
+              view.close();
+            }
+          }
+        }
+      } finally {
+        for (ColumnView view : inputs) {
+          view.close();
+        }
+      }
+    }
+  }
+
+  @Test
+  void testTransformVectorStringOutputStringOffsetsWithUserData() {
+    // The user data is a lookup table, mapping each digit to a letter.
+    String writeUdf = "__device__ inline void f(" +
+        "void* user_data," +
+        "cudf::size_type row," +
+        "cudf::mutable_string_view* output," +
+        "int input" +
+        "){" +
+        "char const* letters = static_cast<char const*>(user_data);" +
+        "char* out = output->data();" +
+        "if (input >= 10) { *out++ = letters[input / 10]; }" +
+        "*out = letters[input % 10];" +
+        "}";
+    try (ColumnVector cv = digitsInput();
+         ColumnVector letters = ColumnVector.fromBytes(
+             "abcdefghij".getBytes(StandardCharsets.US_ASCII));
+         ColumnVector offsets = stringOffsets(cv, DIGITS_SIZE_UDF, false);
+         ColumnVector result =
+             cv.transform(writeUdf, false, DType.STRING, letters.getData(), offsets);
+         ColumnVector expected = ColumnVector.fromStrings("h", "ec", null, "a", "jj")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  /**
+   * PTX of {@link #DIGITS_SIZE_UDF}.  Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then
+   * retargeted to the PTX version and target used by the other PTX tests:
+   * <pre>
+   *   extern "C" __device__ int digits_size(int* output, int input) {
+   *     *output = input &gt;= 10 ? 2 : 1;
+   *     return 0;
+   *   }
+   * </pre>
+   */
+  private static final String DIGITS_SIZE_PTX =
+      ".version 6.3\n" +
+      ".target sm_70\n" +
+      ".address_size 64\n" +
+      "\n" +
+      ".visible .func  (.param .b32 func_retval0) digits_size(\n" +
+      "\t.param .b64 digits_size_param_0,\n" +
+      "\t.param .b32 digits_size_param_1\n" +
+      ")\n" +
+      "{\n" +
+      "\t.reg .pred \t%p<2>;\n" +
+      "\t.reg .b32 \t%r<4>;\n" +
+      "\t.reg .b64 \t%rd<2>;\n" +
+      "\n" +
+      "\tld.param.u64 \t%rd1, [digits_size_param_0];\n" +
+      "\tld.param.u32 \t%r1, [digits_size_param_1];\n" +
+      "\tsetp.gt.s32 \t%p1, %r1, 9;\n" +
+      "\tselp.b32 \t%r2, 2, 1, %p1;\n" +
+      "\tst.u32 \t[%rd1], %r2;\n" +
+      "\tmov.u32 \t%r3, 0;\n" +
+      "\tst.param.b32 \t[func_retval0+0], %r3;\n" +
+      "\tret;\n" +
+      "\n" +
+      "}\n";
+
+  @Test
+  void testTransformVectorPtxStringOutputStringOffsets() {
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int digits_write(cudf::mutable_string_view* output, int input) {
+    //     char* out = output->data();
+    //     if (input >= 10) { *out++ = static_cast<char>(48 + input / 10); }
+    //     *out = static_cast<char>(48 + input % 10);
+    //     return 0;
+    //   }
+    String writeUdf =
+        ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) digits_write(\n" +
+        "\t.param .b64 digits_write_param_0,\n" +
+        "\t.param .b32 digits_write_param_1\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .pred \t%p<2>;\n" +
+        "\t.reg .b16 \t%rs<5>;\n" +
+        "\t.reg .b32 \t%r<9>;\n" +
+        "\t.reg .b64 \t%rd<8>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd4, [digits_write_param_0];\n" +
+        "\tld.param.u32 \t%r1, [digits_write_param_1];\n" +
+        "\tld.u64 \t%rd7, [%rd4];\n" +
+        "\tsetp.lt.s32 \t%p1, %r1, 10;\n" +
+        "\t@%p1 bra \t$L__BB0_2;\n" +
+        "\n" +
+        "\tmul.wide.u32 \t%rd5, %r1, -858993459;\n" +
+        "\tshr.u64 \t%rd6, %rd5, 35;\n" +
+        "\tcvt.u16.u64 \t%rs1, %rd6;\n" +
+        "\tadd.s16 \t%rs2, %rs1, 48;\n" +
+        "\tadd.s64 \t%rd2, %rd7, 1;\n" +
+        "\tst.u8 \t[%rd7], %rs2;\n" +
+        "\tmov.u64 \t%rd7, %rd2;\n" +
+        "\n" +
+        "$L__BB0_2:\n" +
+        "\tmul.hi.s32 \t%r2, %r1, 1717986919;\n" +
+        "\tshr.u32 \t%r3, %r2, 31;\n" +
+        "\tshr.u32 \t%r4, %r2, 2;\n" +
+        "\tadd.s32 \t%r5, %r4, %r3;\n" +
+        "\tmul.lo.s32 \t%r6, %r5, 10;\n" +
+        "\tsub.s32 \t%r7, %r1, %r6;\n" +
+        "\tcvt.u16.u32 \t%rs3, %r7;\n" +
+        "\tadd.s16 \t%rs4, %rs3, 48;\n" +
+        "\tst.u8 \t[%rd7], %rs4;\n" +
+        "\tmov.u32 \t%r8, 0;\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r8;\n" +
+        "\tret;\n" +
+        "\n" +
+        "}\n";
+    try (ColumnVector cv = digitsInput();
+         ColumnVector result = transformWithStringOffsets(cv, DIGITS_SIZE_PTX, writeUdf, true)) {
+      assertDigitsResult(result);
+    }
+  }
+
+  @Test
+  void testTransformVectorPtxStringOutputStringOffsetsWithUserData() {
+    // The user data is a lookup table, mapping each digit to a letter.
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int letters_write(void* user_data, cudf::size_type row,
+    //                                           cudf::mutable_string_view* output, int input) {
+    //     char const* letters = static_cast<char const*>(user_data);
+    //     char* out = output->data();
+    //     if (input >= 10) { *out++ = letters[input / 10]; }
+    //     *out = letters[input % 10];
+    //     return 0;
+    //   }
+    String writeUdf =
+        ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) letters_write(\n" +
+        "\t.param .b64 letters_write_param_0,\n" +
+        "\t.param .b32 letters_write_param_1,\n" +
+        "\t.param .b64 letters_write_param_2,\n" +
+        "\t.param .b32 letters_write_param_3\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .pred \t%p<2>;\n" +
+        "\t.reg .b16 \t%rs<3>;\n" +
+        "\t.reg .b32 \t%r<9>;\n" +
+        "\t.reg .b64 \t%rd<12>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd4, [letters_write_param_0];\n" +
+        "\tld.param.u64 \t%rd5, [letters_write_param_2];\n" +
+        "\tld.param.u32 \t%r1, [letters_write_param_3];\n" +
+        "\tld.u64 \t%rd11, [%rd5];\n" +
+        "\tsetp.lt.s32 \t%p1, %r1, 10;\n" +
+        "\t@%p1 bra \t$L__BB0_2;\n" +
+        "\n" +
+        "\tmul.wide.u32 \t%rd6, %r1, -858993459;\n" +
+        "\tshr.u64 \t%rd7, %rd6, 35;\n" +
+        "\tadd.s64 \t%rd8, %rd4, %rd7;\n" +
+        "\tld.u8 \t%rs1, [%rd8];\n" +
+        "\tadd.s64 \t%rd2, %rd11, 1;\n" +
+        "\tst.u8 \t[%rd11], %rs1;\n" +
+        "\tmov.u64 \t%rd11, %rd2;\n" +
+        "\n" +
+        "$L__BB0_2:\n" +
+        "\tmul.hi.s32 \t%r2, %r1, 1717986919;\n" +
+        "\tshr.u32 \t%r3, %r2, 31;\n" +
+        "\tshr.s32 \t%r4, %r2, 2;\n" +
+        "\tadd.s32 \t%r5, %r4, %r3;\n" +
+        "\tmul.lo.s32 \t%r6, %r5, 10;\n" +
+        "\tsub.s32 \t%r7, %r1, %r6;\n" +
+        "\tcvt.s64.s32 \t%rd9, %r7;\n" +
+        "\tadd.s64 \t%rd10, %rd4, %rd9;\n" +
+        "\tld.u8 \t%rs2, [%rd10];\n" +
+        "\tst.u8 \t[%rd11], %rs2;\n" +
+        "\tmov.u32 \t%r8, 0;\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r8;\n" +
+        "\tret;\n" +
+        "\n" +
+        "}\n";
+    try (ColumnVector cv = digitsInput();
+         ColumnVector letters = ColumnVector.fromBytes(
+             "abcdefghij".getBytes(StandardCharsets.US_ASCII));
+         ColumnVector offsets = stringOffsets(cv, DIGITS_SIZE_PTX, true);
+         ColumnVector result =
+             cv.transform(writeUdf, true, DType.STRING, letters.getData(), offsets);
+         ColumnVector expected = ColumnVector.fromStrings("h", "ec", null, "a", "jj")) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorRejectsInvalidStringOffsets() {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3);
+         ColumnVector offsets = ColumnVector.fromInts(0, 1, 2);
+         ColumnVector shortOffsets = ColumnVector.fromInts(0, 1);
+         ColumnVector floatOffsets = ColumnVector.fromFloats(0, 1, 2);
+         ColumnVector longOffsets = ColumnVector.fromLongs(0, 1, 2);
+         ColumnVector nullOffsets = ColumnVector.fromBoxedInts(0, null, 2)) {
+      IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.INT32, null, offsets));
+      assertEquals("string offsets are only supported for STRING output, got INT32",
+          ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.STRING, null, shortOffsets));
+      assertEquals("string offsets must have 3 rows, got 2", ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.STRING, null, floatOffsets));
+      assertEquals("string offsets must be INT32, got FLOAT32", ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.STRING, null, longOffsets));
+      assertEquals("string offsets must be INT32, got INT64", ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.STRING, null, nullOffsets));
+      assertEquals("string offsets must not have nulls", ex.getMessage());
+      ex = assertThrows(IllegalArgumentException.class, () ->
+          cv.transform(cuda, false, DType.LIST, null, null));
+      assertEquals("transform only supports fixed-width and STRING output types, got LIST",
+          ex.getMessage());
+    }
+  }
+
   @Test
   void testTransformVector() {
     try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3, null, 4);
@@ -134,6 +569,66 @@ public class ColumnVectorTest extends CudfTestBase {
       assertColumnsAreEqual(expected, cv1);
       assertColumnsAreEqual(expected, cv2);
     }
+  }
+
+  /** Transforms with a UDF computing input * factor + row, the factor passed as user data. */
+  private static void assertScaleAddRowResult(String udf, boolean isPtx) {
+    try (ColumnVector cv = ColumnVector.fromBoxedInts(2, 3, null, 4);
+         ColumnVector factor = ColumnVector.fromInts(10);
+         ColumnVector result = cv.transform(udf, isPtx, DType.INT32, factor.getData(), null);
+         ColumnVector expected = ColumnVector.fromBoxedInts(20, 31, null, 43)) {
+      assertColumnsAreEqual(expected, result);
+    }
+  }
+
+  @Test
+  void testTransformVectorUserData() {
+    assertScaleAddRowResult("__device__ inline void f(" +
+        "void* user_data," +
+        "cudf::size_type row," +
+        "int* output," +
+        "int input" +
+        "){" +
+        "*output = input * *static_cast<int const*>(user_data) + row;" +
+        "}", false);
+  }
+
+  @Test
+  void testTransformVectorPtxUserData() {
+    // Compiled with nvcc -arch=sm_75 -rdc=true -ptx -O3, then retargeted to the PTX version and
+    // target used by the other PTX tests:
+    //   extern "C" __device__ int scale_add_row(void* user_data, cudf::size_type row,
+    //                                           int* output, int input) {
+    //     *output = input * *static_cast<int const*>(user_data) + row;
+    //     return 0;
+    //   }
+    assertScaleAddRowResult(
+        ".version 6.3\n" +
+        ".target sm_70\n" +
+        ".address_size 64\n" +
+        "\n" +
+        ".visible .func  (.param .b32 func_retval0) scale_add_row(\n" +
+        "\t.param .b64 scale_add_row_param_0,\n" +
+        "\t.param .b32 scale_add_row_param_1,\n" +
+        "\t.param .b64 scale_add_row_param_2,\n" +
+        "\t.param .b32 scale_add_row_param_3\n" +
+        ")\n" +
+        "{\n" +
+        "\t.reg .b32 \t%r<6>;\n" +
+        "\t.reg .b64 \t%rd<3>;\n" +
+        "\n" +
+        "\tld.param.u64 \t%rd1, [scale_add_row_param_0];\n" +
+        "\tld.param.u32 \t%r1, [scale_add_row_param_1];\n" +
+        "\tld.param.u64 \t%rd2, [scale_add_row_param_2];\n" +
+        "\tld.param.u32 \t%r2, [scale_add_row_param_3];\n" +
+        "\tld.u32 \t%r3, [%rd1];\n" +
+        "\tmad.lo.s32 \t%r4, %r3, %r2, %r1;\n" +
+        "\tst.u32 \t[%rd2], %r4;\n" +
+        "\tmov.u32 \t%r5, 0;\n" +
+        "\tst.param.b32 \t[func_retval0+0], %r5;\n" +
+        "\tret;\n" +
+        "\n" +
+        "}\n", true);
   }
 
   @Test

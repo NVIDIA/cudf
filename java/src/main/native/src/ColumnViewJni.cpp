@@ -1554,7 +1554,10 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
                                                                  jstring j_udf,
                                                                  jboolean j_is_ptx,
                                                                  jint j_dtype,
-                                                                 jint j_scale)
+                                                                 jint j_scale,
+                                                                 jboolean j_has_user_data,
+                                                                 jlong j_user_data,
+                                                                 jlong j_string_offsets)
 {
   JNI_TRY
   {
@@ -1563,15 +1566,26 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
     cudf::jni::native_jstring n_j_udf(env, j_udf);
     std::string n_udf              = n_j_udf;
     cudf::transform_input inputs[] = {*column};
+    // A flag rather than a null address: an empty buffer may have a null address.
+    auto user_data =
+      j_has_user_data ? std::optional<void*>{reinterpret_cast<void*>(j_user_data)} : std::nullopt;
+    // cudf::transform takes ownership of the offsets, which become the result's offsets child.
+    // The Java layer has checked they have no nulls; copy them without a validity mask.
+    std::vector<std::unique_ptr<cudf::column>> string_offsets;
+    if (j_string_offsets != 0) {
+      auto const& offsets = *reinterpret_cast<cudf::column_view*>(j_string_offsets);
+      string_offsets.push_back(std::make_unique<cudf::column>(cudf::column_view{
+        offsets.type(), offsets.size(), offsets.head(), nullptr, 0, offsets.offset()}));
+    }
     return release_as_jlong(std::move(
       cudf::transform(n_udf,
                       j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
                       cudf::null_aware::NO,
-                      std::nullopt,
+                      user_data,
                       inputs,
                       std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
                                                         cudf::output_nullability::PRESERVE}},
-                      {},
+                      std::move(string_offsets),
                       std::nullopt)
         ->release()
         .front()));

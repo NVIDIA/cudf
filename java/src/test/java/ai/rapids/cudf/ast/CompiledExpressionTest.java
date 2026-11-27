@@ -6,6 +6,7 @@
 package ai.rapids.cudf.ast;
 
 import ai.rapids.cudf.ColumnVector;
+import ai.rapids.cudf.ColumnView;
 import ai.rapids.cudf.CudfException;
 import ai.rapids.cudf.CudfTestBase;
 import ai.rapids.cudf.DType;
@@ -645,7 +646,7 @@ public class CompiledExpressionTest extends CudfTestBase {
     try (Table input = new Table.TestBuilder().column(1, 2, 3).build();
          CompiledExpression compiled = expr.compileJit()) {
       Assertions.assertThrows(NullPointerException.class,
-          () -> CompiledExpression.computeTableJit(null, compiled));
+          () -> CompiledExpression.computeTableJit((Table) null, compiled));
       Assertions.assertThrows(NullPointerException.class,
           () -> CompiledExpression.computeTableJit(input, (CompiledExpression[]) null));
       Assertions.assertThrows(IllegalArgumentException.class,
@@ -706,6 +707,142 @@ public class CompiledExpressionTest extends CudfTestBase {
            ColumnVector expected = ColumnVector.fromInts(2, 3, 4)) {
         assertColumnsAreEqual(expected, actual);
       }
+    }
+  }
+
+  @Test
+  void testComputeColumnOverColumnViews() {
+    // Compared as UINT32, -1 is larger than 1; compared as INT32 it is smaller.
+    AstExpression expr = new BinaryOperation(BinaryOperator.LESS,
+        new ColumnReference(0), new ColumnReference(1));
+    try (ColumnVector left = ColumnVector.fromBoxedInts(-1, 1, null);
+         ColumnVector right = ColumnVector.fromBoxedInts(1, -1, 2);
+         ColumnView leftUnsigned = left.bitCastTo(DType.UINT32);
+         ColumnView rightUnsigned = right.bitCastTo(DType.UINT32);
+         CompiledExpression compiled = expr.compile();
+         CompiledExpression compiledJit = expr.compileJit();
+         ColumnVector expected = ColumnVector.fromBoxedBooleans(false, true, null)) {
+      // The views are borrowed, so the second evaluation can reuse them.
+      for (CompiledExpression c : new CompiledExpression[] {compiled, compiledJit}) {
+        try (ColumnVector actual = c.computeColumn(leftUnsigned, rightUnsigned)) {
+          assertColumnsAreEqual(expected, actual);
+        }
+      }
+    }
+  }
+
+  @Test
+  void testComputeColumnOverColumnViewsMatchesTable() {
+    AstExpression expr = new BinaryOperation(BinaryOperator.ADD,
+        new ColumnReference(1), Literal.ofInt(10));
+    try (Table table = new Table.TestBuilder()
+             .column(5, 4, 3, 2, 1)
+             .column(6, 7, 8, null, 10)
+             .build();
+         CompiledExpression compiled = expr.compile();
+         CompiledExpression compiledJit = expr.compileJit();
+         ColumnVector expected = compiled.computeColumn(table);
+         ColumnVector actual = compiled.computeColumn(table.getColumn(0), table.getColumn(1));
+         ColumnVector actualJit =
+             compiledJit.computeColumn(table.getColumn(0), table.getColumn(1))) {
+      assertColumnsAreEqual(expected, actual);
+      assertColumnsAreEqual(expected, actualJit);
+    }
+  }
+
+  @Test
+  void testComputeColumnOverColumnViewsValidation() {
+    AstExpression expr = new ColumnReference(0);
+    try (CompiledExpression compiled = expr.compile();
+         ColumnVector column = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector shorter = ColumnVector.fromInts(1, 2)) {
+      Assertions.assertThrows(NullPointerException.class,
+          () -> compiled.computeColumn((ColumnView[]) null));
+      Assertions.assertThrows(IllegalArgumentException.class,
+          () -> compiled.computeColumn(new ColumnView[0]));
+      Assertions.assertThrows(NullPointerException.class,
+          () -> compiled.computeColumn(column, null));
+      Assertions.assertThrows(IllegalArgumentException.class,
+          () -> compiled.computeColumn(column, shorter));
+
+      ColumnVector closed = ColumnVector.fromInts(1, 2, 3);
+      closed.close();
+      Assertions.assertThrows(IllegalStateException.class,
+          () -> compiled.computeColumn(column, closed));
+    }
+
+    // A single-table operation rejects references to the right table, as for computeColumn(Table).
+    AstExpression rightExpr = new ColumnReference(0, TableReference.RIGHT);
+    try (CompiledExpression compiled = rightExpr.compile();
+         CompiledExpression compiledJit = rightExpr.compileJit();
+         ColumnVector column = ColumnVector.fromInts(1, 2, 3)) {
+      Assertions.assertThrows(CudfException.class, () -> compiled.computeColumn(column).close());
+      Assertions.assertThrows(CudfException.class,
+          () -> compiledJit.computeColumn(column).close());
+    }
+  }
+
+  @Test
+  void testJitMultipleOutputOverColumnViews() {
+    AstExpression sum = new JitOperation(JitOperator.ADD,
+        new ColumnReference(0), new ColumnReference(1));
+    AstExpression isNull = new UnaryOperation(UnaryOperator.IS_NULL, new ColumnReference(1));
+    try (ColumnVector first = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector second = ColumnVector.fromBoxedInts(10, null, 30);
+         ColumnView firstUnsigned = first.bitCastTo(DType.UINT32);
+         ColumnView secondUnsigned = second.bitCastTo(DType.UINT32);
+         CompiledExpression sumCompiled = sum.compileJit();
+         CompiledExpression isNullCompiled = isNull.compileJit();
+         Table actual = CompiledExpression.computeTableJit(
+             new ColumnView[] {firstUnsigned, secondUnsigned}, sumCompiled, isNullCompiled);
+         ColumnVector expectedSumSigned = ColumnVector.fromBoxedInts(11, null, 33);
+         ColumnView expectedSum = expectedSumSigned.bitCastTo(DType.UINT32);
+         ColumnVector expectedIsNull = ColumnVector.fromBooleans(false, true, false)) {
+      Assertions.assertEquals(2, actual.getNumberOfColumns());
+      assertColumnsAreEqual(expectedSum, actual.getColumn(0));
+      assertColumnsAreEqual(expectedIsNull, actual.getColumn(1));
+    }
+  }
+
+  @Test
+  void testJitMultipleOutputOverColumnViewsValidation() {
+    AstExpression expr = new JitOperation(JitOperator.ADD,
+        new ColumnReference(0), Literal.ofInt(1));
+    AstExpression defaultExpr = new BinaryOperation(BinaryOperator.ADD,
+        new ColumnReference(0), Literal.ofInt(1));
+    try (CompiledExpression compiled = expr.compileJit();
+         CompiledExpression defaultCompiled = defaultExpr.compile();
+         ColumnVector column = ColumnVector.fromInts(1, 2, 3);
+         ColumnVector shorter = ColumnVector.fromInts(1, 2)) {
+      ColumnView[] columns = {column};
+      Assertions.assertThrows(NullPointerException.class,
+          () -> CompiledExpression.computeTableJit((ColumnView[]) null, compiled));
+      Assertions.assertThrows(IllegalArgumentException.class,
+          () -> CompiledExpression.computeTableJit(new ColumnView[0], compiled));
+      Assertions.assertThrows(NullPointerException.class,
+          () -> CompiledExpression.computeTableJit(new ColumnView[] {column, null}, compiled));
+      Assertions.assertThrows(IllegalArgumentException.class,
+          () -> CompiledExpression.computeTableJit(new ColumnView[] {column, shorter}, compiled));
+      Assertions.assertThrows(NullPointerException.class,
+          () -> CompiledExpression.computeTableJit(columns, (CompiledExpression[]) null));
+      Assertions.assertThrows(IllegalArgumentException.class,
+          () -> CompiledExpression.computeTableJit(columns));
+      Assertions.assertThrows(NullPointerException.class,
+          () -> CompiledExpression.computeTableJit(columns, compiled, null));
+      Assertions.assertThrows(IllegalArgumentException.class,
+          () -> CompiledExpression.computeTableJit(columns, defaultCompiled));
+
+      ColumnVector closed = ColumnVector.fromInts(1, 2, 3);
+      closed.close();
+      Assertions.assertThrows(IllegalStateException.class,
+          () -> CompiledExpression.computeTableJit(new ColumnView[] {closed}, compiled));
+    }
+
+    CompiledExpression closedExpression = expr.compileJit();
+    closedExpression.close();
+    try (ColumnVector column = ColumnVector.fromInts(1, 2, 3)) {
+      Assertions.assertThrows(IllegalStateException.class,
+          () -> CompiledExpression.computeTableJit(new ColumnView[] {column}, closedExpression));
     }
   }
 

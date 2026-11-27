@@ -6,6 +6,7 @@
 package ai.rapids.cudf.ast;
 
 import ai.rapids.cudf.ColumnVector;
+import ai.rapids.cudf.ColumnView;
 import ai.rapids.cudf.MemoryCleaner;
 import ai.rapids.cudf.NativeDepsLoader;
 import ai.rapids.cudf.Table;
@@ -114,6 +115,56 @@ public class CompiledExpression implements AutoCloseable {
   }
 
   /**
+   * Compute a new column by applying this AST expression to the specified columns, without
+   * copying them into a {@link Table}. Behaves like {@link #computeColumn(Table)} on a table whose
+   * column {@code i} is {@code columns[i]}. The columns are borrowed, not retained: they must stay
+   * open until this method returns.
+   *
+   * @param columns non-empty input columns, all with the same row count
+   * @return new column computed from this expression applied to the input columns
+   * @throws NullPointerException if the column array or a column is null
+   * @throws IllegalArgumentException if no columns are provided or their row counts differ
+   * @throws IllegalStateException if a column is closed
+   * @throws ai.rapids.cudf.CudfException if the expression refers to
+   *         {@link TableReference#RIGHT}, or if compilation or evaluation fails
+   */
+  public ColumnVector computeColumn(ColumnView... columns) {
+    try (TableView tableView = new TableView(columns)) {
+      return new ColumnVector(computeColumn(cleaner.nativeHandle, tableView.handle));
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(columns);
+    }
+  }
+
+  /**
+   * Compute a new table by applying expressions to the specified columns in one multi-output JIT
+   * transform, without copying the columns into a {@link Table}. Behaves like
+   * {@link #computeTableJit(Table, CompiledExpression...)} on a table whose column {@code i} is
+   * {@code columns[i]}. The columns are borrowed, not retained: they must stay open until this
+   * method returns.
+   *
+   * @param columns non-empty input columns, all with the same row count
+   * @param expressions non-empty JIT-compiled expressions to evaluate in output order
+   * @return table containing one output column per expression
+   * @throws NullPointerException if the column array, a column, the expression array, or an
+   *         expression is null
+   * @throws IllegalArgumentException if no columns or no expressions are provided, the column row
+   *         counts differ, or an expression was not produced by {@link AstExpression#compileJit()}
+   * @throws IllegalStateException if a column or an expression is closed
+   * @throws ai.rapids.cudf.CudfException if JIT compilation or evaluation fails
+   */
+  public static Table computeTableJit(ColumnView[] columns, CompiledExpression... expressions) {
+    JitExpressionArgs expressionArgs = getJitExpressionArgs(expressions);
+    try (TableView tableView = new TableView(columns)) {
+      return new Table(computeTableJitNative(expressionArgs.nativeHandles, tableView.handle));
+    } finally {
+      reachabilityFence(columns);
+      reachabilityFence(expressionArgs.expressionRefs);
+    }
+  }
+
+  /**
    * Compute a new table by applying expressions to the input table in one multi-output JIT
    * transform. Output column {@code i} contains the result of {@code expressions[i]}.
    *
@@ -150,14 +201,16 @@ public class CompiledExpression implements AutoCloseable {
 
   static JitExpressionArgs getJitExpressionArgs(
       CompiledExpression[] expressions, long tableHandle) {
-    if (Objects.requireNonNull(expressions, "expressions").length == 0) {
-      throw new IllegalArgumentException("At least one expression is required");
-    }
     // Preserve array validation before the table check, and element validation after it.
+    requireExpressions(expressions);
     if (tableHandle == 0) {
       throw new IllegalStateException("Table is closed");
     }
-    CompiledExpression[] expressionRefs = expressions.clone();
+    return getJitExpressionArgs(expressions);
+  }
+
+  private static JitExpressionArgs getJitExpressionArgs(CompiledExpression[] expressions) {
+    CompiledExpression[] expressionRefs = requireExpressions(expressions).clone();
 
     long[] nativeHandles = new long[expressionRefs.length];
     for (int i = 0; i < expressionRefs.length; i++) {
@@ -172,6 +225,47 @@ public class CompiledExpression implements AutoCloseable {
       }
     }
     return new JitExpressionArgs(expressionRefs, nativeHandles);
+  }
+
+  private static CompiledExpression[] requireExpressions(CompiledExpression[] expressions) {
+    if (Objects.requireNonNull(expressions, "expressions").length == 0) {
+      throw new IllegalArgumentException("At least one expression is required");
+    }
+    return expressions;
+  }
+
+  /**
+   * A temporary native {@code cudf::table_view} over borrowed columns. It does not own the
+   * columns; closing it frees only the view.
+   */
+  private static final class TableView implements AutoCloseable {
+    final long handle;
+
+    TableView(ColumnView[] columns) {
+      if (Objects.requireNonNull(columns, "columns").length == 0) {
+        throw new IllegalArgumentException("At least one column is required");
+      }
+
+      long rowCount = Objects.requireNonNull(columns[0], "column 0 is null").getRowCount();
+      long[] viewHandles = new long[columns.length];
+      for (int i = 0; i < columns.length; i++) {
+        ColumnView column = Objects.requireNonNull(columns[i], "column " + i + " is null");
+        viewHandles[i] = column.getNativeView();
+        if (viewHandles[i] == 0) {
+          throw new IllegalStateException("Column " + i + " is closed");
+        }
+        if (column.getRowCount() != rowCount) {
+          throw new IllegalArgumentException("Column " + i + " has " + column.getRowCount() +
+              " rows, but column 0 has " + rowCount);
+        }
+      }
+      handle = createTableView(viewHandles);
+    }
+
+    @Override
+    public void close() {
+      deleteTableView(handle);
+    }
   }
 
   static void reachabilityFence(Object object) {
@@ -212,5 +306,7 @@ public class CompiledExpression implements AutoCloseable {
   private static native long compileJit(byte[] serializedExpression);
   private static native long computeColumn(long astHandle, long tableHandle);
   private static native long[] computeTableJitNative(long[] astHandles, long tableHandle);
+  private static native long createTableView(long[] columnViewHandles);
+  private static native void deleteTableView(long tableViewHandle);
   private static native void destroy(long handle);
 }

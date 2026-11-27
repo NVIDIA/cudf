@@ -641,6 +641,31 @@ JNIEXPORT jlongArray JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_computeT
   JNI_CATCH(env, nullptr);
 }
 
+JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_createTableView(
+  JNIEnv* env, jclass, jlongArray j_column_views)
+{
+  JNI_NULL_CHECK(env, j_column_views, "column views are null", 0);
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    cudf::jni::native_jpointerArray<cudf::column_view> column_views(env, j_column_views);
+    return cudf::jni::ptr_as_jlong(new cudf::table_view(column_views.get_dereferenced()));
+  }
+  JNI_CATCH(env, 0);
+}
+
+JNIEXPORT void JNICALL
+Java_ai_rapids_cudf_ast_CompiledExpression_deleteTableView(JNIEnv* env, jclass, jlong j_table_view)
+{
+  JNI_NULL_CHECK(env, j_table_view, "table view handle is null", );
+  JNI_TRY
+  {
+    cudf::jni::auto_set_device(env);
+    cudf::jni::safe_delete<cudf::table_view>(j_table_view);
+  }
+  JNI_CATCH(env, );
+}
+
 JNIEXPORT void JNICALL Java_ai_rapids_cudf_ast_CompiledExpression_destroy(JNIEnv* env,
                                                                           jclass,
                                                                           jlong jni_handle)

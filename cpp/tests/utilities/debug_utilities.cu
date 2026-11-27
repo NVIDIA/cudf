@@ -25,6 +25,7 @@
 #include <thrust/transform.h>
 
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 
 namespace cudf::test {

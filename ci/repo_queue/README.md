@@ -414,11 +414,17 @@ python3 ci/repo_queue/triage.py --numbers 20188 --output /tmp/cudf-queue/issue-t
 ```
 
 Existing component labels take precedence. Otherwise the script checks the
-title and issue body for component-specific identifiers, such as import paths
-or C++ namespaces. Weak or conflicting evidence leaves the issue for manual
-triage. The output includes the matched signals. For a single known component,
-the script selects a team member consistently per issue, excluding the author
-and bots. Existing assignees suppress a contact suggestion.
+title, the problem or requested behavior, and then supporting details for
+component-specific identifiers. Only the strongest tier with evidence is
+used; conflicting signals within that tier leave the issue for manual triage.
+The output includes the matched signals and their source.
+
+For a single known component, the script checks up to three explicitly linked
+cuDF PRs. It prefers the eligible author of a cited inline review comment,
+then a PR author, then a reviewer, then the stable per-issue rotation. All candidates must belong to the component codeowner
+team; the issue author and bots are excluded. Existing assignees suppress a
+contact suggestion. If an issue already has both a component label and an
+assignee, the workflow skips the DM and local output records the skip.
 
 Local previews use read-only GitHub calls and write the proposal to a private
 JSON file. The separate `issue-triage.yml` workflow reads the

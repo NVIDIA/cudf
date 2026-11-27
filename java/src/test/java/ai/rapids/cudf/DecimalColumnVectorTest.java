@@ -17,6 +17,7 @@ import java.util.Arrays;
 import java.util.Objects;
 import java.util.Random;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static ai.rapids.cudf.AssertUtils.assertColumnsAreEqual;
 import static org.junit.jupiter.api.Assertions.*;
@@ -419,9 +420,9 @@ public class DecimalColumnVectorTest extends CudfTestBase {
     // 2.5/2, 3.5/2, -2.5/2, 1.0/3, null/1, 7.0/0
     try (ColumnVector lhs = ColumnVector.decimalFromBoxedInts(-1, 25, 35, -25, 10, null, 70);
          ColumnVector rhs = ColumnVector.decimalFromBoxedInts(0, 2, 2, 2, 3, 1, 0);
-         ColumnVector halfUp = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP);
-         ColumnVector halfEven = lhs.divideDecimal(rhs, outType, RoundMode.HALF_EVEN);
-         ColumnVector byDefault = lhs.divideDecimal(rhs, outType);
+         ColumnVector halfUp = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_UP);
+         ColumnVector halfEven = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_EVEN);
+         ColumnVector byDefault = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY);
          ColumnVector expectedHalfUp =
              ColumnVector.decimalFromBoxedInts(-1, 13, 18, -13, 3, null, null);
          ColumnVector expectedHalfEven =
@@ -438,7 +439,7 @@ public class DecimalColumnVectorTest extends CudfTestBase {
     // 1.00/3.00, 2.00/3.00, -1.00/7.00
     try (ColumnVector lhs = ColumnVector.decimalFromLongs(-2, 100, 200, -100);
          ColumnVector rhs = ColumnVector.decimalFromLongs(-2, 300, 300, 700);
-         ColumnVector result = lhs.divideDecimal(rhs, outType);
+         ColumnVector result = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY);
          ColumnVector expected = ColumnVector.decimalFromBigInt(-6,
              BigInteger.valueOf(333333), BigInteger.valueOf(666667),
              BigInteger.valueOf(-142857))) {
@@ -453,9 +454,9 @@ public class DecimalColumnVectorTest extends CudfTestBase {
     try (ColumnVector lhs = ColumnVector.decimalFromBoxedLongs(-2, 1000L, 1050L, null, -333L);
          Scalar rhs = Scalar.fromDecimal(-1, 40L);
          Scalar nullRhs = Scalar.fromNull(DType.create(DType.DTypeEnum.DECIMAL64, -1));
-         ColumnVector halfUp = lhs.divideDecimal(rhs, outType);
-         ColumnVector halfEven = lhs.divideDecimal(rhs, outType, RoundMode.HALF_EVEN);
-         ColumnVector allNull = lhs.divideDecimal(nullRhs, outType);
+         ColumnVector halfUp = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY);
+         ColumnVector halfEven = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_EVEN);
+         ColumnVector allNull = lhs.divideDecimal(nullRhs, outType, ErrorPolicy.NULLIFY);
          ColumnVector expectedHalfUp =
              ColumnVector.decimalFromBoxedLongs(-2, 250L, 263L, null, -83L);
          ColumnVector expectedHalfEven =
@@ -475,8 +476,8 @@ public class DecimalColumnVectorTest extends CudfTestBase {
     try (Scalar lhs = Scalar.fromDecimal(0, 1L);
          Scalar nullLhs = Scalar.fromNull(DType.create(DType.DTypeEnum.DECIMAL64, 0));
          ColumnVector rhs = ColumnVector.decimalFromBoxedInts(0, 3, 6, 0, null, -8);
-         ColumnVector result = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP);
-         ColumnVector allNull = nullLhs.divideDecimal(rhs, outType);
+         ColumnVector result = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_UP);
+         ColumnVector allNull = nullLhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY);
          ColumnVector expected =
              ColumnVector.decimalFromBoxedLongs(-3, 333L, 167L, null, null, -125L);
          ColumnVector expectedAllNull =
@@ -498,18 +499,18 @@ public class DecimalColumnVectorTest extends CudfTestBase {
          ColumnVector rhs = ColumnVector.decimalFromBigInt(-20, ten20, ten20, ten20.negate());
          Scalar lhsScalar = Scalar.fromDecimal(-10, ten10);
          Scalar rhsScalar = Scalar.fromDecimal(-20, ten20);
-         ColumnVector byDefault = lhs.divideDecimal(rhs, outType);
-         ColumnVector standard = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP,
+         ColumnVector byDefault = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY);
+         ColumnVector standard = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_UP,
              DecimalIntermediate.STANDARD);
-         ColumnVector standardVS = lhs.divideDecimal(rhsScalar, outType, RoundMode.HALF_UP,
+         ColumnVector standardVS = lhs.divideDecimal(rhsScalar, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_UP,
              DecimalIntermediate.STANDARD);
-         ColumnVector standardSV = lhsScalar.divideDecimal(rhs, outType, RoundMode.HALF_UP,
+         ColumnVector standardSV = lhsScalar.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_UP,
              DecimalIntermediate.STANDARD);
-         ColumnVector wide = lhs.divideDecimal(rhs, outType, RoundMode.HALF_UP,
+         ColumnVector wide = lhs.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_UP,
              DecimalIntermediate.WIDE);
-         ColumnVector wideVS = lhs.divideDecimal(rhsScalar, outType, RoundMode.HALF_EVEN,
+         ColumnVector wideVS = lhs.divideDecimal(rhsScalar, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_EVEN,
              DecimalIntermediate.WIDE);
-         ColumnVector wideSV = lhsScalar.divideDecimal(rhs, outType, RoundMode.HALF_EVEN,
+         ColumnVector wideSV = lhsScalar.divideDecimal(rhs, outType, ErrorPolicy.NULLIFY, RoundMode.HALF_EVEN,
              DecimalIntermediate.WIDE);
          ColumnVector expectedNull = ColumnVector.decimalFromBigInt(-20, null, null, null);
          ColumnVector expectedWide = ColumnVector.decimalFromBigInt(-20, ten20, ten20.negate(),
@@ -529,13 +530,44 @@ public class DecimalColumnVectorTest extends CudfTestBase {
   }
 
   @Test
+  public void testDivideDecimalPropagate() {
+    DType outType = DType.create(DType.DTypeEnum.DECIMAL32, -1);
+    DType intType = DType.create(DType.DTypeEnum.DECIMAL32, 0);
+    // 2.5/2, null/1 and 1.0/null succeed, since null inputs are not errors
+    try (ColumnVector lhs = ColumnVector.decimalFromBoxedInts(-1, 25, null, 10);
+         ColumnVector rhs = ColumnVector.decimalFromBoxedInts(0, 2, 1, null);
+         ColumnVector zeros = ColumnVector.decimalFromBoxedInts(0, 0, 1, null);
+         ColumnVector tooLarge = ColumnVector.decimalFromInts(0, 1000000000);
+         ColumnVector ones = ColumnVector.decimalFromInts(0, 1);
+         Scalar zero = Scalar.fromDecimal(0, 0L);
+         Scalar one = Scalar.fromDecimal(0, 1L);
+         ColumnVector result = lhs.divideDecimal(rhs, outType, ErrorPolicy.PROPAGATE);
+         ColumnVector expected = ColumnVector.decimalFromBoxedInts(-1, 13, null, null)) {
+      assertColumnsAreEqual(expected, result);
+      assertErrorCode("DIVISION_BY_ZERO",
+          () -> lhs.divideDecimal(zeros, outType, ErrorPolicy.PROPAGATE));
+      assertErrorCode("DIVISION_BY_ZERO",
+          () -> lhs.divideDecimal(zero, outType, ErrorPolicy.PROPAGATE));
+      assertErrorCode("DIVISION_BY_ZERO",
+          () -> one.divideDecimal(zeros, outType, ErrorPolicy.PROPAGATE));
+      assertErrorCode("ARITHMETIC_OVERFLOW",
+          () -> tooLarge.divideDecimal(ones, intType, ErrorPolicy.PROPAGATE));
+    }
+  }
+
+  private static void assertErrorCode(String code, Supplier<ColumnVector> divide) {
+    CudfException e = assertThrows(CudfException.class, () -> divide.get().close());
+    assertTrue(e.getMessage().contains(code), e.getMessage());
+  }
+
+  @Test
   public void testDivideDecimalInvalidTypes() {
     DType decimalType = DType.create(DType.DTypeEnum.DECIMAL32, 0);
     try (ColumnVector ints = ColumnVector.fromInts(1, 2);
          ColumnVector decimals = ColumnVector.decimalFromInts(0, 1, 2)) {
-      assertThrows(CudfException.class, () -> ints.divideDecimal(decimals, decimalType));
-      assertThrows(CudfException.class, () -> decimals.divideDecimal(ints, decimalType));
-      assertThrows(CudfException.class, () -> decimals.divideDecimal(decimals, DType.INT32));
+      assertThrows(CudfException.class, () -> ints.divideDecimal(decimals, decimalType, ErrorPolicy.NULLIFY));
+      assertThrows(CudfException.class, () -> decimals.divideDecimal(ints, decimalType, ErrorPolicy.NULLIFY));
+      assertThrows(CudfException.class, () -> decimals.divideDecimal(decimals, DType.INT32, ErrorPolicy.NULLIFY));
     }
   }
 }

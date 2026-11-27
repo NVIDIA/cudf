@@ -599,6 +599,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_divideDecimalSV(JNIEnv* env,
                                                                    jlong rhs_view,
                                                                    jint out_dtype,
                                                                    jint scale,
+                                                                   jint policy,
                                                                    jint round_mode,
                                                                    jint intermediate)
 {
@@ -613,6 +614,7 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_Scalar_divideDecimalSV(JNIEnv* env,
       cudf::divide_decimal(*lhs,
                            *rhs,
                            cudf::jni::make_data_type(out_dtype, scale),
+                           static_cast<cudf::error_policy>(policy),
                            static_cast<cudf::rounding_method>(round_mode),
                            static_cast<cudf::decimal_intermediate>(intermediate)));
   }

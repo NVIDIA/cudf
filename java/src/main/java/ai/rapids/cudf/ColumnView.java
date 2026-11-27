@@ -1364,98 +1364,112 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   /**
    * Divides this decimal column by a decimal column, element-wise. Each quotient is rounded to
-   * the scale of {@code outType} using {@code mode}, unlike {@code div}, which truncates. This column, {@code rhs} and
-   * {@code outType} may each be any decimal type, with any scale.
+   * the scale of {@code outType} using {@code mode}, unlike {@code div}, which truncates. This
+   * column, {@code rhs} and {@code outType} may each be any decimal type, with any scale.
    *
-   * An output element is null if either input element is null, if the divisor is zero, or if the
-   * rounded quotient does not fit in {@code outType}.
+   * An output element is null if either input element is null. A row fails if the divisor is zero
+   * or the rounded quotient does not fit in {@code outType}. With {@link ErrorPolicy#PROPAGATE},
+   * any failing row throws; with {@link ErrorPolicy#NULLIFY}, failing rows are null.
    *
    * @param rhs     the divisor column, with the same number of rows as this column
    * @param outType the decimal type and scale of the output
+   * @param policy  how failing rows are handled
    * @param mode    the rounding mode to use
    * @return a new column of type {@code outType} containing the quotients
-   * @throws CudfException if either input or {@code outType} is not a decimal type
+   * @throws CudfException if either input or {@code outType} is not a decimal type, or if
+   *                       {@code policy} is {@link ErrorPolicy#PROPAGATE} and any row fails
    */
-  public final ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode) {
-    return divideDecimal(rhs, outType, mode, DecimalIntermediate.STANDARD);
+  public final ColumnVector divideDecimal(ColumnView rhs, DType outType, ErrorPolicy policy,
+                                          RoundMode mode) {
+    return divideDecimal(rhs, outType, policy, mode, DecimalIntermediate.STANDARD);
   }
 
   /**
    * Divides this decimal column by a decimal column, element-wise, rescaling each dividend into
    * an intermediate value of the given width.
-   * See {@link #divideDecimal(ColumnView, DType, RoundMode)}.
+   * See {@link #divideDecimal(ColumnView, DType, ErrorPolicy, RoundMode)}.
    *
-   * With {@link DecimalIntermediate#STANDARD}, an output element is also null if the magnitude of
-   * the dividend, rescaled to give a quotient at the scale of {@code outType}, overflows an
-   * unsigned 64-bit integer (if both inputs and {@code outType} are DECIMAL32) or an unsigned
-   * 128-bit integer (otherwise). {@link DecimalIntermediate#WIDE} rescales it into 256 bits
-   * instead.
+   * With {@link DecimalIntermediate#STANDARD}, a row also fails if the magnitude of the dividend,
+   * rescaled to give a quotient at the scale of {@code outType}, overflows an unsigned 64-bit
+   * integer (if both inputs and {@code outType} are DECIMAL32) or an unsigned 128-bit integer
+   * (otherwise). {@link DecimalIntermediate#WIDE} rescales it into 256 bits instead.
    *
    * @param rhs          the divisor column, with the same number of rows as this column
    * @param outType      the decimal type and scale of the output
+   * @param policy       how failing rows are handled
    * @param mode         the rounding mode to use
    * @param intermediate the width of the intermediate value
    * @return a new column of type {@code outType} containing the quotients
-   * @throws CudfException if either input or {@code outType} is not a decimal type
+   * @throws CudfException if either input or {@code outType} is not a decimal type, or if
+   *                       {@code policy} is {@link ErrorPolicy#PROPAGATE} and any row fails
    */
-  public final ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode,
-                                          DecimalIntermediate intermediate) {
+  public final ColumnVector divideDecimal(ColumnView rhs, DType outType, ErrorPolicy policy,
+                                          RoundMode mode, DecimalIntermediate intermediate) {
     assert rows == rhs.getRowCount();
     return new ColumnVector(divideDecimalVV(getNativeView(), rhs.getNativeView(),
-        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId, intermediate.nativeId));
+        outType.typeId.getNativeId(), outType.getScale(), policy.nativeId, mode.nativeId,
+        intermediate.nativeId));
   }
 
   /**
    * Divides this decimal column by a decimal column, element-wise, rounding HALF_UP.
-   * See {@link #divideDecimal(ColumnView, DType, RoundMode)}.
+   * See {@link #divideDecimal(ColumnView, DType, ErrorPolicy, RoundMode)}.
    */
-  public final ColumnVector divideDecimal(ColumnView rhs, DType outType) {
-    return divideDecimal(rhs, outType, RoundMode.HALF_UP);
+  public final ColumnVector divideDecimal(ColumnView rhs, DType outType, ErrorPolicy policy) {
+    return divideDecimal(rhs, outType, policy, RoundMode.HALF_UP);
   }
 
   /**
    * Divides each element of this decimal column by a decimal scalar. Each quotient is rounded to
-   * the scale of {@code outType} using {@code mode}, unlike {@code div}, which truncates. This column, {@code rhs} and
-   * {@code outType} may each be any decimal type, with any scale.
+   * the scale of {@code outType} using {@code mode}, unlike {@code div}, which truncates. This
+   * column, {@code rhs} and {@code outType} may each be any decimal type, with any scale.
    *
-   * An output element is null if the input element is null, if {@code rhs} is null or zero, or if the
-   * rounded quotient does not fit in {@code outType}.
+   * An output element is null if the input element is null or {@code rhs} is null. A row fails if
+   * {@code rhs} is zero or the rounded quotient does not fit in {@code outType}. With
+   * {@link ErrorPolicy#PROPAGATE}, any failing row throws; with {@link ErrorPolicy#NULLIFY},
+   * failing rows are null.
    *
    * @param rhs     the divisor scalar
    * @param outType the decimal type and scale of the output
+   * @param policy  how failing rows are handled
    * @param mode    the rounding mode to use
    * @return a new column of type {@code outType} containing the quotients
-   * @throws CudfException if either input or {@code outType} is not a decimal type
+   * @throws CudfException if either input or {@code outType} is not a decimal type, or if
+   *                       {@code policy} is {@link ErrorPolicy#PROPAGATE} and any row fails
    */
-  public final ColumnVector divideDecimal(Scalar rhs, DType outType, RoundMode mode) {
-    return divideDecimal(rhs, outType, mode, DecimalIntermediate.STANDARD);
+  public final ColumnVector divideDecimal(Scalar rhs, DType outType, ErrorPolicy policy,
+                                          RoundMode mode) {
+    return divideDecimal(rhs, outType, policy, mode, DecimalIntermediate.STANDARD);
   }
 
   /**
    * Divides each element of this decimal column by a decimal scalar, rescaling each dividend into
    * an intermediate value of the given width.
-   * See {@link #divideDecimal(Scalar, DType, RoundMode)} and
-   * {@link #divideDecimal(ColumnView, DType, RoundMode, DecimalIntermediate)}.
+   * See {@link #divideDecimal(Scalar, DType, ErrorPolicy, RoundMode)} and
+   * {@link #divideDecimal(ColumnView, DType, ErrorPolicy, RoundMode, DecimalIntermediate)}.
    *
    * @param rhs          the divisor scalar
    * @param outType      the decimal type and scale of the output
+   * @param policy       how failing rows are handled
    * @param mode         the rounding mode to use
    * @param intermediate the width of the intermediate value
    * @return a new column of type {@code outType} containing the quotients
-   * @throws CudfException if either input or {@code outType} is not a decimal type
+   * @throws CudfException if either input or {@code outType} is not a decimal type, or if
+   *                       {@code policy} is {@link ErrorPolicy#PROPAGATE} and any row fails
    */
-  public final ColumnVector divideDecimal(Scalar rhs, DType outType, RoundMode mode,
-                                          DecimalIntermediate intermediate) {
+  public final ColumnVector divideDecimal(Scalar rhs, DType outType, ErrorPolicy policy,
+                                          RoundMode mode, DecimalIntermediate intermediate) {
     return new ColumnVector(divideDecimalVS(getNativeView(), rhs.getScalarHandle(),
-        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId, intermediate.nativeId));
+        outType.typeId.getNativeId(), outType.getScale(), policy.nativeId, mode.nativeId,
+        intermediate.nativeId));
   }
 
   /**
    * Divides each element of this decimal column by a decimal scalar, rounding HALF_UP.
-   * See {@link #divideDecimal(Scalar, DType, RoundMode)}.
+   * See {@link #divideDecimal(Scalar, DType, ErrorPolicy, RoundMode)}.
    */
-  public final ColumnVector divideDecimal(Scalar rhs, DType outType) {
-    return divideDecimal(rhs, outType, RoundMode.HALF_UP);
+  public final ColumnVector divideDecimal(Scalar rhs, DType outType, ErrorPolicy policy) {
+    return divideDecimal(rhs, outType, policy, RoundMode.HALF_UP);
   }
 
   /////////////////////////////////////////////////////////////////////////////
@@ -5107,10 +5121,12 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   private static native long binaryOpVV(long lhs, long rhs, int op, int dtype, int scale);
 
   private static native long divideDecimalVS(long lhs, long rhs, int dtype, int scale,
-                                             int roundMode, int intermediate) throws CudfException;
+                                             int policy, int roundMode, int intermediate)
+      throws CudfException;
 
   private static native long divideDecimalVV(long lhs, long rhs, int dtype, int scale,
-                                             int roundMode, int intermediate) throws CudfException;
+                                             int policy, int roundMode, int intermediate)
+      throws CudfException;
 
   private static native long countElements(long viewHandle);
 

@@ -705,48 +705,57 @@ public final class Scalar implements AutoCloseable, BinaryOperable {
    * the scale of {@code outType} using {@code mode}, unlike {@code div}, which truncates. This
    * scalar, {@code rhs} and {@code outType} may each be any decimal type, with any scale.
    *
-   * An output element is null if this scalar is null, if the divisor element is null or zero, or
-   * if the rounded quotient does not fit in {@code outType}.
+   * An output element is null if this scalar is null or the divisor element is null. A row fails
+   * if the divisor element is zero or the rounded quotient does not fit in {@code outType}. With
+   * {@link ErrorPolicy#PROPAGATE}, any failing row throws; with {@link ErrorPolicy#NULLIFY},
+   * failing rows are null.
    *
    * @param rhs     the divisor column
    * @param outType the decimal type and scale of the output
+   * @param policy  how failing rows are handled
    * @param mode    the rounding mode to use
    * @return a new column of type {@code outType} containing the quotients
-   * @throws CudfException if either input or {@code outType} is not a decimal type
+   * @throws CudfException if either input or {@code outType} is not a decimal type, or if
+   *                       {@code policy} is {@link ErrorPolicy#PROPAGATE} and any row fails
    */
-  public ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode) {
-    return divideDecimal(rhs, outType, mode, DecimalIntermediate.STANDARD);
+  public ColumnVector divideDecimal(ColumnView rhs, DType outType, ErrorPolicy policy,
+                                    RoundMode mode) {
+    return divideDecimal(rhs, outType, policy, mode, DecimalIntermediate.STANDARD);
   }
 
   /**
    * Divides this decimal scalar by each element of a decimal column, rescaling the dividend into
    * an intermediate value of the given width.
-   * See {@link #divideDecimal(ColumnView, DType, RoundMode)} and
-   * {@link ColumnView#divideDecimal(ColumnView, DType, RoundMode, DecimalIntermediate)}.
+   * See {@link #divideDecimal(ColumnView, DType, ErrorPolicy, RoundMode)} and
+   * {@link ColumnView#divideDecimal(ColumnView, DType, ErrorPolicy, RoundMode, DecimalIntermediate)}.
    *
    * @param rhs          the divisor column
    * @param outType      the decimal type and scale of the output
+   * @param policy       how failing rows are handled
    * @param mode         the rounding mode to use
    * @param intermediate the width of the intermediate value
    * @return a new column of type {@code outType} containing the quotients
-   * @throws CudfException if either input or {@code outType} is not a decimal type
+   * @throws CudfException if either input or {@code outType} is not a decimal type, or if
+   *                       {@code policy} is {@link ErrorPolicy#PROPAGATE} and any row fails
    */
-  public ColumnVector divideDecimal(ColumnView rhs, DType outType, RoundMode mode,
-                                    DecimalIntermediate intermediate) {
+  public ColumnVector divideDecimal(ColumnView rhs, DType outType, ErrorPolicy policy,
+                                    RoundMode mode, DecimalIntermediate intermediate) {
     return new ColumnVector(divideDecimalSV(getScalarHandle(), rhs.getNativeView(),
-        outType.typeId.getNativeId(), outType.getScale(), mode.nativeId, intermediate.nativeId));
+        outType.typeId.getNativeId(), outType.getScale(), policy.nativeId, mode.nativeId,
+        intermediate.nativeId));
   }
 
   /**
    * Divides this decimal scalar by each element of a decimal column, rounding HALF_UP.
-   * See {@link #divideDecimal(ColumnView, DType, RoundMode)}.
+   * See {@link #divideDecimal(ColumnView, DType, ErrorPolicy, RoundMode)}.
    */
-  public ColumnVector divideDecimal(ColumnView rhs, DType outType) {
-    return divideDecimal(rhs, outType, RoundMode.HALF_UP);
+  public ColumnVector divideDecimal(ColumnView rhs, DType outType, ErrorPolicy policy) {
+    return divideDecimal(rhs, outType, policy, RoundMode.HALF_UP);
   }
 
   private static native long divideDecimalSV(long lhs, long rhs, int dtype, int scale,
-                                             int roundMode, int intermediate) throws CudfException;
+                                             int policy, int roundMode, int intermediate)
+      throws CudfException;
 
   @Override
   public boolean equals(Object o) {

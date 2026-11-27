@@ -34,9 +34,11 @@
 #include <BS_thread_pool_utils.hpp>
 
 #include <algorithm>
+#include <exception>
 #include <functional>
 #include <map>
 #include <numeric>
+#include <span>
 #include <unordered_set>
 
 namespace cudf::io::json::detail {
@@ -752,6 +754,42 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
                              {partial_tables[0].metadata.schema_info}};
 }
 
+// Joins `streams` into `stream` if the scope is left by an exception before `join()`.
+// The normal path calls `join()`, so destruction does not join a second time. A failure
+// to join while another exception is already in flight must not replace that exception.
+class join_streams_on_unwind {
+ public:
+  join_streams_on_unwind(std::span<cuda::stream_ref const> streams, cuda::stream_ref stream)
+    : streams_{streams}, stream_{stream}, uncaught_{std::uncaught_exceptions()}
+  {
+  }
+
+  join_streams_on_unwind(join_streams_on_unwind const&)            = delete;
+  join_streams_on_unwind& operator=(join_streams_on_unwind const&) = delete;
+
+  void join()
+  {
+    cudf::detail::join_streams(streams_, stream_);
+    joined_ = true;
+  }
+
+  ~join_streams_on_unwind() noexcept
+  {
+    if (joined_ or std::uncaught_exceptions() <= uncaught_) { return; }
+    try {
+      cudf::detail::join_streams(streams_, stream_);
+    } catch (...) {
+      // A join failure means the context is already faulted; it must not replace the original
+    }
+  }
+
+ private:
+  std::span<cuda::stream_ref const> streams_;
+  cuda::stream_ref stream_;
+  int const uncaught_;
+  bool joined_{false};
+};
+
 }  // anonymous namespace
 
 device_span<char> ingest_raw_input(device_span<char> buffer,
@@ -788,6 +826,8 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
   std::size_t const num_streams =
     std::min<std::size_t>(sources.size() - start_source + 1, pools::tpool().get_thread_count());
   auto stream_pool = cudf::detail::fork_streams(stream, num_streams);
+  // Freed in `stream` order, so a throw must still wait for copies queued on the forks.
+  join_streams_on_unwind stream_guard{stream_pool, stream};
   std::vector<void*> batch_dsts;
   std::vector<void const*> batch_srcs;
   std::vector<std::size_t> batch_sizes;
@@ -813,7 +853,7 @@ device_span<char> ingest_raw_input(device_span<char> buffer,
     range_offset = 0;
     delimiter_map.push_back(bytes_read + (num_delimiter_chars * delimiter_map.size()));
   }
-  cudf::detail::join_streams(stream_pool, stream);
+  stream_guard.join();
   if (!batch_dsts.empty()) {
     CUDF_CUDA_TRY(cudf::detail::memcpy_batch_async(
       batch_dsts.data(), batch_srcs.data(), batch_sizes.data(), batch_dsts.size(), stream));

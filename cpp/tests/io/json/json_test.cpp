@@ -11,6 +11,7 @@
 #include <cudf_test/cudf_gtest.hpp>
 #include <cudf_test/default_stream.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/random.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
@@ -25,14 +26,29 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/pinned_memory.hpp>
 
-#include <cuda/iterator>
+#include <rmm/mr/cuda_async_memory_resource.hpp>
 
+#include <cuda/iterator>
+#include <cuda/stream>
+#include <cuda_runtime_api.h>
+
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <cstddef>
+#include <cstring>
 #include <fstream>
+#include <future>
 #include <limits>
 #include <memory>
+#include <mutex>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
+#include <vector>
 
 #define wrapper cudf::test::fixed_width_column_wrapper
 using float_wrapper        = wrapper<float>;
@@ -3655,6 +3671,108 @@ TEST_F(JsonBatchedReaderTest, EmptyLastBatch)
                                  cudf::test::strings_column_wrapper{{"b", "b", "b", "b"}});
 }
 
+namespace {
+
+struct host_read_error : std::runtime_error {
+  host_read_error() : std::runtime_error{"injected host_read failure"} {}
+};
+
+// Blocks a CUDA stream inside a host callback until release(). Destruction releases.
+class stream_gate {
+ public:
+  ~stream_gate() { release(); }
+
+  void wait()
+  {
+    std::unique_lock lock{mutex_};
+    condition_.wait_for(lock, std::chrono::seconds{10}, [this] { return released_; });
+  }
+
+  void release()
+  {
+    {
+      std::lock_guard lock{mutex_};
+      released_ = true;
+    }
+    condition_.notify_all();
+  }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable condition_;
+  bool released_{false};
+};
+
+class gated_device_source : public cudf::io::datasource {
+ public:
+  explicit gated_device_source(std::string data) : data_{std::move(data)} {}
+
+  std::unique_ptr<buffer> host_read(size_t offset, size_t size) override
+  {
+    auto const count = std::min(size, data_.size() - offset);
+    return buffer::create(
+      std::vector<std::byte>(reinterpret_cast<std::byte const*>(data_.data() + offset),
+                             reinterpret_cast<std::byte const*>(data_.data() + offset + count)));
+  }
+
+  size_t host_read(size_t offset, size_t size, uint8_t* dst) override
+  {
+    auto const count = std::min(size, data_.size() - offset);
+    std::memcpy(dst, data_.data() + offset, count);
+    return count;
+  }
+
+  [[nodiscard]] bool supports_device_read() const override { return true; }
+
+  [[nodiscard]] size_t size() const override { return data_.size(); }
+
+  std::future<size_t> device_read_async(size_t offset,
+                                        size_t size,
+                                        uint8_t*,
+                                        cuda::stream_ref stream) override
+  {
+    forked_ = stream.get();
+    CUDF_CUDA_TRY(cudaLaunchHostFunc(
+      stream.get(), [](void* gate) { static_cast<stream_gate*>(gate)->wait(); }, &gate_));
+    auto const count = std::min(size, data_.size() - offset);
+    std::promise<size_t> promise;
+    promise.set_value(count);
+    return promise.get_future();
+  }
+
+  [[nodiscard]] cudaStream_t forked_stream() const { return forked_; }
+
+  void release() { gate_.release(); }
+
+ private:
+  std::string data_;
+  stream_gate gate_;
+  cudaStream_t forked_{nullptr};
+};
+
+class throwing_host_source : public cudf::io::datasource {
+ public:
+  explicit throwing_host_source(std::string data) : data_{std::move(data)} {}
+
+  std::unique_ptr<buffer> host_read(size_t, size_t) override { throw host_read_error{}; }
+
+  size_t host_read(size_t, size_t, uint8_t*) override { throw host_read_error{}; }
+
+  [[nodiscard]] size_t size() const override { return data_.size(); }
+
+ private:
+  std::string data_;
+};
+
+cuda::stream make_stream()
+{
+  int device{};
+  CUDF_CUDA_TRY(cudaGetDevice(&device));
+  return cuda::stream{cuda::device_ref{device}};
+}
+
+}  // namespace
+
 TEST_F(JsonReaderTest, DeviceReadAsyncThrows)
 {
   // Create simple JSON data
@@ -3684,6 +3802,60 @@ TEST_F(JsonReaderTest, DeviceReadAsyncThrows)
     // Test fails if any other exception is thrown
     FAIL() << "Unexpected exception thrown: " << e.what();
   }
+}
+
+TEST_F(JsonReaderTest, MultiSourceReadJoinsForkedStreamsWhenHostReadThrows)
+{
+  // The ingest buffer is freed on the reader stream. A synchronizing allocator would wait for
+  // every stream, including the one this test blocks, so use a stream-ordered resource.
+  cudf::test::scoped_current_device_resource resource_scope{rmm::mr::cuda_async_memory_resource{}};
+
+  auto stream              = make_stream();
+  auto const reader_stream = cuda::stream_ref{stream.get()};
+  gated_device_source device_source{"{\"a\":1}\n"};
+  throwing_host_source host_source{"{\"a\":2}\n"};
+  struct release_gate {
+    gated_device_source& source;
+    cudaStream_t stream;
+    ~release_gate()
+    {
+      source.release();
+      if (source.forked_stream() != nullptr) { cudaStreamSynchronize(source.forked_stream()); }
+      cudaStreamSynchronize(stream);
+      static_cast<void>(cudaGetLastError());
+    }
+  } cleanup{device_source, reader_stream.get()};
+
+  std::vector<cudf::io::datasource*> sources{&device_source, &host_source};
+  auto const read_args =
+    cudf::io::json_reader_options::builder(cudf::io::source_info{sources}).lines(true).build();
+
+  bool threw = false;
+  try {
+    cudf::io::read_json(read_args, reader_stream);
+  } catch (host_read_error const&) {
+    threw = true;
+  }
+  ASSERT_TRUE(threw);
+  ASSERT_NE(device_source.forked_stream(), nullptr);
+
+  // A pool that returns the reader stream is already ordered with the blocked read.
+  if (device_source.forked_stream() == reader_stream.get()) { return; }
+
+  // The device read stays blocked until `cleanup` releases it. The reader stream stays
+  // busy for that whole interval only when the forked stream was joined back into it.
+  bool reader_finished = false;
+  auto const deadline  = std::chrono::steady_clock::now() + std::chrono::milliseconds{200};
+  while (std::chrono::steady_clock::now() < deadline) {
+    auto const status = cudaStreamQuery(reader_stream.get());
+    if (status == cudaSuccess) {
+      reader_finished = true;
+      break;
+    }
+    ASSERT_EQ(status, cudaErrorNotReady);
+  }
+  static_cast<void>(cudaGetLastError());
+  EXPECT_FALSE(reader_finished) << "reader stream went idle while the forked read was blocked";
 }
 
 TEST_F(JsonReaderTest, DeviceWriteAsyncThrows)

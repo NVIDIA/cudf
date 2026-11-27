@@ -21,11 +21,7 @@ inline lto_fragments get_udf_fragments()
   return {&fragment, 1};
 }
 
-/**
- * @brief Returns a named UDF from the shared embedded test module.
- *
- * The fragment has static storage. The caller must keep the symbol alive during evaluation.
- */
+/// @brief Returns a named UDF from the shared embedded test module.
 template <auto Fragment = cudf_test_fragments::udfs_lto_ir>
 inline transform_udf get_udf(std::string_view symbol,
                              null_aware is_null_aware = null_aware::NO,

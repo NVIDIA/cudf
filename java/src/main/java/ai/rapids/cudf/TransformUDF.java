@@ -8,16 +8,9 @@ package ai.rapids.cudf;
 import java.util.Objects;
 
 /**
- * An explicitly named transform function and the modules defining it.
+ * An explicitly named transform function and the fragments defining it.
  *
- * The CUDF ABI is {@code cudf::errc symbol(Indices... indices, Outputs*... outputs, Inputs... inputs)}.
- * The output pointer precedes all inputs.
- * When indexed, a logical row index precedes the output pointer.
- * Indices use {@code cudf::size_type} and are never optional.
- * Null-aware calls wrap column and output values in {@code cuda::std::optional}.
- *
- * Modules may export multiple symbols and reference symbols in other supplied modules.
- * This descriptor retains its fragments and their module byte arrays.
+ * The referenced function must conform to the CUDF ABI.
  */
 public final class TransformUDF {
   private final String symbol;
@@ -28,7 +21,7 @@ public final class TransformUDF {
   /**
    * Create an unindexed UDF using ordinary input and output values.
    * @param symbol exact exported device symbol, expressible as a CUDA identifier
-   * @param fragments compiled modules defining the function and its dependencies
+   * @param fragments compiled fragments defining the function and its dependencies
    */
   public TransformUDF(String symbol, LtoFragment... fragments) {
     this(symbol, false, false, fragments);
@@ -39,7 +32,7 @@ public final class TransformUDF {
    * @param symbol exact exported device symbol, expressible as a CUDA identifier
    * @param nullAware whether column and output values use {@code cuda::std::optional}
    * @param indexed whether a logical row index precedes all other arguments
-   * @param fragments compiled modules defining the function and its dependencies
+   * @param fragments compiled fragments defining the function and its dependencies
    */
   public TransformUDF(String symbol, boolean nullAware, boolean indexed,
                       LtoFragment... fragments) {
@@ -62,8 +55,8 @@ public final class TransformUDF {
   }
 
   /**
-   * Returns a copy of the fragment array in link order.
-   * @return the modules defining the function and its dependencies, in link order
+   * Returns a copy of the fragments.
+   * @return the fragments defining the function and its dependencies
    */
   public LtoFragment[] getFragments() {
     return fragments.clone();

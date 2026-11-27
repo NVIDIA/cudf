@@ -29,16 +29,6 @@ public final class LtoFragment {
   /**
    * Compile CUDA device source into an LTO IR fragment.
    * Uses C++20, enables automatic precompiled headers, and uses the PCH key
-   * {@code cudf_user_fragment}. No additional headers or include directories are supplied.
-   *
-   * The returned fragment owns its module bytes and can be shared by multiple UDFs:
-   * {@code
-   * LtoFragment fragment = LtoFragment.compileCudaToLtoIr(source);
-   * TransformUDF udf = new TransformUDF("add_one", fragment);
-   * try (ColumnVector result = input.transform(udf, DType.INT32)) {
-   *   // Use result.
-   * }
-   * }
    *
    * @param source CUDA device source; include {@code <cudf/udf_includes.hpp>} for common UDF types
    * @return an owning fragment with binary type {@link LtoBinaryType#LTO_IR}
@@ -52,14 +42,8 @@ public final class LtoFragment {
 
   /**
    * Compile CUDA device source into an LTO IR fragment with explicit compilation options.
-   * Compiled fragments are cached by source, in-memory headers, ordered include paths, PCH use,
-   * and C++ standard. Filesystem headers and their dependencies must remain unchanged while
-   * caches may be reused; use versioned include paths when changing filesystem dependencies.
    *
    * When PCH is enabled, headers used to build it must remain unchanged while it may be reused.
-   * Place changing headers after {@code #pragma nv_hdrstop} or disable PCH. Source filenames do
-   * not isolate PCH reuse: NVRTC may reuse a compatible PCH across filenames. PCH is recommended
-   * whenever possible to improve compilation performance.
    *
    * @param source CUDA device source; include {@code <cudf/udf_includes.hpp>} for common UDF types
    * @param includeNames names of additional in-memory headers

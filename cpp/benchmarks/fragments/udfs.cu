@@ -31,7 +31,7 @@ __device__ errc join_predicate_greater(bool* output,
 }
 
 __device__ errc calculate_tpch_q9_price(
-  double* amount, double discount, double extended_price, double supply_cost, double quantity)
+  double* amount, double discount, double extended_price, double supply_cost, int8_t quantity)
 {
   *amount = extended_price * (1 - discount) - supply_cost * quantity;
 

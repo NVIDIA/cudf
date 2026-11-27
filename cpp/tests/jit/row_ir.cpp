@@ -23,6 +23,8 @@
 #include <cctype>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
+#include <string_view>
 
 namespace row_ir = cudf::detail::row_ir;
 
@@ -489,7 +491,7 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
   // of a pure callee share one evaluation; separate calls of an impure one are never merged, but
   // one call referred to twice is evaluated once.
   auto ref      = cudf::ast::column_reference{3};
-  auto code_for = [&](bool is_pure, bool one_call) {
+  auto code_for = [&](bool is_pure, bool one_call, std::string_view function_name) {
     auto const function = cudf::ast::jit::udf{
       "f", is_pure, cudf::data_type{cudf::type_id::INT32}, {cudf::data_type{cudf::type_id::INT32}}};
     auto tree = cudf::ast::tree{};
@@ -500,7 +502,7 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
     row_ir::ast_converter converter{
       cudf::get_default_stream(), cudf::get_current_device_resource_ref(), table, {}};
     auto [code, null_aware, nullability] =
-      converter.generate_code(row_ir::target::CUDA, expressions, "cudf_transform");
+      converter.generate_code(row_ir::target::CUDA, expressions, function_name);
     return code;
   };
 
@@ -529,9 +531,10 @@ int32_t tmp_4 = tmp_3;
 return cudf::errc::SUCCESS;
 })***";
 
-  EXPECT_EQ(code_for(true, false), expected_pure);
-  EXPECT_EQ(code_for(false, false), expected_impure);
-  EXPECT_EQ(code_for(false, true), expected_pure);
+  EXPECT_EQ(code_for(true, false, "cudf_transform"), expected_pure);
+  EXPECT_EQ(code_for(false, false, "cudf_transform"), expected_impure);
+  EXPECT_EQ(code_for(false, true, "cudf_transform"), expected_pure);
+  EXPECT_THROW(code_for(true, false, "f"), std::invalid_argument);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

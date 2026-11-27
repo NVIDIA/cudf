@@ -529,10 +529,10 @@ std::optional<compiled_fragment> get_udf_adapter(std::string_view symbol,
   auto source = std::format(R"CUDA(
 #include <jit/cudf_abi.cuh>
 #pragma nv_hdrstop
-namespace cudf_abi {{
-extern "C" __device__ errc {0}({1});
-extern "C" __device__ errc {3}({1}) {{ return {0}({2}); }}
-}}
+
+extern "C" __device__ cudf_abi::errc {0}({1});
+
+extern "C" __device__ cudf_abi::errc {3}({1}) {{ return ::{0}({2}); }}
 )CUDA",
                             symbol,
                             declarations,

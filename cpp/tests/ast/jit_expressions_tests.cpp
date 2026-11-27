@@ -379,15 +379,14 @@ TEST_F(JITExpressionTest, UdfCallUserErrorCodes)
     return cudf::errc::SUCCESS;
   };
 
-  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED_BEGIN), 0}),
-            cudf::errc::USER_RESERVED_BEGIN);
+  EXPECT_EQ(error_of({0, code(cudf::errc::USER_RESERVED), 0}), cudf::errc::USER_RESERVED);
   EXPECT_EQ(
     error_of({code(static_cast<cudf::errc>(0x20000)), 0, code(static_cast<cudf::errc>(0x10005))}),
     static_cast<cudf::errc>(0x20000));
   EXPECT_EQ(error_of({code(cudf::errc::DIVISION_BY_ZERO),
-                      code(cudf::errc::USER_RESERVED_BEGIN),
+                      code(cudf::errc::USER_RESERVED),
                       code(cudf::errc::ARITHMETIC_OVERFLOW)}),
-            cudf::errc::USER_RESERVED_BEGIN);
+            cudf::errc::USER_RESERVED);
   EXPECT_STREQ(cudf::to_string(static_cast<cudf::errc>(0x10011)), "Unknown Error");
 }
 

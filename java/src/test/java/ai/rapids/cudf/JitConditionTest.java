@@ -111,7 +111,22 @@ public class JitConditionTest extends CudfTestBase {
   @ParameterizedTest(name = "{0}")
   @MethodSource("joinCalls")
   void testJitConditionUnsupported(String name, Function<Fixture, Object> call) {
-    try (Fixture f = new Fixture()) {
+    BinaryOperation expr = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnReference(1, TableReference.LEFT),
+        new ColumnReference(1, TableReference.RIGHT));
+    try (Table left = new Table.TestBuilder()
+             .column(2, 3, 9, 0, 1, 7, 4, 6, 5, 8)
+             .column(1, 2, 3, 4, 5, 6, 7, 8, 9, 0)
+             .build();
+         Table right = new Table.TestBuilder()
+             .column(6, 5, 9, 8, 10, 32)
+             .column(0, 1, 2, 3, 4, 5)
+             .build();
+         Table leftKeys = new Table(left.getColumn(0));
+         Table rightKeys = new Table(right.getColumn(0));
+         CompiledExpression condition = expr.compile();
+         CompiledExpression jitCondition = expr.compileJit()) {
+      Fixture f = new Fixture(left, right, leftKeys, rightKeys, condition, jitCondition);
       CudfException e = assertThrows(CudfException.class, () -> closeResult(call.apply(f)));
       assertEquals("JIT-compiled expressions cannot be used by a default AST consumer",
           e.getMessage());
@@ -136,7 +151,7 @@ public class JitConditionTest extends CudfTestBase {
     }
   }
 
-  private static final class Fixture implements AutoCloseable {
+  private static final class Fixture {
     final Table left;
     final Table right;
     final Table leftKeys;
@@ -146,58 +161,14 @@ public class JitConditionTest extends CudfTestBase {
     /** The same condition compiled for JIT */
     final CompiledExpression jitCondition;
 
-    Fixture() {
-      BinaryOperation expr = new BinaryOperation(BinaryOperator.GREATER,
-          new ColumnReference(1, TableReference.LEFT),
-          new ColumnReference(1, TableReference.RIGHT));
-      Table left = null;
-      Table right = null;
-      Table leftKeys = null;
-      Table rightKeys = null;
-      CompiledExpression condition = null;
-      CompiledExpression jitCondition = null;
-      try {
-        left = new Table.TestBuilder()
-            .column(2, 3, 9, 0, 1, 7, 4, 6, 5, 8)
-            .column(1, 2, 3, 4, 5, 6, 7, 8, 9, 0)
-            .build();
-        right = new Table.TestBuilder()
-            .column(6, 5, 9, 8, 10, 32)
-            .column(0, 1, 2, 3, 4, 5)
-            .build();
-        leftKeys = new Table(left.getColumn(0));
-        rightKeys = new Table(right.getColumn(0));
-        condition = expr.compile();
-        jitCondition = expr.compileJit();
-      } catch (Throwable t) {
-        for (AutoCloseable c : new AutoCloseable[]{
-            jitCondition, condition, rightKeys, leftKeys, right, left}) {
-          if (c != null) {
-            try {
-              c.close();
-            } catch (Throwable closeEx) {
-              t.addSuppressed(closeEx);
-            }
-          }
-        }
-        throw t;
-      }
+    Fixture(Table left, Table right, Table leftKeys, Table rightKeys,
+        CompiledExpression condition, CompiledExpression jitCondition) {
       this.left = left;
       this.right = right;
       this.leftKeys = leftKeys;
       this.rightKeys = rightKeys;
       this.condition = condition;
       this.jitCondition = jitCondition;
-    }
-
-    @Override
-    public void close() {
-      jitCondition.close();
-      condition.close();
-      rightKeys.close();
-      leftKeys.close();
-      right.close();
-      left.close();
     }
   }
 }

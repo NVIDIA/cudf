@@ -25,7 +25,7 @@ import static org.junit.jupiter.params.provider.Arguments.arguments;
  * Join APIs taking a {@link CompiledExpression} condition do not support expressions produced by
  * {@link ai.rapids.cudf.ast.AstExpression#compileJit()}.
  */
-public class JitConditionTest extends CudfTestBase {
+public class TableJoinJitConditionTest extends CudfTestBase {
   private static Stream<Arguments> joinCalls() {
     return Stream.of(
         call("conditionalLeftJoinRowCount",

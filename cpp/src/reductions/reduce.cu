@@ -397,7 +397,7 @@ extern "C" __device__ cudf::errc {}({});
     source += std::format(R"CUDA(
 extern "C" __device__ cudf::errc {}({})
 {{
-  return {}({});
+  return ::{}({});
 }}
 )CUDA",
                           callback.target,

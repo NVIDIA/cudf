@@ -74,8 +74,7 @@ run_example ./localize_phone_jit info.csv output.csv
 run_example ./localize_phone_precompiled info.csv output.csv
 run_example ./url_log_transforms logs.csv output.csv regex 100
 run_example ./url_log_transforms logs.csv output.csv precompiled 100
-run_example ./url_log_transforms logs.csv output.csv cuda-jit 100 --cold
-run_example ./url_log_transforms logs.csv output.csv lto-jit 100 --cold
+run_example ./url_log_transforms logs.csv output.csv lto 100 --cold
 popd || exit
 
 exit ${EXITCODE}

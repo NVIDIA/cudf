@@ -23,7 +23,6 @@
 #include <cooperative_groups/reduce.h>
 #include <cuda/iterator>
 #include <cuda/stream>
-#include <thrust/count.h>
 #include <thrust/transform.h>
 
 namespace cudf {
@@ -200,30 +199,36 @@ CUDF_KERNEL void like_kernel(column_device_view d_strings,
   auto const esc_char      = d_escape.empty() ? 0 : d_escape.data()[0];
   auto const lane_idx      = warp.thread_rank();
 
-  auto count_wc_fn = [p = pattern_begin, esc_char](auto const idx) {
-    return (p[idx] == multi_wildcard) && (idx == 0 || p[idx - 1] != esc_char);
-  };
+  // Returns the byte position of the next unescaped multi-wildcard at or after idx
+  // or the pattern size if none is found.
+  // The idx must not point to the character following an escape character.
   auto find_next_wc = [pattern_begin, pattern_end, esc_char](size_type idx) {
     auto itr = pattern_begin + idx;
     while (itr < pattern_end) {
-      if (*itr == multi_wildcard && (*(itr - 1) != esc_char)) { return idx; }
+      if (*itr == esc_char) {
+        // skip the escape character along with the character it escapes
+        itr += (itr + 1 < pattern_end) ? 2 : 1;
+        continue;
+      }
+      if (*itr == multi_wildcard) { break; }
       ++itr;
-      ++idx;
     }
-    return idx;
+    return static_cast<size_type>(cuda::std::distance(pattern_begin, itr));
   };
 
-  auto const itr_zero = cuda::counting_iterator<size_type>{0};
-  auto const itr_size = cuda::counting_iterator<size_type>{d_pattern.size_bytes()};
-  auto const wcs_size =
-    esc_char == multi_wildcard ? 0 : thrust::count_if(thrust::seq, itr_zero, itr_size, count_wc_fn);
+  auto const pattern_size = d_pattern.size_bytes();
+  // count the unescaped multi-wildcards in the pattern
+  auto wcs_size = size_type{0};
+  for (auto idx = find_next_wc(0); idx < pattern_size; idx = find_next_wc(idx + 1)) {
+    ++wcs_size;
+  }
 
   auto wcs_idx = 0;
   auto next_wc = 0;
   bool result  = true;
   if (wcs_size == 0 || *pattern_begin != multi_wildcard) {
     // pattern does not start with a wildcard; check for literal match
-    next_wc       = wcs_size > 0 ? find_next_wc(0) : d_pattern.size_bytes();
+    next_wc       = find_next_wc(0);
     auto out_size = 0;
     if (lane_idx == 0) {
       auto const end = next_wc + pattern_begin;
@@ -280,13 +285,19 @@ CUDF_KERNEL void like_kernel(column_device_view d_strings,
       }
       if (target_itr + size <= target_end) {  // quick max estimate
         if (lane_idx == 0) {
-          target_itr = target_end;
-          while (size > 0 && target_itr > d_str.data()) {
+          // walk back from the end but not past the position reached by the previous matches
+          auto const target_begin = target_itr;
+          target_itr              = target_end;
+          while (size > 0 && target_itr > target_begin) {
             size -= is_begin_utf8_char(*(--target_itr));
           }
-          cuda::std::tie(result, size) =
-            compare_literal(target_itr, target_end, esc_char, begin, pattern_end);
-          target_itr += size;
+          if (size > 0) {
+            result = false;  // not enough characters remain for the literal
+          } else {
+            cuda::std::tie(result, size) =
+              compare_literal(target_itr, target_end, esc_char, begin, pattern_end);
+            target_itr += size;
+          }
         }
       } else {
         result = false;  // literal will not match the remaining string

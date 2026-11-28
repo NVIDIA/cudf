@@ -627,6 +627,7 @@ ConfigureTest(
   strings/reverse_tests.cpp
   strings/slice_tests.cpp
   strings/split_tests.cpp
+  strings/string_view_compare_test.cu
   strings/strip_tests.cpp
   strings/translate_tests.cpp
   strings/urls_tests.cpp

@@ -311,6 +311,31 @@ __device__ inline int string_view::compare(char const* data, size_type bytes) co
   auto const* ptr2     = reinterpret_cast<unsigned char const*>(data);
   if ((ptr1 == ptr2) && (bytes == len1)) return 0;
   size_type idx = 0;
+#if defined(__CUDACC__)
+  // Compare 4 bytes per step. Strings in a column are rarely 4-byte aligned, so each string is
+  // read with aligned 32-bit loads and its bytes are realigned with a funnel shift. The words
+  // loaded always contain at least one byte of the string, so no load crosses an allocation
+  // boundary. The remaining bytes are compared one at a time below.
+  auto const n = len1 < bytes ? len1 : bytes;
+  if (n >= 8) {
+    auto const a1  = reinterpret_cast<uintptr_t>(ptr1);
+    auto const a2  = reinterpret_cast<uintptr_t>(ptr2);
+    auto const sh1 = static_cast<uint32_t>(a1 & 3u) * 8u;
+    auto const sh2 = static_cast<uint32_t>(a2 & 3u) * 8u;
+    auto const* w1 = reinterpret_cast<uint32_t const*>(a1 & ~uintptr_t{3});
+    auto const* w2 = reinterpret_cast<uint32_t const*>(a2 & ~uintptr_t{3});
+    for (; idx + 4 <= n; idx += 4, ++w1, ++w2) {
+      uint32_t const v1 = sh1 ? __funnelshift_r(w1[0], w1[1], sh1) : w1[0];
+      uint32_t const v2 = sh2 ? __funnelshift_r(w2[0], w2[1], sh2) : w2[0];
+      if (v1 != v2) {
+        // little-endian load: byte-swap so the unsigned compare is lexicographic by byte
+        return __byte_perm(v1, 0, 0x0123) < __byte_perm(v2, 0, 0x0123) ? -1 : 1;
+      }
+    }
+    ptr1 += idx;
+    ptr2 += idx;
+  }
+#endif
   for (; (idx < len1) && (idx < bytes); ++idx) {
     if (*ptr1 != *ptr2) return static_cast<int32_t>(*ptr1) - static_cast<int32_t>(*ptr2);
     ++ptr1;

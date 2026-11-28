@@ -91,8 +91,6 @@ enum class binary_operator : int32_t {
                          ///< operand when one is null; or invalid when both are null
   NULL_MIN,              ///< Returns min of operands when both are non-null; returns the non-null
                          ///< operand when one is null; or invalid when both are null
-  GENERIC_BINARY,        ///< generic binary operator to be generated with input
-                         ///< ptx code
   NULL_LOGICAL_AND,  ///< three-valued (Kleene) &&: if any operand is false, returns false; if both
                      ///< operands are true, returns true; otherwise returns null
   NULL_LOGICAL_OR,   ///< three-valued (Kleene) ||: if any operand is true, returns true; if both
@@ -330,40 +328,6 @@ std::unique_ptr<column> binary_operation(
   binary_operator op,
   data_type output_type,
   error_policy policy,
-  cuda::stream_ref stream   = cudf::get_default_stream(),
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
-
-/**
- * @brief Performs a binary operation between two columns using a
- * user-defined PTX function.
- *
- * @deprecated in release 26.12 and will be removed in a future release. Use `cudf::transform`
- * instead.
- *
- * The output contains the result of `op(lhs[i], rhs[i])` for all `0 <= i < lhs.size()`
- *
- * Regardless of the operator, the validity of the output value is the logical
- * AND of the validity of the two operands
- *
- * @param lhs         The left operand column
- * @param rhs         The right operand column
- * @param ptx         String containing the PTX of a binary function
- * @param output_type The desired data type of the output column. It is assumed
- *                    that output_type is compatible with the output data type
- *                    of the function in the PTX code
- * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr          Memory resources used for temporary allocations and the returned column
- * @return            Output column of `output_type` type containing the result of
- *                    the binary operation
- * @throw cudf::logic_error if @p lhs and @p rhs are different sizes
- * @throw cudf::logic_error if @p lhs and @p rhs dtypes aren't numeric
- * @throw cudf::logic_error if @p output_type dtype isn't numeric
- */
-[[deprecated("Use cudf::transform instead")]] std::unique_ptr<column> binary_operation(
-  column_view const& lhs,
-  column_view const& rhs,
-  std::string const& ptx,
-  data_type output_type,
   cuda::stream_ref stream   = cudf::get_default_stream(),
   cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 

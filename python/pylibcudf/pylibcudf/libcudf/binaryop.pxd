@@ -47,7 +47,6 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         NULL_NOT_EQUALS
         NULL_MAX
         NULL_MIN
-        GENERIC_BINARY
         NULL_LOGICAL_AND
         NULL_LOGICAL_OR
         ADD_OVERFLOW

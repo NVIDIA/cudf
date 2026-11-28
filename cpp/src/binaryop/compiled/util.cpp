@@ -142,9 +142,6 @@ struct is_supported_operation_functor {
         case binary_operator::PMOD:                 return call<ops::PMod>(out_type);
         case binary_operator::NULL_MAX:             return call<ops::NullMax>(out_type);
         case binary_operator::NULL_MIN:             return call<ops::NullMin>(out_type);
-        /*
-        case binary_operator::GENERIC_BINARY:       // defined in jit only.
-        */
         default:                                    return false;
           // clang-format on
       }

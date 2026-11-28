@@ -98,7 +98,7 @@ def test_one_hot_encode():
 # return, output written through the first pointer parameter) is what
 # ``cudf::transform`` expects; libcudf's nvJitLink path re-targets the PTX to the
 # running device, so ``.version 6.3`` / ``.target sm_70`` is portable across the
-# CI CUDA matrix (mirroring cpp/tests/binaryop/binop-generic-ptx-test.cpp).
+# CI CUDA matrix.
 _TRANSFORM_UDF_PTX = """\
 .version 6.3
 .target sm_70

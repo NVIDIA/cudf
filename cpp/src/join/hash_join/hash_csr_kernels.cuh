@@ -340,7 +340,7 @@ CUDF_EXTERN_HASH_CSR_PROBE_COUNT(true, hash_csr_nested_equal, hash_csr_row_hashe
  * @return One offset per probe row plus the end offset, and the total number of output pairs
  */
 std::pair<cuda::device_buffer<cuda::std::int64_t>, std::size_t> hash_csr_match_offsets(
-  device_span<size_type const> match_counts, cuda::stream_ref stream);
+  device_span<size_type const> match_counts, cuda::stream_ref stream, cudf::memory_resources mr);
 
 /**
  * @brief Emits the row index pairs of the probe rows from their output offsets and matching

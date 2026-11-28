@@ -6,6 +6,7 @@
 #include "distinct_helpers.hpp"
 
 #include <cudf/detail/algorithms/copy_if.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/stream_compaction.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -27,7 +28,7 @@ void initialize_reduction_results(size_type* results,
                                   cuda::stream_ref stream,
                                   cudf::memory_resources mr)
 {
-  thrust::uninitialized_fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::uninitialized_fill(cudf::detail::exec_policy_nosync(stream, mr),
                              results,
                              results + num_rows,
                              reduction_init_value(keep));
@@ -37,10 +38,10 @@ size_type copy_reduction_results(size_type const* results,
                                  size_type num_rows,
                                  size_type* output,
                                  duplicate_keep_option keep,
-                                 cuda::stream_ref stream)
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto const output_end     = [&] {
+  auto const output_end = [&] {
     if (keep == duplicate_keep_option::KEEP_NONE) {
       // KEEP_NONE stores group sizes; retain only singleton groups.
       return cudf::detail::copy_if(

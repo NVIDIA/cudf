@@ -37,7 +37,7 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
   auto const needles_has_nulls  = has_nested_nulls(needles);
   auto const has_any_nulls      = haystack_has_nulls || needles_has_nulls;
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   auto const preprocessed_needles =
     cudf::detail::row::equality::preprocessed_table::create(needles, stream, temp_mr);
   auto const preprocessed_haystack =
@@ -71,7 +71,8 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
                      d_equal,
                      cuco::linear_probing<1, decltype(d_hasher)>{d_hasher},
                      contained,
-                     stream);
+                     stream,
+                     mr);
   } else {
     auto const haystack_hasher   = cudf::detail::row::hash::row_hasher(preprocessed_haystack);
     auto const d_haystack_hasher = haystack_hasher.device_hasher(nullate::DYNAMIC{has_any_nulls});
@@ -95,7 +96,8 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
                                     two_table_equal,
                                     d_hasher,
                                     contained,
-                                    stream);
+                                    stream,
+                                    mr);
     } else {
       dispatch_nan_comparator<false>(haystack,
                                      needles,
@@ -108,7 +110,8 @@ rmm::device_uvector<bool> contains(table_view const& haystack,
                                      two_table_equal,
                                      d_hasher,
                                      contained,
-                                     stream);
+                                     stream,
+                                     mr);
     }
   }
   return contained;

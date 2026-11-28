@@ -48,7 +48,7 @@ void filtered_join::query_right_table_nested(
                                               left.num_rows(),
                                               hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
                                               stream,
-                                              mr.get_temporary_mr());
+                                              mr.as_temporary());
   auto const hasher = precomputed_hash{hashes->view().data<hash_value_type>()};
   auto const iter   = cudf::detail::make_counting_transform_iterator(
     size_type{0}, key_pair_fn<rhs_index_type, decltype(hasher)>{hasher});

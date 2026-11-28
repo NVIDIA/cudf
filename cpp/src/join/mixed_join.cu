@@ -8,6 +8,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/detail/join/join.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/join/hash_join.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/join/mixed_join.hpp>
@@ -112,9 +113,10 @@ mixed_join(table_view const& left_equality,
                               mr);
   }
 
-  auto const hash_joiner = cudf::hash_join{right_equality, compare_nulls, stream};
+  auto const hash_joiner =
+    cudf::hash_join{right_equality, compare_nulls, stream, mr.get_temporary_mr()};
   auto const [left_indices, right_indices] =
-    equality_join_indices(hash_joiner, left_equality, join_type, stream, mr);
+    equality_join_indices(hash_joiner, left_equality, join_type, stream, mr.as_temporary());
 
   auto const output_size = output_size_data.has_value()
                              ? std::optional<std::size_t>{output_size_data->first}
@@ -159,19 +161,17 @@ compute_mixed_join_output_size(table_view const& left_equality,
       auto counts = rmm::device_uvector<size_type>(
         static_cast<std::size_t>(left_num_rows), stream, mr.get_output_mr());
       thrust::uninitialized_fill(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        counts.begin(),
-        counts.end(),
-        size_type{1});
+        cudf::detail::exec_policy_nosync(stream, mr), counts.begin(), counts.end(), size_type{1});
       return {static_cast<std::size_t>(left_num_rows),
               std::make_unique<rmm::device_uvector<size_type>>(std::move(counts))};
     }
     return {0, std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr())};
   }
 
-  auto const hash_joiner = cudf::hash_join{right_equality, compare_nulls, stream};
+  auto const hash_joiner =
+    cudf::hash_join{right_equality, compare_nulls, stream, mr.get_temporary_mr()};
   auto const [left_indices, right_indices] =
-    equality_join_indices(hash_joiner, left_equality, join_type, stream, mr);
+    equality_join_indices(hash_joiner, left_equality, join_type, stream, mr.as_temporary());
 
   return cudf::filter_join_indices_output_size(left_conditional,
                                                right_conditional,

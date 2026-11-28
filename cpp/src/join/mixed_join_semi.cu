@@ -92,7 +92,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     binary_predicate.may_evaluate_null(left_conditional, right_conditional, stream)};
 
   auto const parser = ast::detail::expression_parser{
-    binary_predicate, left_conditional, right_conditional, has_nulls, stream, mr};
+    binary_predicate, left_conditional, right_conditional, has_nulls, stream, mr.as_temporary()};
   CUDF_EXPECTS(parser.output_type().id() == type_id::BOOL8,
                "The expression must produce a boolean output.");
 
@@ -101,7 +101,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
   // need to do the same).
   auto& left                  = left_equality;
   auto& right                 = right_equality;
-  auto const temp_mr          = cudf::get_current_device_resource_ref();
+  auto const temp_mr          = mr.get_temporary_mr();
   auto left_view              = table_device_view::create(left, stream, temp_mr);
   auto right_view             = table_device_view::create(right, stream, temp_mr);
   auto left_conditional_view  = table_device_view::create(left_conditional, stream, temp_mr);
@@ -163,7 +163,7 @@ std::unique_ptr<rmm::device_uvector<size_type>> mixed_join_semi(
     row_set.insert_async(iter, iter + right_num_rows, stream.get());
   } else {
     cuda::counting_iterator<cudf::size_type> stencil(0);
-    auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, temp_mr);
+    auto const [row_bitmask, _] = cudf::detail::bitmask_and(right, stream, mr.as_temporary());
     row_is_valid pred{row_bitmask.data()};
 
     // insert valid rows

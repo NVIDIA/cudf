@@ -83,9 +83,8 @@ std::unique_ptr<column> spark_murmurhash3_x86_32(table_view const& input,
   // cudf-spark-jni's check_hash_compatibility does not validate chrono units.
   check_spark_murmurhash3_compatibility(input);
 
-  auto const nullable = nullate::DYNAMIC{has_nested_nulls(input)};
-  auto const row_hasher =
-    cudf::detail::row::hash::row_hasher(input, stream, cudf::get_current_device_resource_ref());
+  auto const nullable   = nullate::DYNAMIC{has_nested_nulls(input)};
+  auto const row_hasher = cudf::detail::row::hash::row_hasher(input, stream, mr.get_temporary_mr());
   auto const output_begin = output->mutable_view().begin<output_type>();
 
   // Compute the hash value for each row

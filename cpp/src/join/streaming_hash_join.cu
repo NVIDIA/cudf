@@ -91,7 +91,7 @@ auto make_device_comparators(
   std::span<std::shared_ptr<row::equality::preprocessed_table> const> preprocessed_right,
   Factory factory,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cudf::memory_resources mr)
 {
   using allocator_type  = cudf::detail::rmm_host_allocator<Equality>;
   auto host_comparators = std::vector<Equality, allocator_type>{
@@ -105,7 +105,7 @@ auto make_device_comparators(
     cudf::host_span<Equality const>{
       host_comparators.data(), host_comparators.size(), /*is_device_accessible=*/true},
     stream,
-    temp_mr);
+    mr);
   stream.sync();  // wait for host_comparators to finish copying before it goes out of scope
   return d_comparators;
 }
@@ -117,7 +117,7 @@ auto make_device_row_comparators(
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cudf::memory_resources mr)
 {
   using equality_type =
     row::equality::device_row_comparator<has_nested,
@@ -131,7 +131,7 @@ auto make_device_row_comparators(
       return comparator.equal_to<has_nested>(has_nulls, compare_nulls).comparator;
     },
     stream,
-    temp_mr);
+    mr);
 }
 
 auto make_device_primitive_row_comparators(
@@ -140,7 +140,7 @@ auto make_device_primitive_row_comparators(
   nullate::DYNAMIC has_nulls,
   null_equality compare_nulls,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref temp_mr)
+  cudf::memory_resources mr)
 {
   using equality_type = row::primitive::row_equality_comparator;
 
@@ -150,7 +150,7 @@ auto make_device_primitive_row_comparators(
       return equality_type{has_nulls, preprocessed_left, right, compare_nulls};
     },
     stream,
-    temp_mr);
+    mr);
 }
 
 size_type checked_batch_count(size_type batches)
@@ -754,7 +754,7 @@ class streaming_hash_join_impl {
     auto const batch_rows = keys.num_rows();
     auto row_bitmask      = [&]() -> std::optional<cuda::device_buffer<cudf::bitmask_type>> {
       if (batch_rows > 0 && compare_nulls == null_equality::UNEQUAL && cudf::has_nulls(keys)) {
-        return cudf::detail::bitmask_and(keys, stream, mr.get_temporary_mr()).first;
+        return cudf::detail::bitmask_and(keys, stream, mr.as_temporary()).first;
       }
       return std::nullopt;
     }();
@@ -815,14 +815,14 @@ class streaming_hash_join_impl {
                                                      nullate::DYNAMIC{has_nulls},
                                                      compare_nulls,
                                                      stream,
-                                                     resources.get_temporary_mr());
+                                                     resources.as_temporary());
       } else {
         return make_device_row_comparators<has_nested>(preprocessed_left,
                                                        right_comparators,
                                                        nullate::DYNAMIC{has_nulls},
                                                        compare_nulls,
                                                        stream,
-                                                       resources.get_temporary_mr());
+                                                       resources.as_temporary());
       }
     }();
     auto const d_batch_starts = cudf::detail::make_device_buffer_async(

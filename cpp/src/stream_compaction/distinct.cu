@@ -87,7 +87,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
     return rmm::device_uvector<size_type>(0, stream, mr.get_output_mr());
   }
 
-  auto temp_mr = cudf::get_current_device_resource_ref();
+  auto temp_mr = mr.get_temporary_mr();
   auto const preprocessed_input =
     cudf::detail::row::hash::preprocessed_table::create(input, stream, temp_mr);
   auto const has_nulls          = nullate::DYNAMIC{cudf::has_nested_nulls(input)};
@@ -119,7 +119,7 @@ rmm::device_uvector<size_type> distinct_indices(table_view const& input,
                                                   num_rows,
                                                   hashing::detail::DEFAULT_ALGORITHM_HASH_SEED,
                                                   stream,
-                                                  temp_mr);
+                                                  mr.as_temporary());
       auto const d_hash = distinct_precomputed_hash{hashes->view().data<hash_value_type>()};
       return dispatch_row_equal<true>(
         nulls_equal, nans_equal, has_nulls, row_equal, [&](auto const& d_equal) {
@@ -159,12 +159,8 @@ std::unique_ptr<table> distinct(table_view const& input,
     return empty_like(input);
   }
 
-  auto const gather_map = detail::distinct_indices(input.select(keys),
-                                                   keep,
-                                                   nulls_equal,
-                                                   nans_equal,
-                                                   stream,
-                                                   cudf::get_current_device_resource_ref());
+  auto const gather_map = detail::distinct_indices(
+    input.select(keys), keep, nulls_equal, nans_equal, stream, mr.as_temporary());
   return detail::gather(input,
                         gather_map,
                         out_of_bounds_policy::DONT_CHECK,

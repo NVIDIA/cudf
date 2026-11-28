@@ -225,7 +225,6 @@ std::unique_ptr<column> top_k(column_view const& col,
   if (k >= col.size()) { return std::make_unique<column>(col, stream, mr); }
 
   auto const indices = [&]() -> std::unique_ptr<column> {
-    auto const temp_mr = mr.get_temporary_mr();
     if (is_fast_path(col)) {
       return std::make_unique<column>(
         select_top_k_rows(col, k, topk_order, stream, mr.as_temporary()),
@@ -233,7 +232,7 @@ std::unique_ptr<column> top_k(column_view const& col,
         0);
     }
     auto const nulls = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
-    return sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, temp_mr);
+    return sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, mr.as_temporary());
   }();
 
   auto const k_indices = cudf::detail::split(indices->view(), {k}, stream).front();
@@ -255,17 +254,17 @@ std::unique_ptr<column> top_k_order(column_view const& col,
   if (k == 0 || col.is_empty()) { return make_empty_column(cudf::type_to_id<size_type>()); }
   if (k >= col.size()) {
     return cudf::detail::sequence(
-      col.size(), numeric_scalar<size_type>(0, true, stream, mr.get_temporary_mr()), stream, mr);
+      col.size(), numeric_scalar<size_type>(0, true, stream, mr.as_temporary()), stream, mr);
   }
 
-  auto const temp_mr = mr.get_temporary_mr();
   if (is_fast_path(col)) {
     return std::make_unique<column>(select_top_k_rows(col, k, topk_order, stream, mr),
                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     0);
   }
   auto const nulls = topk_order == order::ASCENDING ? null_order::AFTER : null_order::BEFORE;
-  auto indices     = sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, temp_mr);
+  auto indices =
+    sorted_order<sort_method::STABLE>(col, topk_order, nulls, stream, mr.as_temporary());
 
   return std::make_unique<column>(
     cudf::detail::split(indices->view(), {k}, stream).front(), stream, mr);

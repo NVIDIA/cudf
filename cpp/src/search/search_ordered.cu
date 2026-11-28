@@ -6,6 +6,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/lexicographic.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/search.hpp>
@@ -38,8 +39,6 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                  static_cast<std::size_t>(haystack.num_columns()) == null_precedence.size(),
                "Mismatch between number of columns and null precedence.");
 
-  auto const temp_mr = mr.get_temporary_mr();
-
   // Allocate result column
   auto result       = make_numeric_column(data_type{type_to_id<size_type>()},
                                     needles.num_rows(),
@@ -56,7 +55,8 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
 
   // This utility will ensure all corresponding dictionary columns have matching keys.
   // It will return any new dictionary columns created as well as updated table_views.
-  auto const matched = dictionary::detail::match_dictionaries({haystack, needles}, stream, temp_mr);
+  auto const matched =
+    dictionary::detail::match_dictionaries({haystack, needles}, stream, mr.as_temporary());
   auto const& matched_haystack = matched.second.front();
   auto const& matched_needles  = matched.second.back();
 
@@ -70,7 +70,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
   if (cudf::detail::has_nested_columns(haystack) || cudf::detail::has_nested_columns(needles)) {
     auto const d_comparator = comparator.less<true>(nullate::DYNAMIC{has_nulls});
     if (find_first) {
-      thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                           haystack_it,
                           haystack_it + haystack.num_rows(),
                           needles_it,
@@ -78,7 +78,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                           out_it,
                           d_comparator);
     } else {
-      thrust::upper_bound(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
                           haystack_it,
                           haystack_it + haystack.num_rows(),
                           needles_it,
@@ -89,7 +89,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
   } else {
     auto const d_comparator = comparator.less<false>(nullate::DYNAMIC{has_nulls});
     if (find_first) {
-      thrust::lower_bound(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::lower_bound(cudf::detail::exec_policy_nosync(stream, mr),
                           haystack_it,
                           haystack_it + haystack.num_rows(),
                           needles_it,
@@ -97,7 +97,7 @@ std::unique_ptr<column> search_ordered(table_view const& haystack,
                           out_it,
                           d_comparator);
     } else {
-      thrust::upper_bound(rmm::exec_policy_nosync(stream, temp_mr),
+      thrust::upper_bound(cudf::detail::exec_policy_nosync(stream, mr),
                           haystack_it,
                           haystack_it + haystack.num_rows(),
                           needles_it,

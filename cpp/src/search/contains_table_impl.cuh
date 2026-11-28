@@ -112,6 +112,7 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, bitmask_type const*> build_ro
  * @param probing_scheme The probing scheme for the hash set
  * @param contained The output vector to store results
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources; only the temporary resource is used
  */
 template <typename Comparator, typename ProbingScheme>
 void perform_contains(table_view const& haystack,
@@ -122,7 +123,8 @@ void perform_contains(table_view const& haystack,
                       Comparator const& d_equal,
                       ProbingScheme const& probing_scheme,
                       rmm::device_uvector<bool>& contained,
-                      cuda::stream_ref stream)
+                      cuda::stream_ref stream,
+                      cudf::memory_resources mr)
 {
   auto const haystack_iter = cudf::detail::make_counting_transform_iterator(
     size_type{0}, cuda::proclaim_return_type<rhs_index_type>([] __device__(auto idx) {
@@ -141,13 +143,12 @@ void perform_contains(table_view const& haystack,
                               probing_scheme,
                               {},
                               {},
-                              rmm::mr::polymorphic_allocator<char>{},
+                              rmm::mr::polymorphic_allocator<char>{mr.get_temporary_mr()},
                               stream.get()};
 
   if (haystack_has_nulls && compare_nulls == null_equality::UNEQUAL) {
-    auto const bitmask_buffer_and_ptr =
-      build_row_bitmask(haystack, stream, cudf::get_current_device_resource_ref());
-    auto const row_bitmask_ptr = bitmask_buffer_and_ptr.second;
+    auto const bitmask_buffer_and_ptr = build_row_bitmask(haystack, stream, mr.as_temporary());
+    auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
 
     // If the haystack table has nulls but they are compared unequal, don't insert them.
     // Otherwise, it was known to cause performance issue:
@@ -163,9 +164,8 @@ void perform_contains(table_view const& haystack,
   }
 
   if (needles_has_nulls && compare_nulls == null_equality::UNEQUAL) {
-    auto const bitmask_buffer_and_ptr =
-      build_row_bitmask(needles, stream, cudf::get_current_device_resource_ref());
-    auto const row_bitmask_ptr = bitmask_buffer_and_ptr.second;
+    auto const bitmask_buffer_and_ptr = build_row_bitmask(needles, stream, mr.as_temporary());
+    auto const row_bitmask_ptr        = bitmask_buffer_and_ptr.second;
     set.contains_if_async(needles_iter,
                           needles_iter + needles.num_rows(),
                           cuda::counting_iterator<size_type>{0},  // stencil
@@ -197,6 +197,7 @@ void perform_contains(table_view const& haystack,
  * @param d_hasher Device hash functor
  * @param contained The output vector to store results
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources; only the temporary resource is used
  */
 template <bool HasNested, typename Hasher>
 void dispatch_nan_comparator(table_view const& haystack,
@@ -210,7 +211,8 @@ void dispatch_nan_comparator(table_view const& haystack,
                              cudf::detail::row::equality::two_table_comparator two_table_equal,
                              Hasher const& d_hasher,
                              rmm::device_uvector<bool>& contained,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr)
 {
   // Distinguish probing scheme CG sizes between nested and flat types for better performance
   auto const probing_scheme = [&]() {
@@ -237,7 +239,8 @@ void dispatch_nan_comparator(table_view const& haystack,
                      d_equal,
                      probing_scheme,
                      contained,
-                     stream);
+                     stream,
+                     mr);
   } else {
     using nan_unequal_comparator = cudf::detail::row::equality::physical_equality_comparator;
     auto const d_self_equal      = self_equal.equal_to<HasNested>(
@@ -253,7 +256,8 @@ void dispatch_nan_comparator(table_view const& haystack,
                      d_equal,
                      probing_scheme,
                      contained,
-                     stream);
+                     stream,
+                     mr);
   }
 }
 

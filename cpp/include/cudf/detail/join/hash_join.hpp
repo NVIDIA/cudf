@@ -209,6 +209,7 @@ class hash_join {
    * @param matched_build_rows Number of build rows in the groups newly flagged in
    * `matched_groups`, added to the existing value
    * @param stream CUDA stream used for kernel launches
+   * @param mr Memory resources; only the temporary resource is used
    */
   void probe(join_kind join,
              cudf::table_view const& left,
@@ -217,7 +218,8 @@ class hash_join {
              cuda::std::uint64_t* total,
              device_span<cuda::std::uint32_t> matched_groups,
              cuda::std::uint64_t* matched_build_rows,
-             cuda::stream_ref stream) const;
+             cuda::stream_ref stream,
+             cudf::memory_resources mr) const;
 
   [[nodiscard]] std::pair<std::unique_ptr<rmm::device_uvector<size_type>>,
                           std::unique_ptr<rmm::device_uvector<size_type>>>

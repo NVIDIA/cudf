@@ -32,7 +32,14 @@ driver_gpus=(
     GPU-55411e83-90e6-d36b-43de-0d7e24c8489a
     GPU-c546a04e-2234-c700-68f5-02cc3997c685
 )
-if [[ "$trial" == order-reference ]]; then
+if [[ "$trial" == async-pool-probe-* ]]; then
+    if [[ "$gpu_inventory" != *"GPU-bb45021e-c845-0adf-d508-f0a6a6995a1f,"* ]]; then
+        echo 'Original Arm64 L4 was not assigned' | tee "$evidence/skipped.txt"
+        echo 'replay=false' >> "$GITHUB_OUTPUT"
+        exit 0
+    fi
+    trial=signal-order-async-pools-dask-datetime
+elif [[ "$trial" == order-reference ]]; then
     trial=signal-order-dask-datetime
 elif [[ "$trial" == order-alternate-reference ]]; then
     trial=signal-order-alternate-dask-datetime

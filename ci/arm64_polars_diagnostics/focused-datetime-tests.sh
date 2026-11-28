@@ -5,6 +5,10 @@
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../python/cudf_polars"
+environment=()
+if [[ -n "${CUDF_POLARS_POOL_MODE:-}" ]]; then
+    environment=("LD_PRELOAD=$CUDF_POLARS_POOL_LIBRARY${LD_PRELOAD:+:$LD_PRELOAD}")
+fi
 # Keep the original worker count while increasing the frequency of the two
 # expressions that have reproduced the native fault.
-exec timeout --kill-after=15s 4m python -m pytest -x --cache-clear -p no:benchmark     --numprocesses=4 --dist=worksteal     --junitxml="$CUDF_POLARS_DIAGNOSTICS_DIR/test-results/junit-datetime.xml"     tests/expressions/test_datetime_basic.py     -k '(test_datetime_truncate or test_datetime_offset_by) and (spmd or dask)'
+exec timeout --kill-after=15s 4m env "${environment[@]}" python -m pytest -x --cache-clear -p no:benchmark     --numprocesses=4 --dist=worksteal     --junitxml="$CUDF_POLARS_DIAGNOSTICS_DIR/test-results/junit-datetime.xml"     tests/expressions/test_datetime_basic.py     -k '(test_datetime_truncate or test_datetime_offset_by) and (spmd or dask)'

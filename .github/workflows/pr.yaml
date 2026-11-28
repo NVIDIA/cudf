@@ -8,19 +8,30 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-packed-native
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-async-pools
   cancel-in-progress: true
 
 jobs:
   arm64-polars-repro:
     name: Arm64 Polars (${{ matrix.trial }})
     runs-on: linux-arm64-gpu-l4-latest-1
-    timeout-minutes: 20
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         trial:
-          - sanitizer-packed-native
+          - async-pool-probe-01
+          - async-pool-probe-02
+          - async-pool-probe-03
+          - async-pool-probe-04
+          - async-pool-probe-05
+          - async-pool-probe-06
+          - async-pool-probe-07
+          - async-pool-probe-08
+          - async-pool-probe-09
+          - async-pool-probe-10
+          - async-pool-probe-11
+          - async-pool-probe-12
     permissions:
       actions: read
       contents: read

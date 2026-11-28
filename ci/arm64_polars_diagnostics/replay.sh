@@ -29,6 +29,15 @@ if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-* ]]; then
         -std=c11 -Wall -Wextra -O2 -fPIC -shared \
         ci/arm64_polars_diagnostics/fault_address.c "${tracing[@]}" -o "$CUDF_POLARS_FAULT_LIBRARY"
 fi
+if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-async-pools-dask-datetime ]]; then
+    CUDF_POLARS_POOL_LIBRARY=$(mktemp /tmp/cudf-polars-pools.XXXXXX.so)
+    export CUDF_POLARS_POOL_LIBRARY CUDF_POLARS_OWNERSHIP_UTILS
+    CUDF_POLARS_OWNERSHIP_UTILS="$PWD/python/cudf_polars/cudf_polars/streaming/actor_graph/utils.py"
+    conda run --no-capture-output --name fault-compiler bash -c \
+        'exec aarch64-conda-linux-gnu-gcc -I"$CONDA_PREFIX/targets/sbsa-linux/include" "$@"' gcc \
+        -std=c11 -Wall -Wextra -Werror -O2 -fPIC -shared \
+        ci/arm64_polars_diagnostics/pool_partition.c -o "$CUDF_POLARS_POOL_LIBRARY" -ldl -pthread
+fi
 if [[ "${CUDF_POLARS_DIAGNOSTICS_TRIAL}" == warmup-* ]]; then
     # Coverage gates do not apply to the selected worker history.
     export PYTEST_ADDOPTS="${PYTEST_ADDOPTS:-} --no-cov -W ignore::pytest_cov.CovDisabledWarning"
@@ -136,6 +145,7 @@ elif [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then
         export CUDF_POLARS_KERNEL_NAMES=1
     fi
     if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-fix-compare-dask-datetime ||
+          "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-async-pools-dask-datetime ||
           "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused*-dask-datetime ||
           ( "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-handoff-* &&
             "$CUDF_POLARS_DIAGNOSTICS_TRIAL" != *-full-dask-datetime ) ]]; then

@@ -10,12 +10,15 @@
 
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_factories.hpp>
+#include <cudf/copying.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/sorting.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/unary.hpp>
 
 #include <limits>
+#include <utility>
+#include <vector>
 
 using namespace cudf::test::iterators;
 
@@ -312,6 +315,146 @@ TEST_F(GroupbyMergeM2ExtremeTest, NanMeanMergedWithFiniteInt64Count)
 TEST_F(GroupbyMergeM2ExtremeTest, NanMeanMergedWithFiniteDoubleCount)
 {
   test_nan_mean_merged_with_finite<double>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, InfMeanMergedWithFiniteOrderIndependent)
+{
+  auto constexpr inf = std::numeric_limits<double>::infinity();
+  for (auto const& means_vec : {std::vector<double>{inf, 5.0}, std::vector<double>{5.0, inf}}) {
+    auto const keys   = keys_col<int32_t>{1, 1};
+    auto counts       = cudf::test::fixed_width_column_wrapper<int64_t>{10, 10};
+    auto means        = means_col<double>(means_vec.begin(), means_vec.end());
+    auto m2s          = M2s_col<double>{0.0, 20.0};
+    auto const vals   = structs_col{counts, means, m2s};
+    auto const [k, v] = merge_M2({keys}, {vals});
+
+    auto exp_keys   = keys_col<int32_t>{1};
+    auto exp_counts = cudf::test::fixed_width_column_wrapper<int64_t>{20};
+    auto exp_means  = means_col<double>{inf};
+    auto exp_m2s    = M2s_col<double>{NaN};
+    auto exp_vals   = structs_col{exp_counts, exp_means, exp_m2s};
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_keys, *k, verbosity);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_vals, *v, verbosity);
+  }
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, OverflowingMeanDifferenceOrderIndependent)
+{
+  auto constexpr max = std::numeric_limits<double>::max();
+  auto constexpr inf = std::numeric_limits<double>::infinity();
+  for (auto const& means_vec : {std::vector<double>{max, -max}, std::vector<double>{-max, max}}) {
+    auto const keys   = keys_col<int32_t>{1, 1};
+    auto counts       = cudf::test::fixed_width_column_wrapper<int64_t>{1, 1};
+    auto means        = means_col<double>(means_vec.begin(), means_vec.end());
+    auto m2s          = M2s_col<double>{0.0, 0.0};
+    auto const vals   = structs_col{counts, means, m2s};
+    auto const [k, v] = merge_M2({keys}, {vals});
+
+    auto exp_keys   = keys_col<int32_t>{1};
+    auto exp_counts = cudf::test::fixed_width_column_wrapper<int64_t>{2};
+    auto exp_means  = means_col<double>{0.0};
+    auto exp_m2s    = M2s_col<double>{inf};
+    auto exp_vals   = structs_col{exp_counts, exp_means, exp_m2s};
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_keys, *k, verbosity);
+    CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_vals, *v, verbosity);
+  }
+}
+
+template <typename CountType>
+void test_large_and_mixed_groups()
+{
+  // Exercise all three hash::reduce_groups paths in one call:
+  // key 0: 5 partials (small <= 32), key 1: 64 partials (warp <= 1024),
+  // key 2: 2500 partials (multi-block chunked > 1024). The keys are interleaved, and each key has
+  // an empty partial (count == 0) with sentinel values that must be skipped.
+  constexpr int32_t small_n = 5;
+  constexpr int32_t warp_n  = 64;
+  constexpr int32_t block_n = 2500;
+  std::vector<int32_t> keys_h;
+  std::vector<CountType> counts_h;
+  std::vector<double> means_h;
+  std::vector<double> m2s_h;
+  auto push_partial = [&](int32_t key, CountType count, double mean, double m2) {
+    keys_h.push_back(key);
+    counts_h.push_back(count);
+    means_h.push_back(mean);
+    m2s_h.push_back(m2);
+  };
+  for (int32_t i = 0; i < block_n; ++i) {
+    for (auto const& [key, n] :
+         {std::pair{0, small_n}, std::pair{1, warp_n}, std::pair{2, block_n}}) {
+      if (i < n) { push_partial(key, CountType{1}, static_cast<double>(i), 0.0); }
+      if (i == n / 2) {
+        push_partial(key, CountType{0}, NaN, std::numeric_limits<double>::infinity());
+      }
+    }
+  }
+
+  auto const keys = keys_col<int32_t>(keys_h.begin(), keys_h.end());
+  auto counts = cudf::test::fixed_width_column_wrapper<CountType>(counts_h.begin(), counts_h.end());
+  auto means  = means_col<double>(means_h.begin(), means_h.end());
+  auto m2s    = M2s_col<double>(m2s_h.begin(), m2s_h.end());
+  auto const vals = structs_col{counts, means, m2s};
+
+  // For {0, 1, ..., n-1}: mean = (n - 1) / 2, M2 = n * (n^2 - 1) / 12.
+  auto expected_mean = [](int32_t n) { return 0.5 * static_cast<double>(n - 1); };
+  auto expected_m2   = [](int32_t n) {
+    auto const d = static_cast<double>(n);
+    return d * (d * d - 1.0) / 12.0;
+  };
+
+  auto const [out_keys, out_vals] = merge_M2({keys}, {vals});
+  auto const exp_keys             = keys_col<int32_t>{0, 1, 2};
+  auto exp_counts =
+    cudf::test::fixed_width_column_wrapper<CountType>{static_cast<CountType>(small_n),
+                                                      static_cast<CountType>(warp_n),
+                                                      static_cast<CountType>(block_n)};
+  auto exp_means =
+    means_col<double>{expected_mean(small_n), expected_mean(warp_n), expected_mean(block_n)};
+  auto exp_m2s = M2s_col<double>{expected_m2(small_n), expected_m2(warp_n), expected_m2(block_n)};
+  auto const exp_vals = structs_col{exp_counts, exp_means, exp_m2s};
+  // Multi-block parallel reduction over 2500 partials accumulates minor floating-point rounding.
+  constexpr cudf::size_type ulp_tolerance{64};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_keys, *out_keys, verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_vals, *out_vals, verbosity, ulp_tolerance);
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, LargeAndMixedGroupsInt64Count)
+{
+  test_large_and_mixed_groups<int64_t>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, LargeAndMixedGroupsDoubleCount)
+{
+  test_large_and_mixed_groups<double>();
+}
+
+TEST_F(GroupbyMergeM2ExtremeTest, SlicedInput)
+{
+  // The first and last partials are outside the slice and must not be read.
+  auto const keys_original = keys_col<int32_t>{1, 1, 1, 1};
+  auto counts              = cudf::test::fixed_width_column_wrapper<int64_t>{100, 2, 3, 100};
+  auto means               = means_col<double>{1000.0, 1.0, 6.0, 1000.0};
+  auto m2s                 = M2s_col<double>{1000.0, 2.0, 5.0, 1000.0};
+  auto const vals_original = structs_col{counts, means, m2s};
+  auto const keys          = cudf::slice(keys_original, {1, 3})[0];
+  auto const vals          = cudf::slice(vals_original, {1, 3})[0];
+
+  std::vector<cudf::groupby::aggregation_request> requests;
+  requests.emplace_back();
+  requests[0].values = vals;
+  requests[0].aggregations.emplace_back(
+    cudf::make_merge_m2_aggregation<cudf::groupby_aggregation>());
+  auto gb_obj                        = cudf::groupby::groupby(cudf::table_view({keys}));
+  auto const [out_keys, out_results] = gb_obj.aggregate(requests);
+
+  auto const exp_keys = keys_col<int32_t>{1};
+  auto exp_counts     = cudf::test::fixed_width_column_wrapper<int64_t>{5};
+  auto exp_means      = means_col<double>{4.0};
+  auto exp_m2s        = M2s_col<double>{37.0};
+  auto const exp_vals = structs_col{exp_counts, exp_means, exp_m2s};
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_keys, out_keys->view().column(0), verbosity);
+  CUDF_TEST_EXPECT_COLUMNS_EQUIVALENT(exp_vals, *out_results[0].results[0], verbosity);
 }
 
 TYPED_TEST(GroupbyMergeM2TypedTest, SimpleInput)

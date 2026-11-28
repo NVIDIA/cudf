@@ -3,19 +3,27 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include "groupby/hash/group_reductions.hpp"
+#include "groupby/hash/grouped_reductions.cuh"
+#include "groupby/hash/merge_m2.cuh"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
+#include <cudf/detail/iterator.cuh>
+#include <cudf/null_mask.hpp>
 #include <cudf/structs/structs_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/tuple>
 #include <cuda/stream>
-#include <thrust/transform.h>
+
+#include <cstdint>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <vector>
 
 namespace cudf {
 namespace groupby {
@@ -27,105 +35,88 @@ static_assert(
   std::is_same_v<cudf::detail::target_type_t<result_type, aggregation::Kind::M2>, result_type>);
 
 /**
- * @brief Functor to merge partial results of `COUNT_VALID`, `MEAN`, and `M2` aggregations
- * for a given group (key) index.
+ * @brief Functor to read the partial `COUNT_VALID`, `MEAN`, and `M2` results of a grouped row.
  */
-template <typename count_type>
-struct merge_fn {
-  size_type const* d_offsets;
-  count_type const* d_counts;
-  result_type const* d_means;
-  result_type const* d_M2s;
+template <typename CountType>
+struct grouped_m2_state {
+  size_type const* rows;
+  CountType const* counts;
+  result_type const* means;
+  result_type const* m2s;
 
-  __device__ cuda::std::tuple<count_type, result_type, result_type> operator()(
-    size_type const group_idx) const
+  __device__ hash::m2_state<CountType> operator()(size_type position) const
   {
-    count_type n{0};
-    result_type avg{0};
-    result_type m2{0};
-
-    auto const start_idx = d_offsets[group_idx], end_idx = d_offsets[group_idx + 1];
-    for (auto idx = start_idx; idx < end_idx; ++idx) {
-      auto const partial_n = d_counts[idx];
-      if (partial_n == 0) { continue; }
-      auto const partial_avg = d_means[idx];
-      auto const partial_m2  = d_M2s[idx];
-
-      // Merging an empty accumulator with a non-empty partial is an identity operation. Running
-      // the generic formula for this case can evaluate inf * 0 and turn extreme finite partials
-      // into NaN.
-      if (n == 0) {
-        n   = partial_n;
-        avg = partial_avg;
-        m2  = partial_m2;
-        continue;
-      }
-
-      auto const new_n   = n + partial_n;
-      auto const delta   = partial_avg - avg;
-      auto const delta_n = delta / new_n;
-      m2 += partial_m2 + delta * delta_n * n * partial_n;
-      avg += delta_n * partial_n;
-      n = new_n;
-    }
-
-    return {n, avg, m2};
+    auto const row   = rows[position];
+    auto const count = counts[row];
+    if (count == CountType{0}) { return {CountType{0}, 0.0, 0.0}; }
+    return {count, means[row], m2s[row]};
   }
 };
 
-template <typename count_type>
+template <typename CountType>
+struct split_m2_state {
+  __device__ cuda::std::tuple<CountType, result_type, result_type> operator()(
+    hash::m2_state<CountType> const& state) const
+  {
+    return {state.count, state.mean, state.m2};
+  }
+};
+
+template <typename CountType>
 std::unique_ptr<column> merge_m2(column_view const& values,
-                                 device_span<size_type const> group_offsets,
-                                 size_type num_groups,
+                                 hash::grouped_rows const& grouped,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr)
 {
-  auto result_counts = make_numeric_column(
-    data_type(type_to_id<count_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
+  auto const num_groups = static_cast<size_type>(grouped.offsets.size() - 1);
+  auto const output_mr  = mr.get_output_mr();
+  auto result_counts    = make_numeric_column(
+    data_type(type_to_id<CountType>()), num_groups, mask_state::UNALLOCATED, stream, output_mr);
   auto result_means = make_numeric_column(
-    data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
+    data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, output_mr);
   auto result_M2s = make_numeric_column(
-    data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, mr);
+    data_type(type_to_id<result_type>()), num_groups, mask_state::UNALLOCATED, stream, output_mr);
 
-  auto const out_iter =
-    cuda::make_zip_iterator(result_counts->mutable_view().template data<count_type>(),
-                            result_means->mutable_view().template data<result_type>(),
-                            result_M2s->mutable_view().template data<result_type>());
-
-  auto const partials    = structs_column_view{values};
-  auto const count_valid = partials.get_sliced_child(0, stream);
-  auto const mean_values = partials.get_sliced_child(1, stream);
-  auto const M2_values   = partials.get_sliced_child(2, stream);
-  auto const iter        = cuda::counting_iterator<size_type>{0};
-
-  auto const fn = merge_fn<count_type>{group_offsets.data(),
-                                       count_valid.template begin<count_type>(),
-                                       mean_values.template begin<result_type>(),
-                                       M2_values.template begin<result_type>()};
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                    iter,
-                    iter + num_groups,
-                    out_iter,
-                    fn);
+  if (num_groups > 0) {
+    auto const partials     = structs_column_view{values};
+    auto const state_values = cudf::detail::make_counting_transform_iterator(
+      0,
+      grouped_m2_state<CountType>{grouped.rows.data(),
+                                  partials.get_sliced_child(0, stream).begin<CountType>(),
+                                  partials.get_sliced_child(1, stream).begin<result_type>(),
+                                  partials.get_sliced_child(2, stream).begin<result_type>()});
+    auto const output = cuda::transform_output_iterator{
+      cuda::make_zip_iterator(result_counts->mutable_view().begin<CountType>(),
+                              result_means->mutable_view().begin<result_type>(),
+                              result_M2s->mutable_view().begin<result_type>()),
+      split_m2_state<CountType>{}};
+    hash::reduce_groups(grouped,
+                        state_values,
+                        output,
+                        hash::merge_m2<CountType>{},
+                        hash::m2_state<CountType>{CountType{0}, 0.0, 0.0},
+                        stream,
+                        mr);
+  }
 
   // Output is a structs column containing the merged values of `COUNT_VALID`, `MEAN`, and `M2`.
   std::vector<std::unique_ptr<column>> out_columns;
   out_columns.emplace_back(std::move(result_counts));
   out_columns.emplace_back(std::move(result_means));
   out_columns.emplace_back(std::move(result_M2s));
-  return make_structs_column(num_groups,
-                             std::move(out_columns),
-                             0,
-                             cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
-                             stream,
-                             mr);
+  return make_structs_column(
+    num_groups,
+    std::move(out_columns),
+    0,
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, output_mr),
+    stream,
+    output_mr);
 }
 
 }  // namespace
 
 std::unique_ptr<column> group_merge_m2(column_view const& values,
-                                       device_span<size_type const> group_offsets,
-                                       size_type num_groups,
+                                       hash::grouped_rows const& grouped,
                                        cuda::stream_ref stream,
                                        cudf::memory_resources mr)
 {
@@ -144,9 +135,8 @@ std::unique_ptr<column> group_merge_m2(column_view const& values,
                  values.child(2).type().id() == type_to_id<result_type>(),
                "Input to `group_merge_m2` has invalid children type.");
 
-  return count_type_id == type_id::INT64
-           ? merge_m2<int64_t>(values, group_offsets, num_groups, stream, mr)
-           : merge_m2<result_type>(values, group_offsets, num_groups, stream, mr);
+  return count_type_id == type_id::INT64 ? merge_m2<int64_t>(values, grouped, stream, mr)
+                                         : merge_m2<result_type>(values, grouped, stream, mr);
 }
 
 }  // namespace detail

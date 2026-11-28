@@ -7,6 +7,7 @@
 
 #include <cudf/detail/integral_math.cuh>
 #include <cudf/detail/operators/arithmetic.cuh>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 

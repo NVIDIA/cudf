@@ -7,6 +7,7 @@
 #include <cudf_test/iterator_utilities.hpp>
 
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 

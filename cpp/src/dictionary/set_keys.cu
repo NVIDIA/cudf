@@ -14,6 +14,7 @@
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/dictionary/dictionary_factories.hpp>
 #include <cudf/dictionary/update_keys.hpp>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>

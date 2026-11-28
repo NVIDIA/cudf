@@ -18,6 +18,8 @@
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/detail/utilities/stream_pool.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
+#include <cudf/strings/detail/utf8.hpp>
+#include <cudf/strings/string_view.cuh>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cooperative_groups.h>

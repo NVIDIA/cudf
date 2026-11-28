@@ -8,7 +8,7 @@
 #include <cudf/detail/offsets_iterator.cuh>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/strings/mutable_string_view.hpp>
-#include <cudf/strings/string_view.cuh>
+#include <cudf/strings/string_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/concepts.hpp>

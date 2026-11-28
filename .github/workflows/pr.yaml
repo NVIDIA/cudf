@@ -8,27 +8,28 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-baseline
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-paired
   cancel-in-progress: true
 
 jobs:
   arm64-polars-repro:
     name: Arm64 Polars (${{ matrix.trial }})
     runs-on: linux-arm64-gpu-l4-latest-1
-    timeout-minutes: 55
+    timeout-minutes: 85
     strategy:
       fail-fast: false
       matrix:
         trial:
-          - order-focused-reference
-          - order-focused-probe-01
-          - order-focused-probe-02
-          - order-focused-probe-03
-          - order-focused-probe-04
-          - order-focused-probe-05
-          - order-focused-probe-06
-          - order-focused-probe-07
-          - order-focused-probe-08
+          - order-handoff-fence-01
+          - order-handoff-fence-02
+          - order-handoff-fence-03
+          - order-handoff-fence-04
+          - order-handoff-fence-05
+          - order-handoff-ownership-01
+          - order-handoff-ownership-02
+          - order-handoff-ownership-03
+          - order-handoff-ownership-04
+          - order-handoff-ownership-05
     permissions:
       actions: read
       contents: read

@@ -149,20 +149,8 @@ def test_to_parquet_filter_with_colref_raises():
 
 
 @pytest.mark.parametrize(
-    "name",
-    [
-        expr_nodes.BooleanFunction.Name.IsNull,
-        expr_nodes.BooleanFunction.Name.IsNotNull,
-    ],
+    "dtype", [pl.Int64(), pl.Struct({"a": pl.Int64}), pl.List(pl.Int64)]
 )
-def test_to_parquet_filter_null_checks_on_column(name):
-    col = expr_nodes.Col(DataType(pl.datatypes.Int64()), "a")
-    fn = expr_nodes.BooleanFunction(DataType(pl.datatypes.Boolean()), name, (), col)
-    filter_expr, residual = to_parquet_filter(fn, stream=get_cuda_stream())
-    assert filter_expr is not None
-    assert residual is None
-
-
 @pytest.mark.parametrize(
     "name",
     [
@@ -170,13 +158,11 @@ def test_to_parquet_filter_null_checks_on_column(name):
         expr_nodes.BooleanFunction.Name.IsNotNull,
     ],
 )
-def test_to_parquet_filter_null_checks_on_nested_column_not_pushed(name):
-    # See https://github.com/NVIDIA/cudf/issues/23397
-    struct_dtype = DataType(pl.Struct({"a": pl.Int64}))
-    col = expr_nodes.Col(struct_dtype, "s")
+def test_to_parquet_filter_null_checks_on_column(name, dtype):
+    col = expr_nodes.Col(DataType(dtype), "a")
     fn = expr_nodes.BooleanFunction(DataType(pl.datatypes.Boolean()), name, (), col)
     filter_expr, residual = to_parquet_filter(fn, stream=get_cuda_stream())
-    assert filter_expr is None
+    assert filter_expr is not None
     assert residual is None
 
 

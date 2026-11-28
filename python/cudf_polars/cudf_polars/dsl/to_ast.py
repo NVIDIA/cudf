@@ -344,19 +344,18 @@ def _(node: expr.BooleanFunction, self: Transformer) -> plc_expr.Expression:
                     partial(plc_expr.Operation, plc_expr.ASTOperator.LOGICAL_OR),
                     (plc_expr.Operation(equal, needle_ref, value) for value in values),
                 )
-    if self.state["for_parquet"] and isinstance(node.children[0], expr.Col):
-        if node.name not in (
+    if (
+        self.state["for_parquet"]
+        and isinstance(node.children[0], expr.Col)
+        and node.name
+        not in (
             expr.BooleanFunction.Name.IsNull,
             expr.BooleanFunction.Name.IsNotNull,
-        ):
-            raise NotImplementedError(
-                f"Parquet filters don't support {node.name} on columns"
-            )
-        if node.children[0].dtype.id() in (plc.TypeId.STRUCT, plc.TypeId.LIST):
-            # TODO: Remove once https://github.com/NVIDIA/cudf/issues/23397 is resolved.
-            raise NotImplementedError(
-                f"Parquet filters don't support {node.name} on nested types"
-            )
+        )
+    ):
+        raise NotImplementedError(
+            f"Parquet filters don't support {node.name} on columns"
+        )
     if node.name is expr.BooleanFunction.Name.IsNull:
         return plc_expr.Operation(plc_expr.ASTOperator.IS_NULL, self(node.children[0]))
     elif node.name is expr.BooleanFunction.Name.IsNotNull:

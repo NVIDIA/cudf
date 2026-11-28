@@ -20,6 +20,7 @@
 #include <cuda/iterator>
 
 #include <algorithm>
+#include <iterator>
 #include <ranges>
 #include <string>
 #include <utility>
@@ -372,16 +373,14 @@ std::vector<std::string> names_from_expression::to_vector() &&
           std::make_move_iterator(_column_names.end())};
 }
 
-offset_column_references::offset_column_references(
-  std::optional<std::reference_wrapper<ast::expression const>> expr, size_type offset)
-  : _offset{offset}
+row_filter_expression_converter::row_filter_expression_converter(
+  ast::expression const& expr, size_type offset, std::span<data_type const> col_types)
+  : _offset{offset}, _col_types{col_types}, _converted_expr{expr}
 {
-  if (not expr.has_value()) { return; }
-  if (offset == 0) {
-    _converted_expr = expr;
-    return;
-  }
-  _converted_expr = expr.value().get().accept(*this);
+  CUDF_EXPECTS(std::cmp_less_equal(offset, col_types.size()),
+               "Number of prepended columns exceeds the number of input columns",
+               std::invalid_argument);
+  _converted_expr = expr.accept(*this);
 }
 
 std::optional<std::reference_wrapper<ast::expression const>>
@@ -390,28 +389,39 @@ parquet_filter_normalizer::get_converted_expr() const
   return _converted_expr;
 }
 
-std::optional<std::reference_wrapper<ast::expression const>>
-offset_column_references::get_converted_expr() const
-{
-  return _converted_expr;
-}
-
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
   ast::literal const& expr)
 {
   return expr;
 }
 
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
   ast::column_reference const& expr)
 {
   return _tree.push(
     ast::column_reference{expr.get_column_index() + _offset, expr.get_table_source()});
 }
 
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
   ast::operation const& expr)
 {
+  if (expr.get_operator() == ast::ast_operator::IS_NULL) {
+    auto const operand = extract_unary_operand(expr);
+    if (operand.operand_type == operand_kind::COLUMN_REF) {
+      auto const col_idx = operand.col_ref->get_column_index() + _offset;
+      CUDF_EXPECTS(std::cmp_less(col_idx, _col_types.size()),
+                   "Column index in the filter expression is out of range",
+                   std::out_of_range);
+      if (cudf::is_nested(_col_types[col_idx])) {
+        // Reference the null check column of `col_idx`, appended after the input columns
+        auto const it   = std::ranges::find(_null_check_cols, col_idx);
+        auto const slot = std::distance(_null_check_cols.begin(), it);
+        if (it == _null_check_cols.end()) { _null_check_cols.push_back(col_idx); }
+        return _tree.push(ast::column_reference{static_cast<size_type>(_col_types.size() + slot)});
+      }
+    }
+  }
+
   auto const new_operands = visit_operands(expr.get_operands());
   auto const arity        = cudf::ast::detail::ast_operator_arity(expr.get_operator());
   if (arity == 1) {
@@ -423,10 +433,16 @@ std::reference_wrapper<ast::expression const> offset_column_references::visit(
   return _tree.push(ast::operation{expr.get_operator(), new_operands.front(), new_operands.back()});
 }
 
-std::reference_wrapper<ast::expression const> offset_column_references::visit(
+std::reference_wrapper<ast::expression const> row_filter_expression_converter::visit(
   ast::column_name_reference const&)
 {
-  CUDF_FAIL("Column name references are not supported in column reference offsetter");
+  CUDF_FAIL("Column name references are not supported in the normalized Parquet filter");
+}
+
+std::tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<size_type>>
+row_filter_expression_converter::get_converted_expr() &&
+{
+  return {std::move(_tree), _converted_expr, std::move(_null_check_cols)};
 }
 
 [[nodiscard]] std::unordered_map<cudf::size_type, std::string> map_column_indices_to_names(
@@ -552,10 +568,21 @@ void parquet_expression_simplifier::validate_operands(ast::expression const& exp
   // Validate column references and traverse operations. Literals don't really need validation.
   if (auto const* col_ref = dynamic_cast<ast::column_reference const*>(&expr); col_ref != nullptr) {
     validate_column_reference(*col_ref);
+    CUDF_EXPECTS(
+      not cudf::is_nested(_output_dtypes[col_ref->get_column_index()]),
+      "Struct and list columns are only supported as IS_NULL operands in Parquet filters",
+      std::invalid_argument);
   } else if (auto const* operation = dynamic_cast<ast::operation const*>(&expr);
              operation != nullptr) {
+    auto const is_null = operation->get_operator() == ast::ast_operator::IS_NULL;
     for (auto const& operand : operation->get_operands()) {
-      validate_operands(operand.get());
+      // Nested columns are only valid directly under IS_NULL as only their validity is known
+      auto const* ref = dynamic_cast<ast::column_reference const*>(&operand.get());
+      if (is_null and ref != nullptr) {
+        validate_column_reference(*ref);
+      } else {
+        validate_operands(operand.get());
+      }
     }
   } else if (dynamic_cast<ast::column_name_reference const*>(&expr) != nullptr) {
     // Column name references must not exist in the normalized filter expression

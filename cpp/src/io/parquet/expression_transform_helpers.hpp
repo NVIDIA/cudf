@@ -11,6 +11,7 @@
 #include <cudf/ast/expressions.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_schema.hpp>
+#include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/span.hpp>
 
@@ -20,6 +21,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -251,13 +253,25 @@ class parquet_filter_normalizer : public ast::detail::expression_transformer {
 };
 
 /**
- * @brief Offsets every column referencein an expression by the specified value
+ * @brief Converts a normalized Parquet filter expression into one evaluated on the decoded rows
  *
+ * Offsets every column reference by `offset` to account for the prepended columns, and replaces
+ * `IS_NULL` on the `k`-th distinct nested column with a reference to column `num_columns + k`,
+ * where `num_columns` is the number of input columns. The caller must append `is_null` of each
+ * input column whose index `get_converted_expr()` returns, in order, to the input columns.
  */
-class offset_column_references : public ast::detail::expression_transformer {
+class row_filter_expression_converter : public ast::detail::expression_transformer {
  public:
-  offset_column_references(std::optional<std::reference_wrapper<ast::expression const>> expr,
-                           size_type offset);
+  /**
+   * @brief Constructs and converts the filter expression
+   *
+   * @param expr Normalized filter expression
+   * @param offset Number of prepended columns in the input table
+   * @param col_types Types of all input columns, including the prepended ones
+   */
+  row_filter_expression_converter(ast::expression const& expr,
+                                  size_type offset,
+                                  std::span<data_type const> col_types);
 
   /**
    * @copydoc ast::detail::expression_transformer::visit(ast::literal const& )
@@ -281,17 +295,21 @@ class offset_column_references : public ast::detail::expression_transformer {
     ast::column_name_reference const& expr) override;
 
   /**
-   * @brief Returns the converted AST expression
+   * @brief Moves out the converted expression along with the input columns that need a null check
    *
-   * @return Converted expression, if an input expression was provided
+   * @return Tuple of the AST tree owning the converted expression's nodes, the converted
+   * expression, and the indices of the input columns whose `is_null` must be appended, in order
    */
-  [[nodiscard]] std::optional<std::reference_wrapper<ast::expression const>> get_converted_expr()
-    const;
+  [[nodiscard]] std::
+    tuple<ast::tree, std::reference_wrapper<ast::expression const>, std::vector<size_type>>
+    get_converted_expr() &&;
 
  private:
+  size_type _offset;
+  std::span<data_type const> _col_types;
   ast::tree _tree;
-  std::optional<std::reference_wrapper<ast::expression const>> _converted_expr;
-  size_type _offset{0};
+  std::reference_wrapper<ast::expression const> _converted_expr;
+  std::vector<size_type> _null_check_cols;
 };
 
 /**

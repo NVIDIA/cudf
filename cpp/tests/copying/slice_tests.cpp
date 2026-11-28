@@ -9,6 +9,7 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/table_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -18,6 +19,7 @@
 #include <array>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 template <typename T>
@@ -26,6 +28,36 @@ struct SliceTest : public cudf::test::BaseFixture {};
 TYPED_TEST_SUITE(SliceTest, cudf::test::NumericTypes);
 
 struct SliceZeroColumnTest : public cudf::test::BaseFixture {};
+
+struct SliceMemoryResourcesTest : public cudf::test::BaseFixture {};
+
+TEST_F(SliceMemoryResourcesTest, NullCounts)
+{
+  auto harness      = cudf::test::memory_resource_test_harness{};
+  auto const stream = cudf::get_default_stream();
+  cudf::test::fixed_width_column_wrapper<int32_t> col{{1, 2, 3, 4, 5, 6}, {1, 0, 1, 1, 0, 1}};
+  cudf::table_view const tbl{{col}};
+  std::vector<cudf::size_type> const indices{0, 2, 1, 5};
+
+  auto const [column_slices, table_slices] = [&] {
+    auto current_scope = harness.fail_on_current_device_resource_use();
+    auto result        = std::pair{cudf::slice(col, indices, stream, harness.resources()),
+                            cudf::slice(tbl, {0, 2, 1, 5}, stream, harness.resources())};
+    harness.synchronize(stream);
+    return result;
+  }();
+  harness.expect_resource_usage(0,
+                                {cudf::test::output_allocation_expectation::EXACT,
+                                 cudf::test::temporary_allocation_expectation::SOME},
+                                stream);
+
+  ASSERT_EQ(column_slices.size(), 2);
+  ASSERT_EQ(table_slices.size(), 2);
+  EXPECT_EQ(column_slices[0].null_count(), 1);
+  EXPECT_EQ(column_slices[1].null_count(), 2);
+  EXPECT_EQ(table_slices[0].column(0).null_count(), 1);
+  EXPECT_EQ(table_slices[1].column(0).null_count(), 2);
+}
 
 TEST_F(SliceZeroColumnTest, PreservesRowCount)
 {

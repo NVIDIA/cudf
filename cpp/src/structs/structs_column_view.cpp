@@ -17,7 +17,9 @@ structs_column_view::structs_column_view(column_view const& rhs) : column_view{r
 
 column_view structs_column_view::parent() const { return *this; }
 
-column_view structs_column_view::get_sliced_child(int index, cuda::stream_ref stream) const
+column_view structs_column_view::get_sliced_child(int index,
+                                                  cuda::stream_ref stream,
+                                                  cudf::memory_resources mr) const
 {
   std::vector<column_view> children;
   children.reserve(child(index).num_children());
@@ -31,7 +33,7 @@ column_view structs_column_view::get_sliced_child(int index, cuda::stream_ref st
     child(index).head<uint8_t>(),
     child(index).null_mask(),
     child(index).null_count()
-      ? cudf::detail::null_count(child(index).null_mask(), offset(), offset() + size(), stream)
+      ? cudf::detail::null_count(child(index).null_mask(), offset(), offset() + size(), stream, mr)
       : 0,
     offset(),
     children};

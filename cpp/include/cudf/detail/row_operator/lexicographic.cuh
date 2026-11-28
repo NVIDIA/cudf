@@ -50,6 +50,32 @@ namespace detail::row::lexicographic {
 
 using optional_dremel_view = cuda::std::optional<detail::dremel_device_view const>;
 
+// Self comparisons select corresponding decimal leaves from the same column,
+// so scale adjustment cannot affect their ordering.
+template <typename PhysicalElementComparator>
+struct equal_scale_physical_element_comparator {
+  template <typename Element>
+  __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
+                                                              Element const rhs) const noexcept
+  {
+    if constexpr (cudf::is_fixed_point<Element>()) {
+      return comparator(lhs.value(), rhs.value());
+    } else {
+      return comparator(lhs, rhs);
+    }
+  }
+
+  PhysicalElementComparator comparator;
+};
+
+// A custom comparator may observe decimal types or scales, not just their values.
+template <typename PhysicalElementComparator>
+using self_physical_element_comparator = cuda::std::conditional_t<
+  cuda::std::is_same_v<PhysicalElementComparator, physical_element_comparator> or
+    cuda::std::is_same_v<PhysicalElementComparator, sorting_physical_element_comparator>,
+  equal_scale_physical_element_comparator<PhysicalElementComparator>,
+  PhysicalElementComparator>;
+
 // The has_nested_columns template parameter of the device_row_comparator is
 // necessary to help the compiler optimize our code. Without it, the list and
 // struct view specializations are present in the code paths used for primitive
@@ -853,7 +879,9 @@ class self_comparator {
     d_t->check_physical_element_comparator<PhysicalElementComparator>();
 
     return less_comparator{
-      device_row_comparator<has_nested_columns, Nullate, PhysicalElementComparator>{
+      device_row_comparator<has_nested_columns,
+                            Nullate,
+                            self_physical_element_comparator<PhysicalElementComparator>>{
         nullate,
         *d_t,
         *d_t,
@@ -862,7 +890,7 @@ class self_comparator {
         d_t->depths(),
         d_t->column_order(),
         d_t->null_precedence(),
-        comparator}};
+        self_physical_element_comparator<PhysicalElementComparator>{comparator}}};
   }
 
   /// @copydoc less()
@@ -874,7 +902,9 @@ class self_comparator {
     d_t->check_physical_element_comparator<PhysicalElementComparator>();
 
     return less_equivalent_comparator{
-      device_row_comparator<has_nested_columns, Nullate, PhysicalElementComparator>{
+      device_row_comparator<has_nested_columns,
+                            Nullate,
+                            self_physical_element_comparator<PhysicalElementComparator>>{
         nullate,
         *d_t,
         *d_t,
@@ -883,7 +913,7 @@ class self_comparator {
         d_t->depths(),
         d_t->column_order(),
         d_t->null_precedence(),
-        comparator}};
+        self_physical_element_comparator<PhysicalElementComparator>{comparator}}};
   }
 
  private:

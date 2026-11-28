@@ -515,6 +515,7 @@ ConfigureTest(TABLE_TEST table/table_tests.cpp table/table_view_tests.cu)
 # * row operator tests ----------------------------------------------------------------------------
 ConfigureTest(
   ROW_OPERATOR_TEST
+  row_operator/equal_scale_ordering_tests.cu
   row_operator/row_operator_tests.cu
   row_operator/nan_tests.cpp
   row_operator/self_comparison_utilities.cu

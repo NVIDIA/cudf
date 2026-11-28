@@ -234,6 +234,26 @@ def pytest_sessionstart(session):
             _trace_partition_and_pack(worker)
 
 
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call(item):
+    mode = os.environ.get("CUDF_POLARS_HANDOFF_MODE")
+    finish = None
+    if mode and "tests/expressions/test_datetime_basic.py" in item.nodeid:
+        from handoff_diagnostics import install
+
+        session = item.session
+        finish = getattr(session, "_cudf_finish_handoff", None)
+        if finish is None:
+            worker = os.environ["PYTEST_XDIST_WORKER"]
+            finish = install(_output / f"{worker}.handoff.jsonl", mode)
+            session._cudf_finish_handoff = finish
+    try:
+        yield
+    finally:
+        if finish is not None:
+            finish()
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session):
     watcher = getattr(session, "_cudf_gpu_watcher", None)

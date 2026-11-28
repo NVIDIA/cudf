@@ -5,6 +5,7 @@
 set -euo pipefail
 
 attempts=(1 2 3)
+handoff_mode=
 if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-paired-dask-datetime ]]; then
     # Start fresh pytest and Dask processes for each condition on the same GPU.
     attempts=(call reset)
@@ -14,6 +15,22 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-alternate-dask-datetime
     attempts=(alternate alternate-repeat)
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused-dask-datetime ]]; then
     attempts=({1..20})
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-handoff-* ]]; then
+    handoff_mode=${CUDF_POLARS_DIAGNOSTICS_TRIAL#signal-order-handoff-}
+    handoff_mode=${handoff_mode%%-*}
+    attempts=()
+    pairs=20
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == *-full-dask-datetime ]]; then
+        pairs=3
+    fi
+    for (( round = 1; round <= pairs; round++ )); do
+        # Counterbalance which condition sees the GPU first.
+        if (( round % 2 )); then
+            attempts+=("observe-$round" "$handoff_mode-$round")
+        else
+            attempts+=("$handoff_mode-$round" "observe-$round")
+        fi
+    done
 fi
 status=0
 for attempt in "${attempts[@]}"; do
@@ -25,7 +42,12 @@ for attempt in "${attempts[@]}"; do
     done
     trial=$CUDF_POLARS_DIAGNOSTICS_TRIAL
     environment=("CUDF_POLARS_DIAGNOSTICS_DIR=$output")
-    if [[ "$attempt" == call || "$attempt" == reset ]]; then
+    if [[ -n "$handoff_mode" ]]; then
+        condition=${attempt%-*}
+        environment+=("CUDF_POLARS_HANDOFF_MODE=$condition")
+        printf '%s\n' "$condition" > "$output/condition.txt"
+        echo "Paired GPU replay $attempt"
+    elif [[ "$attempt" == call || "$attempt" == reset ]]; then
         trial="signal-${attempt}-dask-datetime"
         printf '%s\n' "$trial" > "$output/trial.txt"
         echo "Full-suite GPU replay with Dask condition $attempt"
@@ -61,13 +83,17 @@ PY
     else
         echo "Full-suite GPU replay $attempt of ${#attempts[@]}"
     fi
+    run_status=0
     env "${environment[@]}" CUDF_POLARS_DIAGNOSTICS_TRIAL="$trial" \
-        "$(dirname "${BASH_SOURCE[0]}")/run_cudf_polars_pytests-once.sh" "${args[@]}" || {
-        status=$?
+        "$(dirname "${BASH_SOURCE[0]}")/run_cudf_polars_pytests-once.sh" "${args[@]}" ||
+        run_status=$?
+    printf '%s\n' "$run_status" > "$output/exit-status.txt"
+    if (( run_status )); then
+        status=$run_status
         # Only paired comparisons need to continue after a crash.
         if [[ "$attempt" =~ ^[0-9]+$ || "$trial" == signal-order-alternate-dask-datetime ]]; then
             exit "$status"
         fi
-    }
+    fi
 done
 exit "$status"

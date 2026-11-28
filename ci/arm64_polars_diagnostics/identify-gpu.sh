@@ -40,6 +40,19 @@ elif [[ "$trial" == sanitizer-order || "$trial" == sanitizer-order-alternate ]];
     trial="${trial/sanitizer/memcheck}-dask-datetime"
 elif [[ "$trial" == order-focused-reference ]]; then
     trial=signal-order-focused-dask-datetime
+elif [[ "$trial" == order-datetime-probe-* || "$trial" == order-handoff-* ]]; then
+    for gpu in "${driver_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
+            if [[ "$trial" == order-datetime-probe-* ]]; then
+                trial=signal-order-dask-datetime
+            else
+                mode=${trial#order-handoff-}
+                mode=${mode%-*}
+                trial="signal-order-handoff-$mode-dask-datetime"
+            fi
+            break
+        fi
+    done
 elif [[ "$trial" == order-probe-* || "$trial" == order-alternate-probe-* ||
         "$trial" == order-focused-probe-* ]]; then
     for gpu in "${driver_gpus[@]}"; do
@@ -102,6 +115,8 @@ if [[ "$repeat" == false &&
         "$trial" == order-probe-* ||
         "$trial" == order-alternate-probe-* ||
         "$trial" == order-focused-probe-* ||
+        "$trial" == order-datetime-probe-* ||
+        "$trial" == order-handoff-* ||
         "$trial" == shuffle-probe-* ||
         "$trial" == gdb-[0-9][0-9] ||
         "$trial" == plain-[0-9][0-9] ||

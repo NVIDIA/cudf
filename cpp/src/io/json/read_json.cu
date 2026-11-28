@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/cuda_memcpy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/getenv_or.hpp>
 #include <cudf/detail/utilities/host_worker_pool.hpp>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -251,18 +252,17 @@ std::size_t get_batch_size(std::size_t chunk_size)
  * @param d_data Device span in which to search for delimiter character
  * @param delimiter Delimiter character to search for
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources whose temporary resource is used for scratch allocations
  *
  * @return Position of first delimiter character in device array
  */
 size_type find_first_delimiter(device_span<char const> d_data,
                                char const delimiter,
-                               cuda::stream_ref stream)
+                               cuda::stream_ref stream,
+                               cudf::memory_resources mr)
 {
-  auto const first_delimiter_position =
-    thrust::find(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                 d_data.begin(),
-                 d_data.end(),
-                 delimiter);
+  auto const first_delimiter_position = thrust::find(
+    cudf::detail::exec_policy_nosync(stream, mr), d_data.begin(), d_data.end(), delimiter);
   return first_delimiter_position != d_data.end()
            ? static_cast<size_type>(cuda::std::distance(d_data.begin(), first_delimiter_position))
            : -1;
@@ -288,7 +288,7 @@ size_type find_first_delimiter(device_span<char const> d_data,
  * @param sources Data sources to read from
  * @param reader_opts JSON reader options with range offset and range size
  * @param stream CUDA stream used for device memory operations and kernel launches
- * @param mr Memory resources whose temporary resource is used for scratch allocations
+ * @param mr Memory resources used to allocate the returned buffers' device memory
  * @returns A pair of data source owning buffers together enclosing the bytes read. The second
  * buffer may or may not be empty depending on the condition described above.
  */
@@ -317,7 +317,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
   std::size_t buffer_size =
     std::min(total_source_size, chunk_size + num_subchunks_prealloced * size_per_subchunk) +
     num_extra_delimiters;
-  cuda::device_buffer<char> buffer{stream, mr.get_temporary_mr(), buffer_size, cuda::no_init};
+  cuda::device_buffer<char> buffer{stream, mr.get_output_mr(), buffer_size, cuda::no_init};
   device_span<char> bufspan(reinterpret_cast<char*>(buffer.data()), buffer.size());
 
   // Offset within buffer indicating first read position
@@ -328,7 +328,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
 
   auto const shift_for_nonzero_offset = std::min<std::int64_t>(chunk_offset, 1);
   auto const first_delim_pos =
-    chunk_offset == 0 ? 0 : find_first_delimiter(readbufspan, delimiter, stream);
+    chunk_offset == 0 ? 0 : find_first_delimiter(readbufspan, delimiter, stream, mr);
 
   // If we read till the end of the last source, we cannot be sure
   // if the last record read ends with a delimiter. In such cases, we add a delimiter
@@ -345,7 +345,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
   // entire line until the first delimiter is encountered at the end of the line.
   if (first_delim_pos == -1) {
     // return empty owning datasource buffer
-    auto empty_buf = cuda::device_buffer<char>{stream, mr.get_temporary_mr()};
+    auto empty_buf = cuda::device_buffer<char>{stream, mr.get_output_mr()};
     return std::make_pair(
       datasource::owning_buffer<cuda::device_buffer<char>>(std::move(empty_buf)), std::nullopt);
   } else if (!should_load_till_last_source) {
@@ -369,7 +369,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                                        size_per_subchunk,
                                        delimiter,
                                        stream);
-        next_delim_pos = find_first_delimiter(readbufspan, delimiter, stream) + buffer_offset;
+        next_delim_pos = find_first_delimiter(readbufspan, delimiter, stream, mr) + buffer_offset;
         next_subchunk_start += size_per_subchunk;
       }
       if (next_delim_pos < buffer_offset) {
@@ -394,7 +394,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
           // TODO: Use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved.
           if (buffer_size > buffer.size()) {
             auto grown_buffer =
-              cuda::device_buffer<char>{stream, mr.get_temporary_mr(), buffer_size, cuda::no_init};
+              cuda::device_buffer<char>{stream, mr.get_output_mr(), buffer_size, cuda::no_init};
             CUDF_CUDA_TRY(cudf::detail::memcpy_async(
               grown_buffer.data(), buffer.data(), buffer.size(), stream));
             buffer  = std::move(grown_buffer);
@@ -428,7 +428,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
     auto rev_it_begin                   = cuda::std::make_reverse_iterator(bufsubspan.end());
     auto rev_it_end                     = cuda::std::make_reverse_iterator(bufsubspan.begin());
     auto const second_last_delimiter_it = thrust::find(
-      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), rev_it_begin, rev_it_end, delimiter);
+      cudf::detail::exec_policy_nosync(stream, mr), rev_it_begin, rev_it_end, delimiter);
     CUDF_EXPECTS(second_last_delimiter_it != rev_it_end,
                  "A single JSON line cannot be larger than the batch size limit");
     auto const last_line_size =
@@ -438,7 +438,7 @@ get_record_range_raw_input(host_span<std::unique_ptr<datasource>> sources,
                  "A single JSON line cannot be larger than the batch size limit");
 
     auto second_buffer =
-      cuda::device_buffer<char>{stream, mr.get_temporary_mr(), last_line_size + 1, cuda::no_init};
+      cuda::device_buffer<char>{stream, mr.get_output_mr(), last_line_size + 1, cuda::no_init};
     CUDF_CUDA_TRY(cudf::detail::memcpy_async(
       second_buffer.data(),
       bufsubspan.data() +
@@ -494,16 +494,13 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
   // The second owning buffer in the pair returned by get_record_range_raw_input may not be
   // populated depending on the size of the actual byte range read. The first owning buffer will
   // always be non-empty.
-  auto owning_buffers = get_record_range_raw_input(
-    sources, reader_opts, stream, cudf::get_current_device_resource_ref());
+  auto owning_buffers = get_record_range_raw_input(sources, reader_opts, stream, mr.as_temporary());
 
   // If input JSON buffer has single quotes and option to normalize single quotes is enabled,
   // invoke pre-processing FST
   if (reader_opts.is_enabled_normalize_single_quotes()) {
-    normalize_single_quotes(owning_buffers.first,
-                            reader_opts.get_delimiter(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
+    normalize_single_quotes(
+      owning_buffers.first, reader_opts.get_delimiter(), stream, mr.as_temporary());
     stream.sync();
   }
 
@@ -527,10 +524,8 @@ std::pair<table_with_metadata, std::optional<table_with_metadata>> read_batch(
 
   // Repeat the normalization and table construction steps for the second buffer if it exists
   if (reader_opts.is_enabled_normalize_single_quotes()) {
-    normalize_single_quotes(owning_buffers.second.value(),
-                            reader_opts.get_delimiter(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
+    normalize_single_quotes(
+      owning_buffers.second.value(), reader_opts.get_delimiter(), stream, mr.as_temporary());
     stream.sync();
   }
   buffer = cudf::device_span<char const>(
@@ -682,11 +677,8 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
 
   if (batch_offsets.size() <= 2) {
     // single batch
-    auto has_inserted = insert_partial_tables(read_batch(sources,
-                                                         batched_reader_opts,
-                                                         stream,
-                                                         cudf::get_current_device_resource_ref(),
-                                                         diagnostics_out));
+    auto has_inserted =
+      insert_partial_tables(read_batch(sources, batched_reader_opts, stream, mr, diagnostics_out));
     if (!has_inserted) {
       return table_with_metadata{std::make_unique<table>(std::vector<std::unique_ptr<column>>{}),
                                  {std::vector<column_name_info>{}}};
@@ -695,11 +687,7 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
     // multiple batches
     batched_reader_opts.set_byte_range_offset(batch_offsets[0]);
     batched_reader_opts.set_byte_range_size(batch_offsets[1] - batch_offsets[0]);
-    insert_partial_tables(read_batch(sources,
-                                     batched_reader_opts,
-                                     stream,
-                                     cudf::get_current_device_resource_ref(),
-                                     diagnostics_out));
+    insert_partial_tables(read_batch(sources, batched_reader_opts, stream, mr, diagnostics_out));
 
     auto& tbl = partial_tables.back().tbl;
     std::vector<column_view> children;
@@ -718,11 +706,8 @@ table_with_metadata read_json_impl(host_span<std::unique_ptr<datasource>> source
       batched_reader_opts.set_byte_range_offset(batch_offsets[batch_offset_pos]);
       batched_reader_opts.set_byte_range_size(batch_offsets[batch_offset_pos + 1] -
                                               batch_offsets[batch_offset_pos]);
-      auto has_inserted = insert_partial_tables(read_batch(sources,
-                                                           batched_reader_opts,
-                                                           stream,
-                                                           cudf::get_current_device_resource_ref(),
-                                                           diagnostics_out));
+      auto has_inserted = insert_partial_tables(
+        read_batch(sources, batched_reader_opts, stream, mr.as_temporary(), diagnostics_out));
 
       if (!has_inserted) {
         CUDF_EXPECTS(batch_offset_pos == batch_offsets.size() - 2,

@@ -215,7 +215,8 @@ TEST_F(LogicalStackTest, GroundTruth)
                                                       empty_stack_symbol,
                                                       read_symbol,
                                                       string_size,
-                                                      stream.get());
+                                                      stream.get(),
+                                                      cudf::get_current_device_resource_ref());
 
   // Async copy results from device to host
   top_of_stack_gpu.device_to_host_async(stream_view);

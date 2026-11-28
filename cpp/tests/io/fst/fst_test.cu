@@ -173,7 +173,8 @@ TEST_F(FstTest, GroundTruth)
     cudf::io::fst::detail::make_translation_table<TT_NUM_STATES * NUM_SYMBOL_GROUPS,
                                                   min_translated_out,
                                                   max_translated_out>(pda_out_tt),
-    stream);
+    stream,
+    cudf::get_current_device_resource_ref());
 
   // Allocate device-side temporary storage & run algorithm
   parser.Transduce(d_input.data(),
@@ -182,7 +183,8 @@ TEST_F(FstTest, GroundTruth)
                    out_indexes_gpu.device_ptr(),
                    output_gpu_size.device_ptr(),
                    start_state,
-                   stream.get());
+                   stream.get(),
+                   cudf::get_current_device_resource_ref());
 
   // Async copy results from device to host
   output_gpu.device_to_host_async(stream_view);

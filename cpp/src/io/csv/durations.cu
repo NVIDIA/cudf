@@ -7,6 +7,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/convert/int_to_string.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
@@ -186,7 +187,7 @@ struct dispatch_from_durations_fn {
     auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
     auto d_chars    = chars_data.data();
 
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                        cuda::counting_iterator<size_type>{0},
                        strings_count,
                        duration_to_string_fn<T>{d_column, d_new_offsets, d_chars});

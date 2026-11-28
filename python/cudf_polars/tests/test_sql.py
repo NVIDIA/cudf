@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -12,6 +13,7 @@ from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 
 @pytest.fixture
@@ -75,6 +77,44 @@ def test_left_join_with_hidden_predicate_raises(engine: pl.GPUEngine, frames):
 
 def test_array_literal(engine: pl.GPUEngine, frames):
     q = sql(frames, "SELECT ARRAY[1, 2] AS a FROM u")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_date_add_days(engine: pl.GPUEngine):
+    t = pl.LazyFrame(
+        {
+            "d": [date(1969, 12, 29), None, date(2000, 2, 28), date(2000, 2, 28)],
+            "delta": [
+                timedelta(microseconds=-1),
+                timedelta(0),
+                timedelta(hours=36),
+                None,
+            ],
+        }
+    )
+    q = t.sql(
+        "SELECT d + 5 AS later, d + (-5) AS earlier, d + delta AS shifted FROM self"
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_date_add_days_out_of_range(engine: pl.GPUEngine):
+    t = pl.LazyFrame({"days": [-106_751_992, -106_751_991, 106_751_991, 106_751_992]})
+    q = t.sql("SELECT CAST(CAST(days AS DATE) + 5 AS INT) AS shifted FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 does not expose fused join predicates to the visitor",
+)
+def test_join_on_date_add_days(engine: pl.GPUEngine):
+    t = pl.LazyFrame({"k": [1, 1, 2], "d": [date(2000, 1, 1), None, date(2000, 1, 4)]})
+    u = pl.LazyFrame({"k": [1, 2], "e": [date(2000, 1, 8), date(2000, 1, 8)]})
+    q = sql(
+        {"t": t, "u": u},
+        "SELECT t.k, d, e FROM t JOIN u ON t.k = u.k AND e > d + 5 ORDER BY t.k",
+    )
     assert_gpu_result_equal(q, engine=engine)
 
 

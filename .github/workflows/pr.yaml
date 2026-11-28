@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-paired
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-fence
   cancel-in-progress: true
 
 jobs:
@@ -20,16 +20,14 @@ jobs:
       fail-fast: false
       matrix:
         trial:
+          - order-handoff-fence-reference
           - order-handoff-fence-01
           - order-handoff-fence-02
           - order-handoff-fence-03
           - order-handoff-fence-04
           - order-handoff-fence-05
-          - order-handoff-ownership-01
-          - order-handoff-ownership-02
-          - order-handoff-ownership-03
-          - order-handoff-ownership-04
-          - order-handoff-ownership-05
+          - order-handoff-fence-06
+          - order-handoff-fence-07
     permissions:
       actions: read
       contents: read

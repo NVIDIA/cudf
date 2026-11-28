@@ -40,6 +40,9 @@ elif [[ "$trial" == sanitizer-order || "$trial" == sanitizer-order-alternate ]];
     trial="${trial/sanitizer/memcheck}-dask-datetime"
 elif [[ "$trial" == order-focused-reference ]]; then
     trial=signal-order-focused-dask-datetime
+elif [[ "$trial" == order-handoff-*-reference ]]; then
+    mode=${trial#order-handoff-}
+    trial="signal-order-handoff-${mode%-reference}-dask-datetime"
 elif [[ "$trial" == order-datetime-probe-* || "$trial" == order-handoff-* ]]; then
     for gpu in "${driver_gpus[@]}"; do
         if [[ "$gpu_inventory" == *"$gpu,"* ]]; then

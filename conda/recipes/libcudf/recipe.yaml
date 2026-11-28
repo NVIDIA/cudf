@@ -51,6 +51,24 @@ outputs:
               libcudf libcudf_kafka libcudf_streaming "${test_targets[@]}" \
               --build_metrics --incl_cache_stats --allgpuarch \
               --cmake-args="\"-DCUDF_ENABLE_ARROW_S3=ON\" $cmake_args"
+
+          # Install at the real prefix so CMake applies its normal RPATH changes.
+          # Keep dependencies available until every install and example build ends.
+          stage_install="$RECIPE_DIR/stage_install.sh"
+          bash "$stage_install" record libcudf cmake --install cpp/build
+          LIB="$PREFIX/lib/libcudf.so"
+          test -f "$LIB"
+          ./ci/check_symbols.sh "$LIB"
+          bash "$stage_install" record libcudf_kafka cmake --install cpp/libcudf_kafka/build
+          bash "$stage_install" record libcudf-streaming cmake --install cpp/libcudf_streaming/build
+          if [[ "$BUILD_CPP_TESTS" == true ]]; then
+            bash "$stage_install" record libcudf-tests cmake --install cpp/build --component testing
+            bash "$stage_install" record libcudf-tests cmake --install cpp/libcudf_kafka/build --component testing
+            bash "$stage_install" record libcudf-streaming-tests cmake --install cpp/libcudf_streaming/build --component testing
+            bash "$stage_install" record libcudf-streaming-tests cmake --install cpp/libcudf_streaming/build --component benchmarking
+            bash "$stage_install" record libcudf-example ./cpp/examples/build.sh --install
+          fi
+          bash "$stage_install" finish
         secrets:
           - AWS_ACCESS_KEY_ID
           - AWS_SECRET_ACCESS_KEY
@@ -123,11 +141,7 @@ outputs:
     build:
       script:
         content: |
-          cmake --install cpp/build
-          # Check that no hidden symbols are present in the shared library
-          LIB="$PREFIX/lib/libcudf.so"
-          test -f "$LIB"
-          ./ci/check_symbols.sh "$LIB"
+          bash "$RECIPE_DIR/stage_install.sh" restore libcudf
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"
@@ -192,7 +206,7 @@ outputs:
     inherit: libcudf-build
     build:
       script:
-        - cmake --install cpp/libcudf_kafka/build
+        - bash "$RECIPE_DIR/stage_install.sh" restore libcudf_kafka
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"
@@ -231,7 +245,7 @@ outputs:
     inherit: libcudf-build
     build:
       script:
-        - cmake --install cpp/libcudf_streaming/build
+        - bash "$RECIPE_DIR/stage_install.sh" restore libcudf-streaming
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"
@@ -278,7 +292,7 @@ outputs:
       skip: not build_cpp_tests
       script:
         content: |
-          ./cpp/examples/build.sh --install
+          bash "$RECIPE_DIR/stage_install.sh" restore libcudf-example
         secrets:
           - AWS_ACCESS_KEY_ID
           - AWS_SECRET_ACCESS_KEY
@@ -363,8 +377,7 @@ outputs:
     build:
       skip: not build_cpp_tests
       script:
-        - cmake --install cpp/build --component testing
-        - cmake --install cpp/libcudf_kafka/build --component testing
+        - bash "$RECIPE_DIR/stage_install.sh" restore libcudf-tests
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"
@@ -418,8 +431,7 @@ outputs:
     build:
       skip: not build_cpp_tests
       script:
-        - cmake --install cpp/libcudf_streaming/build --component testing
-        - cmake --install cpp/libcudf_streaming/build --component benchmarking
+        - bash "$RECIPE_DIR/stage_install.sh" restore libcudf-streaming-tests
       string: cuda${{ cuda_major }}_${{ datetime_string }}_${{ head_rev }}
       dynamic_linking:
         overlinking_behavior: "error"

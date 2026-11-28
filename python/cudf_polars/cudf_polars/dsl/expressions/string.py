@@ -618,6 +618,25 @@ class StringFunction(Expr):
                 ),
                 stream=df.stream,
             )
+            # Polars returns byte offsets, libcudf returns character positions.
+            # Clamp -1 and nulls to 0: slice_strings rejects null stops and
+            # would copy the whole string for a stop of -1.
+            zero = plc.Scalar.from_py(0, plc_column.type(), stream=df.stream)
+            plc_column = plc.strings.attributes.count_bytes(
+                plc.strings.slice.slice_strings(
+                    column.obj,
+                    plc.Column.from_scalar(zero, plc_column.size(), stream=df.stream),
+                    plc.binaryop.binary_operation(
+                        plc_column,
+                        zero,
+                        plc.binaryop.BinaryOperator.NULL_MAX,
+                        plc_column.type(),
+                        stream=df.stream,
+                    ),
+                    stream=df.stream,
+                ),
+                stream=df.stream,
+            )
             plc_column = plc.unary.cast(
                 plc_column.with_mask(new_mask, null_count),
                 self.dtype.plc_type,

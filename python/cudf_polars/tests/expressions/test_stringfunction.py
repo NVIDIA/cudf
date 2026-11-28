@@ -1049,6 +1049,23 @@ def test_find_literal_false_column_unsupported(engine: pl.GPUEngine, ldf_find):
     assert_ir_translation_raises(q, engine, NotImplementedError)
 
 
+@pytest.mark.parametrize("literal", [True, False])
+@pytest.mark.parametrize("pattern", ["b", "Ç", "b.", ""])
+def test_find_non_ascii(engine: pl.GPUEngine, literal, pattern):
+    # polars returns byte offsets, not character positions
+    ldf = pl.LazyFrame({"a": ["ÄbÇ", "日本b", "🦀b", "abc", "x", None, ""]})
+    q = ldf.select(pl.col("a").str.find(pattern, literal=literal))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("literal", [True, False])
+@pytest.mark.parametrize("data", [[], [None, None]])
+def test_find_empty_or_all_null(engine: pl.GPUEngine, literal, data):
+    ldf = pl.LazyFrame({"a": pl.Series(data, dtype=pl.String)})
+    q = ldf.select(pl.col("a").str.find("b", literal=literal))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.fixture
 def ldf_extract():
     return pl.LazyFrame({"a": ["?!. 123 foo", None]})

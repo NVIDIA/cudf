@@ -14,7 +14,6 @@ from cudf_streaming.channel_metadata import (
     Partitioning,
 )
 from cudf_streaming.partition_utils import (
-    partition_and_pack as py_partition_and_pack,
     partition_and_pack_cost as py_partition_and_pack_cost,
     split_and_pack as py_split_and_pack,
     split_and_pack_cost as py_split_and_pack_cost,
@@ -96,6 +95,10 @@ class ShuffleManager:
         Obtained via :meth:`ShuffleManager.inserting`. On exit, signals
         the end of insertion to all ranks by calling ``insert_finished()``.
 
+        :meth:`insert_hash` and :meth:`insert_hash_keys` release the chunk
+        they are given, so it must not be used afterwards. :meth:`insert_split`
+        and :meth:`insert_index` leave the chunk to the caller.
+
         Parameters
         ----------
         manager
@@ -108,60 +111,135 @@ class ShuffleManager:
         async def insert_hash(
             self, chunk: TableChunk, columns_to_hash: tuple[int, ...]
         ) -> None:
-            """Partition chunk by hash and insert into the shuffler."""
+            """
+            Partition chunk by hash and insert into the shuffler.
+
+            The chunk is reordered by partition with ``hash_partition`` and then
+            released, which frees the device memory it owns. The reordered table
+            is then packed and inserted.
+
+            Parameters
+            ----------
+            chunk
+                The chunk to partition. Must be available in device memory.
+            columns_to_hash
+                Indices of the columns of ``chunk`` to hash.
+
+            Warnings
+            --------
+            The chunk is released by this call, so neither it nor any table
+            returned by its ``table_view()`` may be used afterwards.
+            """
             br = self._manager.context.br()
+            stream = chunk.stream
+            # The reorder and the pack each allocate the chunk's packed size.
+            # Releasing the chunk in between frees the memory the pack needs,
+            # so they are reserved one at a time.
             reservation = await reserve_memory(
                 self._manager.context,
-                py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),
-                # The chunk's data moves into shuffler-owned packed buffers,
-                # nothing lasting is added.
+                py_split_and_pack_cost(chunk.table_view(), stream, br),
+                # The chunk's data moves into the reordered table,
+                # so nothing lasting is added.
                 net_memory_delta=0,
             )
-            self._manager.shuffler.insert(
-                py_partition_and_pack(
-                    table=chunk.table_view(),
-                    columns_to_hash=columns_to_hash,
-                    num_partitions=self._manager.num_partitions,
-                    stream=chunk.stream,
-                    br=br,
-                    reservation=reservation,
+            with opaque_memory_usage(reservation):
+                partitioned_table, offsets = plc.partitioning.hash_partition(
+                    chunk.table_view(),
+                    list(columns_to_hash),
+                    self._manager.num_partitions,
+                    stream=stream,
+                    mr=br.device_mr,
                 )
-            )
+            chunk.release()
+            await self._insert_partitioned(partitioned_table, offsets, stream)
 
         async def insert_hash_keys(
             self, chunk: TableChunk, keys: tuple[NamedExpr, ...], schema: Schema
         ) -> None:
-            """Partition chunk by hash of ``keys`` evaluated over it, and insert."""
+            """
+            Partition chunk by hash of ``keys`` evaluated over it, and insert.
+
+            The keys are evaluated over the chunk into a key table, and the
+            chunk is reordered by partition with ``hash_partition``. The key
+            table and the chunk are then released, which frees the device
+            memory they own. The reordered table is then packed and inserted.
+
+            Parameters
+            ----------
+            chunk
+                The chunk to partition. Must be available in device memory.
+            keys
+                The expressions to hash, evaluated over ``chunk``.
+            schema
+                The schema of ``chunk``.
+
+            Warnings
+            --------
+            The chunk is released by this call, so neither it nor any table
+            returned by its ``table_view()`` may be used afterwards.
+            """
             br = self._manager.context.br()
+            stream = chunk.stream
             # Three allocations of the chunk's packed size: the key table, the
-            # reorder, then the pack.
+            # reorder, then the pack. The pack is reserved after the chunk and
+            # the key table are released.
             #
             # Charging the key table a whole chunk is an approximation, not a
             # bound. A key expression that expands its input evaluates to more
             # than the chunk's packed size and under-reserves.
-            chunk_nbytes = py_split_and_pack_cost(chunk.table_view(), chunk.stream, br)
+            chunk_nbytes = py_split_and_pack_cost(chunk.table_view(), stream, br)
             reservation = await reserve_memory(
                 self._manager.context,
-                3 * chunk_nbytes,
-                # The chunk's data moves into shuffler-owned packed buffers,
-                # nothing lasting is added.
+                2 * chunk_nbytes,
+                # The chunk's data moves into the reordered table and the key
+                # table is freed.
                 net_memory_delta=0,
             )
             with opaque_memory_usage(reservation.split(chunk_nbytes)):
                 key_table = _evaluate_key_table(chunk, keys, schema)
-            with opaque_memory_usage(reservation.split(chunk_nbytes)):
+            with opaque_memory_usage(reservation):
                 partitioned_table, offsets = plc.partitioning.hash_partition(
                     chunk.table_view(),
                     key_table,
                     self._manager.num_partitions,
-                    stream=chunk.stream,
+                    stream=stream,
                     mr=br.device_mr,
                 )
+            del key_table
+            chunk.release()
+            await self._insert_partitioned(partitioned_table, offsets, stream)
+
+        async def _insert_partitioned(
+            self, partitioned_table: plc.Table, offsets: list[int], stream: Stream
+        ) -> None:
+            """
+            Pack a table reordered by partition and insert it into the shuffler.
+
+            Reserves the device memory of the pack before packing.
+
+            Parameters
+            ----------
+            partitioned_table
+                The table, with the rows of each partition contiguous.
+            offsets
+                The ``num_partitions + 1`` row offsets of the partitions in
+                ``partitioned_table``, as returned by ``hash_partition``.
+            stream
+                CUDA stream on which ``partitioned_table`` was created and on
+                which the pack runs.
+            """
+            br = self._manager.context.br()
+            reservation = await reserve_memory(
+                self._manager.context,
+                py_split_and_pack_cost(partitioned_table, stream, br),
+                # The reordered table moves into shuffler-owned packed buffers.
+                net_memory_delta=0,
+            )
             self._manager.shuffler.insert(
                 py_split_and_pack(
                     table=partitioned_table,
                     splits=list(offsets[1:-1]),
-                    stream=chunk.stream,
+                    stream=stream,
                     br=br,
                     reservation=reservation,
                 )
@@ -210,7 +288,7 @@ class ShuffleManager:
                 The IR execution context.
             """
             br = self._manager.context.br()
-            # As in `insert_hash_keys`, this covers the reorder plus the pack.
+            # This covers the reorder plus the pack.
             reservation = await reserve_memory(
                 self._manager.context,
                 py_partition_and_pack_cost(chunk.table_view(), chunk.stream, br),

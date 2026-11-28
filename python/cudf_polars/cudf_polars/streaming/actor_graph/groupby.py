@@ -425,15 +425,14 @@ async def _shuffle_reduce(
         collective_id,
     ) as shuffle:
         async with shuffle.inserting() as inserter:
-            await inserter.insert_hash(
-                _enforce_schema(
-                    aggregated,
-                    decomposed.reduction_ir.schema,
-                    context.br(),
-                ),
-                decomposed.shuffle_indices,
+            # Drop our reference so `aggregated` is freed when insert_hash
+            # releases the chunk, which may view it.
+            enforced = _enforce_schema(
+                aggregated, decomposed.reduction_ir.schema, context.br()
             )
             del aggregated
+            await inserter.insert_hash(enforced, decomposed.shuffle_indices)
+            del enforced
 
             while not input_drained:
                 aggregated, input_drained, _ = await _local_aggregation(
@@ -443,13 +442,12 @@ async def _shuffle_reduce(
                     ch_in,
                     target_partition_size,
                 )
-                await inserter.insert_hash(
-                    _enforce_schema(
-                        aggregated, decomposed.reduction_ir.schema, context.br()
-                    ),
-                    decomposed.shuffle_indices,
+                enforced = _enforce_schema(
+                    aggregated, decomposed.reduction_ir.schema, context.br()
                 )
                 del aggregated
+                await inserter.insert_hash(enforced, decomposed.shuffle_indices)
+                del enforced
         for partition_id in shuffle.local_partitions():
             stream = ir_context.get_cuda_stream()
             partition_chunk = TableChunk.from_pylibcudf_table(

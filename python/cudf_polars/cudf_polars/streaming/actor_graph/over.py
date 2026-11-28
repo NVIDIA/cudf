@@ -536,8 +536,11 @@ async def _distribute_by_group(
                     chunk.stream,
                     context.br(),
                 )
+            # Drop our reference so the chunk is freed when insert_hash
+            # releases the stamped chunk that views it.
+            del chunk
             await inserter.insert_hash(stamped, key_indices)
-            del stamped, chunk
+            del stamped
     return sequence_numbers
 
 

@@ -17,6 +17,7 @@ from cudf_streaming.channel_metadata import (
 from cudf_streaming.table_chunk import TableChunk
 
 from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import IRExecutionContext
 from cudf_polars.engine.options import StreamingOptions
 from cudf_polars.engine.spmd import allgather_polars_dataframe
@@ -175,13 +176,17 @@ def test_is_already_partitioned(partitioning, expected):
 
 @pytest.mark.spmd
 @pytest.mark.parametrize("local_count", [1, 2, 4])
-def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
+@pytest.mark.parametrize("by_keys", [False, True], ids=["columns", "keys"])
+def test_local_repartitioner_hash(
+    spmd_engine, local_count, by_keys, monkeypatch
+) -> None:
     context = spmd_engine.context
     comm = spmd_engine.comm
 
     pl_df = pl.DataFrame({"key": list(range(4)) * 3, "val": list(range(12))})
     col_names = pl_df.columns
     dtypes = [DataType(dt) for dt in pl_df.dtypes]
+    schema = dict(zip(col_names, dtypes, strict=True))
 
     results: list[tuple[int, pl.DataFrame]] = []
 
@@ -193,12 +198,30 @@ def test_local_repartitioner_hash(spmd_engine, local_count) -> None:
                 context, comm, num_partitions=comm.nranks, collective_id=op_id
             ) as shuffle:
                 async with shuffle.inserting() as inserter:
-                    await inserter.insert_hash(
-                        TableChunk.from_pylibcudf_table(
-                            cudf_df.table, stream, exclusive_view=True, br=context.br()
-                        ),
-                        columns_to_hash=(0,),
+                    chunk = TableChunk.from_pylibcudf_table(
+                        cudf_df.table, stream, exclusive_view=True, br=context.br()
                     )
+                    del cudf_df
+                    insert_partitioned = inserter._insert_partitioned
+                    checked = False
+
+                    async def check_released_before_pack(*args) -> None:
+                        # The insert releases the chunk before packing.
+                        nonlocal checked
+                        with pytest.raises(ValueError, match="released"):
+                            chunk.table_view()
+                        checked = True
+                        await insert_partitioned(*args)
+
+                    monkeypatch.setattr(
+                        inserter, "_insert_partitioned", check_released_before_pack
+                    )
+                    if by_keys:
+                        key = expr.NamedExpr("key", expr.Col(schema["key"], "key"))
+                        await inserter.insert_hash_keys(chunk, (key,), schema)
+                    else:
+                        await inserter.insert_hash(chunk, columns_to_hash=(0,))
+                    assert checked
 
                 async with LocalRepartitioner(
                     shuffle, local_count=local_count

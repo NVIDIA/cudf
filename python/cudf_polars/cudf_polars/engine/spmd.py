@@ -71,12 +71,14 @@ from cudf_polars.quent._runtime import (
 from cudf_polars.streaming.actor_graph.collectives.common import reserve_op_id
 from cudf_polars.streaming.actor_graph.utils import set_memory_resource
 from cudf_polars.unstable import unstable
+from cudf_polars.utils import cucascade
 from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     SPMDContext,
     StreamingExecutor,
     configure_kvikio,
+    resolve_cucascade_cache_bytes,
     resolve_kvikio_executor_options,
     resolve_quent_context,
 )
@@ -617,6 +619,9 @@ class SPMDEngine(StreamingEngine):
     ) -> None:
         _check_engine_gpu_is_first()
         executor_options = resolve_kvikio_executor_options(executor_options or {})
+        executor_options.setdefault(
+            "cucascade_cache_bytes", resolve_cucascade_cache_bytes(executor_options)
+        )
         engine_options = engine_options or {}
 
         quent_context = resolve_quent_context(executor_options)
@@ -663,6 +668,10 @@ class SPMDEngine(StreamingEngine):
                 comm.progress_thread.statistics, self.rapidsmpf_options
             )
         # else: caller-provided comm; the caller retains ownership
+        cucascade.check_single_rank(
+            executor_options["cucascade_cache_bytes"], comm.nranks
+        )
+        cucascade.configure_cucascade(executor_options["cucascade_cache_bytes"])
 
         self._base_mr: rmm.mr.DeviceMemoryResource = base_mr
         self._mr: RmmResourceAdaptor  # set after `Context` is built (below).
@@ -1066,6 +1075,8 @@ class SPMDEngine(StreamingEngine):
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
             )
         executor_options = resolve_kvikio_executor_options(executor_options)
+        cache_bytes = resolve_cucascade_cache_bytes(executor_options)
+        cucascade.check_single_rank(cache_bytes, self._comm.nranks)
         configure_kvikio(
             executor_options["kvikio_nthreads"],
             remote_io_backend=executor_options["kvikio_remote_io_backend"],
@@ -1074,6 +1085,7 @@ class SPMDEngine(StreamingEngine):
             reactor_count=executor_options["kvikio_reactor_count"],
             request_ceiling=executor_options["kvikio_request_ceiling"],
         )
+        cucascade.configure_cucascade(cache_bytes)
         engine_options = engine_options or {}
         new_quent_context: cudf_polars.quent.QuentConfig | None = executor_options.get(
             "quent_context", existing_quent_context

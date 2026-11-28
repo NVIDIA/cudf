@@ -52,11 +52,13 @@ from cudf_polars.quent._runtime import (
     QuentWorkerRuntime,
 )
 from cudf_polars.unstable import unstable
+from cudf_polars.utils import cucascade
 from cudf_polars.utils.cleanup import run_cleanup_steps
 from cudf_polars.utils.config import (
     MemoryResourceConfig,
     RayContext,
     configure_kvikio,
+    resolve_cucascade_cache_bytes,
     resolve_kvikio_executor_options,
     resolve_quent_context,
 )
@@ -248,6 +250,9 @@ class RankActor:
     memory_resource_config
         Optional RMM memory resource configuration. If ``None``, defaults to
         :meth:`cudf_polars.utils.config.MemoryResourceConfig.default`.
+    cucascade_cache_bytes
+        Size, in bytes, of the cuCascade host cache to create in this worker
+        process. 0 reads without it.
 
     Notes
     -----
@@ -269,6 +274,7 @@ class RankActor:
         kvikio_bounce_buffer_bytes: int,
         kvikio_reactor_count: int,
         kvikio_request_ceiling: int,
+        cucascade_cache_bytes: int,
         hardware_binding: HardwareBindingPolicy,
         memory_resource_config: MemoryResourceConfig | None,
         worker_id: uuid.UUID,
@@ -282,6 +288,7 @@ class RankActor:
             reactor_count=kvikio_reactor_count,
             request_ceiling=kvikio_request_ceiling,
         )
+        cucascade.configure_cucascade(cucascade_cache_bytes)
         memory_resource_config = (
             memory_resource_config or MemoryResourceConfig.default()
         )
@@ -409,6 +416,7 @@ class RankActor:
         kvikio_bounce_buffer_bytes: int,
         kvikio_reactor_count: int,
         kvikio_request_ceiling: int,
+        cucascade_cache_bytes: int,
     ) -> None:
         """
         Rebuild the streaming Context with new options.
@@ -435,6 +443,9 @@ class RankActor:
             Number of ``MULTI_POLL`` reactor threads to configure on this worker process.
         kvikio_request_ceiling
             ``MULTI_POLL`` concurrent-request ceiling to configure on this worker process.
+        cucascade_cache_bytes
+            Size, in bytes, of the cuCascade host cache of this worker process. The
+            cache is created once, so this only has an effect if there is none yet.
         """
         if self._ctx is None:
             raise RuntimeError("reset() requires setup_worker() to have run")
@@ -446,6 +457,7 @@ class RankActor:
             reactor_count=kvikio_reactor_count,
             request_ceiling=kvikio_request_ceiling,
         )
+        cucascade.configure_cucascade(cucascade_cache_bytes)
         assert self._comm is not None
         # Collective: all ranks idle before any rank tears down its Context.
         if self._comm.nranks > 1:
@@ -948,6 +960,8 @@ class RayEngine(StreamingEngine):
             nranks = (
                 num_ranks if num_ranks is not None else get_num_gpus_in_ray_cluster()
             )
+            cache_bytes = resolve_cucascade_cache_bytes(executor_options)
+            cucascade.check_single_rank(cache_bytes, nranks)
             worker_ids = [uuid.uuid4() for _ in range(nranks)]
 
             # Append incrementally so cleanup owns every actor even if a later
@@ -974,6 +988,7 @@ class RayEngine(StreamingEngine):
                         kvikio_request_ceiling=executor_options[
                             "kvikio_request_ceiling"
                         ],
+                        cucascade_cache_bytes=cache_bytes,
                         hardware_binding=hw_binding,
                         memory_resource_config=mr_config,
                         worker_id=worker_id,
@@ -1039,6 +1054,8 @@ class RayEngine(StreamingEngine):
                 "kvikio_nthreads", existing_executor_options["kvikio_nthreads"]
             )
         executor_options = resolve_kvikio_executor_options(executor_options)
+        cache_bytes = resolve_cucascade_cache_bytes(executor_options)
+        cucascade.check_single_rank(cache_bytes, len(self._rank_actors))
         engine_options = dict(engine_options or {})
         engine_options.setdefault("allow_gpu_sharing", self._allow_gpu_sharing)
         self._allow_gpu_sharing = bool(engine_options["allow_gpu_sharing"])
@@ -1063,6 +1080,7 @@ class RayEngine(StreamingEngine):
                     ],
                     kvikio_reactor_count=executor_options["kvikio_reactor_count"],
                     kvikio_request_ceiling=executor_options["kvikio_request_ceiling"],
+                    cucascade_cache_bytes=cache_bytes,
                 )
                 for rank in self._rank_actors
             ],

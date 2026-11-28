@@ -22,6 +22,7 @@ from cudf_polars.streaming.benchmarks.utils import (
     SQLQueries,
     SQLQueryFiles,
     drop_file_page_cache_recursively,
+    get_executor_options,
     parse_args,
 )
 from tests.streaming.conftest import tpc_streaming_options
@@ -112,6 +113,21 @@ def test_remote_path_single_iteration(
     assert run_config.io_mode == io_mode
     monkeypatch.setitem(sys.modules, "kvikio", None)
     drop_file_page_cache_recursively(run_config.dataset_path)
+
+
+@pytest.mark.parametrize("io_mode", ["cold", "lukewarm"])
+def test_cold_runs_read_without_the_cucascade_cache(io_mode: str) -> None:
+    run_config = SimpleNamespace(
+        streaming_options=SimpleNamespace(to_executor_options=dict),
+        collect_traces=False,
+        io_mode=io_mode,
+    )
+    executor_options = get_executor_options(run_config)  # type: ignore[arg-type]
+    if io_mode == "cold":
+        assert executor_options["cucascade_cache_bytes"] == 0
+    else:
+        # Left unset, so the engine uses the configured size.
+        assert "cucascade_cache_bytes" not in executor_options
 
 
 def test_sql_cli_parse(tmp_path: Path) -> None:

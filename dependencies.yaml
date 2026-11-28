@@ -731,6 +731,24 @@ files:
     output: none
     includes:
       - depends_on_cudf_polars_quent
+  test_cudf_polars_cucascade:
+    output: none
+    includes:
+      - build_all
+      - build_base
+      - build_cudf_polars_cucascade
+      - build_python_common
+      - cuda
+      - cuda_version
+      - depends_on_cudf_polars
+      - depends_on_dask_cuda
+      - depends_on_libcudf
+      - depends_on_pylibcudf
+      - depends_on_ray
+      - py_version
+      - rapids_build_skbuild
+      - test_python_common
+      - test_python_s3
 channels:
   - rapidsai-nightly
   - rapidsai
@@ -775,6 +793,16 @@ dependencies:
       - output_types: conda
         packages:
           - librdkafka<2.15.0a0
+  build_cudf_polars_cucascade:
+    common:
+      - output_types: conda
+        packages:
+          # cuCascade's io core: io_uring transport (found with pkg-config), TLS, and
+          # NVML for its topology discovery.
+          - cuda-nvml-dev
+          - liburing
+          - openssl
+          - pkg-config
   build_java:
     common:
       - output_types: conda

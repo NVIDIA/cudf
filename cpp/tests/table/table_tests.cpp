@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/column/column.hpp>
@@ -402,6 +403,26 @@ TEST_F(TableTest, TablesEqualStructColumnsWithLists)
 
   EXPECT_TRUE(cudf::tables_equal(cudf::table_view{{left}}, cudf::table_view{{right}}));
   EXPECT_FALSE(cudf::tables_equal(cudf::table_view{{left}}, cudf::table_view{{different}}));
+}
+
+TEST_F(TableTest, TablesEqualExplicitMemoryResources)
+{
+  auto const left  = s_col_wrapper({"a", "", "c"}, {true, false, true});
+  auto const right = s_col_wrapper({"a", "", "c"}, {true, false, true});
+  auto harness     = cudf::test::memory_resource_test_harness{};
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) {
+      return cudf::tables_equal(cudf::table_view{{left}},
+                                cudf::table_view{{right}},
+                                cudf::null_equality::EQUAL,
+                                cudf::test::get_default_stream(),
+                                mr);
+    },
+    [](auto) { return 0; },
+    [](auto result) { EXPECT_EQ(result, true); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME});
 }
 
 CUDF_TEST_PROGRAM_MAIN()

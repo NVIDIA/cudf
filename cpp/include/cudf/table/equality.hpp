@@ -27,11 +27,14 @@ namespace CUDF_EXPORT cudf {
  * @param right The second table to compare
  * @param nulls_equal Flag to denote if null elements should be considered equal
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return true if the tables are equal, false otherwise
  */
-[[nodiscard]] bool tables_equal(table_view const& left,
-                                table_view const& right,
-                                null_equality nulls_equal = null_equality::EQUAL,
-                                cuda::stream_ref stream   = cudf::get_default_stream());
+[[nodiscard]] bool tables_equal(
+  table_view const& left,
+  table_view const& right,
+  null_equality nulls_equal = null_equality::EQUAL,
+  cuda::stream_ref stream   = cudf::get_default_stream(),
+  cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 }  // namespace CUDF_EXPORT cudf

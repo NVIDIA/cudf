@@ -9,14 +9,13 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/replace.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/replace.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/concepts>
@@ -143,9 +142,10 @@ struct normalize_nans_and_zeros_kernel_forwarder {
   template <cuda::std::floating_point T>
   void operator()(cudf::column_device_view in,
                   cudf::mutable_column_device_view out,
-                  cuda::stream_ref stream)
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr)
   {
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{in.size()},
                       out.head<T>(),
@@ -165,7 +165,9 @@ struct normalize_nans_and_zeros_kernel_forwarder {
 
 namespace cudf {
 namespace detail {
-void normalize_nans_and_zeros(mutable_column_view in_out, cuda::stream_ref stream)
+void normalize_nans_and_zeros(mutable_column_view in_out,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   if (in_out.is_empty()) { return; }
   CUDF_EXPECTS(
@@ -177,14 +179,14 @@ void normalize_nans_and_zeros(mutable_column_view in_out, cuda::stream_ref strea
   column_view input = in_out;
 
   // to device. unique_ptr which gets automatically cleaned up when we leave
-  auto device_in = column_device_view::create(input, stream);
+  auto device_in = column_device_view::create(input, stream, mr.as_temporary());
 
   // from device. unique_ptr which gets automatically cleaned up when we leave.
-  auto device_out = mutable_column_device_view::create(in_out, stream);
+  auto device_out = mutable_column_device_view::create(in_out, stream, mr.as_temporary());
 
   // invoke the actual kernel.
   cudf::type_dispatcher(
-    input.type(), normalize_nans_and_zeros_kernel_forwarder{}, *device_in, *device_out, stream);
+    input.type(), normalize_nans_and_zeros_kernel_forwarder{}, *device_in, *device_out, stream, mr);
 }
 
 std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
@@ -196,7 +198,7 @@ std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
 
   // from device. unique_ptr which gets automatically cleaned up when we leave.
   auto out_view = out->mutable_view();
-  detail::normalize_nans_and_zeros(out_view, stream);
+  detail::normalize_nans_and_zeros(out_view, stream, mr);
   out->set_null_count(input.null_count());
 
   return out;
@@ -232,11 +234,14 @@ std::unique_ptr<column> normalize_nans_and_zeros(column_view const& input,
  * @throws cudf::logic_error if column does not have floating point data type.
  * @param[in, out] in_out mutable_column_view representing input data. data is processed in-place
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  */
-void normalize_nans_and_zeros(mutable_column_view& in_out, cuda::stream_ref stream)
+void normalize_nans_and_zeros(mutable_column_view& in_out,
+                              cuda::stream_ref stream,
+                              cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  detail::normalize_nans_and_zeros(in_out, stream);
+  detail::normalize_nans_and_zeros(in_out, stream, mr);
 }
 
 }  // namespace cudf

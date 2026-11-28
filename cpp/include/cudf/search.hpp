@@ -125,11 +125,13 @@ std::unique_ptr<column> upper_bound(
  * @param haystack The column containing search space
  * @param needle A scalar value to check for existence in the search space
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return true if the given `needle` value exists in the `haystack` column
  */
 bool contains(column_view const& haystack,
               scalar const& needle,
-              cuda::stream_ref stream = cudf::get_default_stream());
+              cuda::stream_ref stream   = cudf::get_default_stream(),
+              cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Check if the given `needles` values exists in the `haystack` column.

@@ -6,6 +6,7 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/iterator_utilities.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/reduction/distinct_count.hpp>
@@ -355,4 +356,41 @@ TEST_F(DistinctCount, NullableStructOfStructs)
 
   EXPECT_EQ(6, cudf::distinct_count(input, null_equality::EQUAL));
   EXPECT_EQ(8, cudf::distinct_count(input, null_equality::UNEQUAL));
+}
+
+TEST_F(DistinctCount, TableExplicitMemoryResources)
+{
+  auto const keys  = cudf::test::strings_column_wrapper({"a", "b", "", "a"}, nulls_at({2}));
+  auto const input = cudf::table_view{{keys}};
+  auto harness     = cudf::test::memory_resource_test_harness{};
+  cudf::test::expect_api_uses_memory_resources(
+    harness,
+    [&](cudf::memory_resources mr) {
+      return cudf::distinct_count(
+        input, null_equality::EQUAL, cudf::test::get_default_stream(), mr);
+    },
+    [](auto) { return 0; },
+    [](auto result) { EXPECT_EQ(result, 3); },
+    {cudf::test::output_allocation_expectation::EXACT,
+     cudf::test::temporary_allocation_expectation::SOME});
+}
+
+TEST_F(DistinctCount, ColumnExplicitMemoryResources)
+{
+  auto const input =
+    cudf::test::fixed_width_column_wrapper<double>({1.0, std::nan(""), 0.0}, nulls_at({2}));
+  auto const stream = cudf::test::get_default_stream();
+  for (auto const [null_handling, expected] :
+       {std::pair{null_policy::INCLUDE, 2}, std::pair{null_policy::EXCLUDE, 1}}) {
+    auto harness = cudf::test::memory_resource_test_harness{};
+    cudf::test::expect_api_uses_memory_resources(
+      harness,
+      [&](cudf::memory_resources mr) {
+        return cudf::distinct_count(input, null_handling, nan_policy::NAN_IS_NULL, stream, mr);
+      },
+      [](auto) { return 0; },
+      [expected](auto result) { EXPECT_EQ(result, expected); },
+      {cudf::test::output_allocation_expectation::EXACT,
+       cudf::test::temporary_allocation_expectation::SOME});
+  }
 }

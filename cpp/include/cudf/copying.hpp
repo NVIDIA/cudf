@@ -898,11 +898,13 @@ std::unique_ptr<table> sample(table_view const& input,
  * @param input The column which is (and whose descendants are) to be checked for
  * non-empty null rows.
  * @param stream CUDA stream used for device memory operations and kernel launches
+ * @param mr Memory resources used for temporary allocations
  * @return true If either the column or its descendants have non-empty null rows
  * @return false If neither the column or its descendants have non-empty null rows
  */
 bool has_nonempty_nulls(column_view const& input,
-                        cuda::stream_ref stream = cudf::get_default_stream());
+                        cuda::stream_ref stream   = cudf::get_default_stream(),
+                        cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /**
  * @brief Approximates if a column or its descendants *may* have non-empty null elements

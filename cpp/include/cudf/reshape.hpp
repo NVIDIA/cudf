@@ -118,10 +118,12 @@ std::unique_ptr<column> byte_cast(
  * @param input A table with fixed-width, non-nullable columns of the same type
  * @param output A span representing preallocated device memory for the output
  * @param stream CUDA stream used for memory operations
+ * @param mr Memory resources used for temporary allocations
  */
 void table_to_array(table_view const& input,
                     device_span<cuda::std::byte> output,
-                    cuda::stream_ref stream = cudf::get_default_stream());
+                    cuda::stream_ref stream   = cudf::get_default_stream(),
+                    cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
 /** @} */  // end of group
 

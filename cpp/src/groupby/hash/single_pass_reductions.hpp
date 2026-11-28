@@ -55,6 +55,7 @@ struct reduction_context {
   grouped_rows const& grouped;
   size_type num_groups;
   bool nullable;  ///< Whether the result carries a null mask
+  sum_overflow_output overflow_output = sum_overflow_output::FLAG;  ///< Only read by SUM_OVERFLOW
 
   template <typename T>
   value_accessor<T> accessor() const;

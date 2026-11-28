@@ -58,11 +58,12 @@ struct identity_initializer {
       // Initialize sum column using standard SUM aggregation dispatch
       dispatch_type_and_aggregation(
         sum_col.type(), aggregation::SUM, identity_initializer{}, sum_col, stream);
-      thrust::uninitialized_fill_n(
-        rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-        overflow_col.begin<bool>(),
-        col.size(),
-        false);
+      auto const policy = rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref());
+      if (overflow_col.type().id() == type_id::INT64) {
+        thrust::uninitialized_fill_n(policy, overflow_col.begin<int64_t>(), col.size(), int64_t{0});
+      } else {
+        thrust::uninitialized_fill_n(policy, overflow_col.begin<bool>(), col.size(), false);
+      }
     } else if constexpr (std::is_same_v<T, cudf::struct_view>) {
       // This should only happen for SUM_OVERFLOW, but handle it just in case
       CUDF_FAIL("Struct columns are only supported for SUM_OVERFLOW aggregation");

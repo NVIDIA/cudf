@@ -1762,6 +1762,8 @@ class UnaryFunction(Expr):
             if isinstance(n_expr, Literal):
                 # A negative literal count is rejected in __init__.
                 rep_count: int = n_expr.value
+            elif isinstance(n_expr, Len):
+                rep_count = df.num_rows
             else:
                 rep_count = cast(
                     "int",

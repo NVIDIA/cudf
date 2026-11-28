@@ -1780,6 +1780,44 @@ def _translate_function(
     )  # pragma: no cover; polars raises on the rust side for now
 
 
+def _translate_window_function(
+    n: int, translator: Translator, dtype: DataType, schema: Schema
+) -> expr.Expr:
+    visitor = translator.visitor
+    nodes = plrs._expr_nodes
+    node = visitor.view_expression(n)
+    if isinstance(node, nodes.BinaryExpr) and node.op == nodes.Operator.Plus:
+        left = visitor.view_expression(node.left)
+        right = visitor.view_expression(node.right)
+        if (
+            isinstance(left, nodes.Function)
+            and isinstance(right, nodes.Literal)
+            and right.dtype == pl.Int64
+            and right.value == 1
+        ):
+            name, *options = left.function_data
+            # Polars returns the enum value but does not export RangeFunction.
+            if name == getattr(type(name), "IntRange", None) and options == [
+                1,
+                pl.Int64,
+            ]:
+                start, end = map(visitor.view_expression, left.input)
+                if (
+                    isinstance(start, nodes.Literal)
+                    and start.value == 0
+                    and isinstance(end, nodes.Cast)
+                    and end.dtype == pl.Int64
+                    and isinstance(visitor.view_expression(end.expr), nodes.Len)
+                ):
+                    # SQL ROW_NUMBER is int_range(0, len()) + 1. A grouped sum
+                    # of ones uses the existing window sort and reassembly.
+                    ones = expr.UnaryFunction(
+                        dtype, "repeat", (), expr.Literal(dtype, 1), expr.Len(dtype)
+                    )
+                    return expr.UnaryFunction(dtype, "cum_sum", (False,), ones)
+    return translator.translate_expr(n=n, schema=schema)
+
+
 @_translate_expr.register
 def _(
     node: plrs._expr_nodes.Window,
@@ -1834,7 +1872,7 @@ def _(
         # pl.col("a").over(...)
         # Note: pl.col("a").rolling(...).over("g") also lands here.
         with set_expr_context(translator, ExecutionContext.WINDOW):
-            agg = translator.translate_expr(n=node.function, schema=schema)
+            agg = _translate_window_function(node.function, translator, dtype, schema)
         name_gen = translator._internal_name_gen or unique_names(schema)
         aggs, post = decompose_single_agg(
             expr.NamedExpr(next(name_gen), agg),

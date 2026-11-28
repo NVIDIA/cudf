@@ -715,7 +715,10 @@ ConfigureTest(ENCODE_TEST encode/encode_tests.cpp)
 
 # ##################################################################################################
 # * ast tests -------------------------------------------------------------------------------------
-ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_expressions_tests.cpp)
+ConfigureTest(
+  AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_expressions_tests.cpp
+  ast/operator_tests.cu
+)
 
 # ##################################################################################################
 # * transform LTO tests

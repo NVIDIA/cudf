@@ -324,6 +324,35 @@ TYPED_TEST(TransformTest, BasicAddition)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
 }
 
+TYPED_TEST(TransformTest, FloatingPointRoundingBoundaries)
+{
+  auto check = []<typename T>() {
+    auto const eps = std::numeric_limits<T>::epsilon();
+    for (bool has_nulls : {false, true}) {
+      auto a          = has_nulls ? column_wrapper<T>{{1 + eps, 1 + eps}, {true, false}}
+                                  : column_wrapper<T>{1 + eps, 1 + eps};
+      auto b          = column_wrapper<T>{1 - eps, 1 - eps};
+      auto c          = column_wrapper<T>{1, 1};
+      auto table      = cudf::table_view{{a, b, c}};
+      auto a_ref      = cudf::ast::column_reference{0};
+      auto b_ref      = cudf::ast::column_reference{1};
+      auto c_ref      = cudf::ast::column_reference{2};
+      auto product    = cudf::ast::operation{cudf::ast::ast_operator::MUL, a_ref, b_ref};
+      auto difference = cudf::ast::operation{cudf::ast::ast_operator::SUB, product, c_ref};
+      auto result     = TypeParam::compute_column(table, difference);
+      auto expected =
+        has_nulls ? column_wrapper<T>{{0, 0}, {true, false}} : column_wrapper<T>{0, 0};
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+
+      auto reverse_difference = cudf::ast::operation{cudf::ast::ast_operator::SUB, c_ref, product};
+      result                  = TypeParam::compute_column(table, reverse_difference);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view(), verbosity);
+    }
+  };
+  check.template operator()<float>();
+  check.template operator()<double>();
+}
+
 TYPED_TEST(TransformTest, BasicAdditionEmptyTable)
 {
   using Executor = TypeParam;

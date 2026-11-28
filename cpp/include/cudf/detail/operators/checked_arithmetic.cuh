@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/detail/operators/arithmetic.cuh>
 #include <cudf/detail/operators/concepts.cuh>
 #include <cudf/detail/operators/math.cuh>
 #include <cudf/errc.hpp>
@@ -43,7 +44,7 @@ template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> add_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
-  return a + b;
+  return cudf::detail::ops::add(a, b);
 }
 
 template <typename A, typename B>
@@ -83,7 +84,7 @@ template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> sub_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
-  return a - b;
+  return cudf::detail::ops::sub(a, b);
 }
 
 template <typename A, typename B>
@@ -123,7 +124,7 @@ template <cuda::std::floating_point A, cuda::std::floating_point B>
 __device__ cuda::std::expected<A, errc> mul_overflow(A a, B b)
   requires(cuda::std::same_as<A, B>)
 {
-  return a * b;
+  return cudf::detail::ops::mul(a, b);
 }
 
 template <typename A, typename B>

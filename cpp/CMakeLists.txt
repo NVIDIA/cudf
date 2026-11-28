@@ -1470,6 +1470,7 @@ add_library(cudf::cudf ALIAS cudf)
 # ##################################################################################################
 # * tests and benchmarks --------------------------------------------------------------------------
 # ##################################################################################################
+rapids_cmake_install_lib_dir(lib_dir)
 
 # ##################################################################################################
 # * build cudftestutil ----------------------------------------------------------------------------
@@ -1568,6 +1569,42 @@ if(CUDF_BUILD_TESTUTIL)
   )
   add_library(cudf::cudftestutil_objects ALIAS cudftestutil_objects)
 
+  # Each install component carries its runtime so it can be installed independently.
+  function(cudf_configure_test_library target component)
+    set(frameworks GTest::gmock GTest::gtest ${ARGN})
+    target_sources(${target} PRIVATE $<TARGET_OBJECTS:cudftestutil_objects>)
+    target_link_libraries(${target} PUBLIC cudf::cudftestutil)
+    if(BUILD_SHARED_LIBS)
+      foreach(framework IN LISTS frameworks)
+        get_target_property(framework_type ${framework} TYPE)
+        if(NOT framework_type STREQUAL "STATIC_LIBRARY")
+          message(FATAL_ERROR "The private cuDF test runtime requires a static ${framework}")
+        endif()
+      endforeach()
+      set_target_properties(cudftestutil_objects PROPERTIES POSITION_INDEPENDENT_CODE ON)
+      set_target_properties(${target} PROPERTIES INSTALL_RPATH "\$ORIGIN")
+      # An executable and its helpers must use the same framework state.
+      string(JOIN "," framework_archives ${frameworks})
+      set_property(
+        TARGET ${target} PROPERTY LINK_LIBRARY_OVERRIDE "WHOLE_ARCHIVE,${framework_archives}"
+      )
+      target_link_libraries(
+        ${target}
+        PUBLIC "$<COMPILE_ONLY:${frameworks}>"
+        PRIVATE "$<LINK_LIBRARY:WHOLE_ARCHIVE,${framework_archives}>"
+      )
+      target_link_options(${target} PRIVATE "LINKER:-z,defs")
+      install(
+        TARGETS ${target}
+        LIBRARY DESTINATION ${lib_dir}
+                COMPONENT ${component}
+                EXCLUDE_FROM_ALL
+      )
+    else()
+      target_link_libraries(${target} PUBLIC ${frameworks})
+    endif()
+  endfunction()
+
   install(FILES tests/io/metadata_utilities.cpp DESTINATION src/cudftestutil/io)
   install(
     FILES tests/utilities/column_utilities.cu
@@ -1650,7 +1687,6 @@ endif()
 
 # ##################################################################################################
 # * install targets -------------------------------------------------------------------------------
-rapids_cmake_install_lib_dir(lib_dir)
 include(CPack)
 include(GNUInstallDirs)
 

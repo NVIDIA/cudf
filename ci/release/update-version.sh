@@ -115,6 +115,7 @@ DEPENDENCIES=(
   dask-cudf
   kvikio
   libcudf
+  libcudf-benchmarks
   libcudf-example
   libcudf-streaming
   libcudf-streaming-tests

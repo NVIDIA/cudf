@@ -219,13 +219,9 @@ inline void make_stream_mode_adaptor(cudf::test::config const& config)
   }
 }
 
-/**
- * @brief Should be called in every test program that uses rmm allocators.
- * Parses the command line to customize test behavior, like the allocation mode
- * used for creating the default memory resource.
- *
- */
-inline void init_cudf_test(int argc, char** argv, cudf::test::config const& config_override = {})
+namespace cudf::test::detail {
+
+inline void initialize_test_impl(int argc, char** argv, config const& config_override)
 {
   auto const cmd_opts       = parse_cudf_test_opts(argc, argv);
   cudf::test::config config = config_override;
@@ -243,28 +239,60 @@ inline void init_cudf_test(int argc, char** argv, cudf::test::config const& conf
   make_stream_mode_adaptor(config);
 }
 
+inline int run_test_main_impl(int argc, char** argv)
+{
+  cudf::detail::initialize();
+  ::testing::InitGoogleTest(&argc, argv);
+  initialize_test_impl(argc, argv, {});
+  if (std::getenv("GTEST_CUDF_MEMORY_PEAK")) {
+    auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());
+    cudf::set_current_device_resource(mr);
+    auto rc = RUN_ALL_TESTS();
+    std::cout << "Peak memory usage " << mr.get_bytes_counter().peak << " bytes" << std::endl;
+    rmm::mr::reset_current_device_resource();
+    return rc;
+  }
+  auto rc = RUN_ALL_TESTS();
+  rmm::mr::reset_current_device_resource();
+  return rc;
+}
+
+#ifdef CUDF_USE_PRIVATE_TEST_STARTUP
+CUDF_EXPORT void initialize_test_compiled(int argc, char** argv, config const& config_override);
+CUDF_EXPORT int run_test_main_compiled(int argc, char** argv);
+#endif
+
+inline int run_test_main(int argc, char** argv)
+{
+#ifdef CUDF_USE_PRIVATE_TEST_STARTUP
+  return run_test_main_compiled(argc, argv);
+#else
+  return run_test_main_impl(argc, argv);
+#endif
+}
+
+}  // namespace cudf::test::detail
+
+/**
+ * @brief Should be called in every test program that uses rmm allocators.
+ * Parses the command line to customize test behavior, like the allocation mode
+ * used for creating the default memory resource.
+ *
+ */
+inline void init_cudf_test(int argc, char** argv, cudf::test::config const& config_override = {})
+{
+#ifdef CUDF_USE_PRIVATE_TEST_STARTUP
+  cudf::test::detail::initialize_test_compiled(argc, argv, config_override);
+#else
+  cudf::test::detail::initialize_test_impl(argc, argv, config_override);
+#endif
+}
+
 /**
  * @brief Macro that defines main function for gtest programs that use rmm
  *
  * This `main` function is a wrapper around the google test generated `main`,
  * maintaining the original functionality.
  */
-#define CUDF_TEST_PROGRAM_MAIN()                                                                 \
-  int main(int argc, char** argv)                                                                \
-  {                                                                                              \
-    cudf::detail::initialize();                                                                  \
-    ::testing::InitGoogleTest(&argc, argv);                                                      \
-    init_cudf_test(argc, argv);                                                                  \
-    if (std::getenv("GTEST_CUDF_MEMORY_PEAK")) {                                                 \
-      auto mr = rmm::mr::statistics_resource_adaptor(cudf::get_current_device_resource_ref());   \
-      cudf::set_current_device_resource(mr);                                                     \
-      auto rc = RUN_ALL_TESTS();                                                                 \
-      std::cout << "Peak memory usage " << mr.get_bytes_counter().peak << " bytes" << std::endl; \
-      rmm::mr::reset_current_device_resource();                                                  \
-      return rc;                                                                                 \
-    } else {                                                                                     \
-      auto rc = RUN_ALL_TESTS();                                                                 \
-      rmm::mr::reset_current_device_resource();                                                  \
-      return rc;                                                                                 \
-    }                                                                                            \
-  }
+#define CUDF_TEST_PROGRAM_MAIN() \
+  int main(int argc, char** argv) { return cudf::test::detail::run_test_main(argc, argv); }

@@ -7,7 +7,7 @@ set -euo pipefail
 # Support invoking test_cpp.sh outside the script directory
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"/../
 
-source ./ci/test_cpp_common.sh
+source ./ci/test_cpp_common.sh test_cpp
 
 RUN_LIBCUDF_TESTS="${RUN_LIBCUDF_TESTS:-true}"
 RUN_EXAMPLES_TESTS="${RUN_EXAMPLES_TESTS:-true}"

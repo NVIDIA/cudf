@@ -8,10 +8,15 @@ import pytest
 
 import polars as pl
 
+import pylibcudf as plc
+
+from cudf_polars.containers import DataFrame, DataType
+from cudf_polars.dsl import expr
 from cudf_polars.testing.asserts import (
     assert_gpu_result_equal,
     assert_ir_translation_raises,
 )
+from cudf_polars.utils.cuda_stream import get_cuda_stream
 
 
 @pytest.fixture(
@@ -127,6 +132,68 @@ def test_fill_null(engine: pl.GPUEngine, null_data, value):
 
 def test_fill_null_with_string(engine: pl.GPUEngine):
     q = pl.LazyFrame({"a": [None, "a"]}).select(pl.col("a").fill_null("b"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("scalar", [None, 1.5], ids=["null", "valid"])
+@pytest.mark.parametrize(
+    "values",
+    [
+        [0.5, None, 2.0],
+        [None, None],
+        [],
+        [float(i) if i % 3 else None for i in range(9)],
+    ],
+    ids=["mixed", "all_null", "empty", "nine_rows"],
+)
+def test_fill_null_scalar_receiver_column_fill(engine: pl.GPUEngine, scalar, values):
+    q = pl.LazyFrame({"a": pl.Series(values, dtype=pl.Float64)}).select(
+        pl.lit(scalar, dtype=pl.Float64).fill_null(pl.col("a")).alias("a")
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("values", [[3.0], [3.0, 2.0, 1.0]])
+def test_fill_null_null_scalar_receiver_keeps_fill_sortedness(values):
+    dtype = DataType(pl.Float64())
+    stream = get_cuda_stream()
+    df = DataFrame.from_polars(pl.DataFrame({"a": values}), stream=stream)
+    fill = df.column_map["a"].set_sorted(
+        is_sorted=plc.types.Sorted.YES,
+        order=plc.types.Order.DESCENDING,
+        null_order=plc.types.NullOrder.AFTER,
+    )
+    df = DataFrame([fill], stream=stream)
+    result = expr.UnaryFunction(
+        dtype, "fill_null", (), expr.Literal(dtype, None), expr.Col(dtype, "a")
+    ).evaluate(df)
+    assert result.is_sorted == plc.types.Sorted.YES
+    assert result.order == plc.types.Order.DESCENDING
+
+
+def test_fill_null_null_list_receiver_column_fill(engine: pl.GPUEngine):
+    dtype = pl.List(pl.Int64)
+    q = pl.LazyFrame({"a": pl.Series([[3], None, []], dtype=dtype)}).select(
+        pl.lit(None, dtype=dtype).fill_null(pl.col("a")).alias("a")
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        [[3]],
+        [None],
+        [[3], None, [], [1, 2], [4], None, [5], [6], [7]],
+    ],
+)
+def test_fill_null_list_receiver_one_row_partition(engine: pl.GPUEngine, data):
+    dtype = pl.List(pl.Int64)
+    lf = pl.LazyFrame({"a": pl.Series(data, dtype=dtype)})
+    q = lf.select(
+        pl.lit(None, dtype=dtype).fill_null(pl.col("a")).alias("null_recv"),
+        pl.col("a").head(1).fill_null(pl.col("a").head(1)).alias("valid_recv"),
+    )
     assert_gpu_result_equal(q, engine=engine)
 
 

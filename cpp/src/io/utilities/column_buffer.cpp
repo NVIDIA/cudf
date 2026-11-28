@@ -23,6 +23,7 @@
 #include <cuda/iterator>
 
 #include <functional>
+#include <iterator>
 #include <sstream>
 
 namespace cudf::io::detail {

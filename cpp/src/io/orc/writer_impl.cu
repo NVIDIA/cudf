@@ -408,12 +408,16 @@ intermediate_statistics::intermediate_statistics(orc_table_view const& table,
 
 void persisted_statistics::persist(uint64_t num_table_rows,
                                    single_write_mode write_mode,
+                                   bool has_owned_input,
                                    intermediate_statistics&& intermediate_stats,
                                    cuda::stream_ref stream)
 {
   // Allocate before modifying any state
   std::optional<cuda::device_buffer<char>> string_pool;
-  if (num_table_rows > 0 and write_mode == single_write_mode::NO) {
+  // String statistics point into the input data. Copy them unless that data outlives the writer:
+  // chunked writes release their input between calls, and writer-owned (compacted) input is
+  // released at the end of each write, before the file footer statistics are merged.
+  if (num_table_rows > 0 and (write_mode == single_write_mode::NO or has_owned_input)) {
     // persist the strings in the chunks into a string pool and update pointers
     auto const num_chunks = static_cast<int>(intermediate_stats.stripe_stat_chunks.size());
     // min offset and max offset + 1 for total size
@@ -3004,8 +3008,11 @@ void writer::impl::write(table_view const& input)
 
   // Everything that may run out of memory happens before output starts, so failures up to here
   // are retryable.
-  _persisted_stripe_statistics.persist(
-    orc_table.num_rows(), _single_write_mode, std::move(intermediate_stats), _stream);
+  _persisted_stripe_statistics.persist(orc_table.num_rows(),
+                                       _single_write_mode,
+                                       not orc_table.compacted_columns.empty(),
+                                       std::move(intermediate_stats),
+                                       _stream);
 
   // Output may be partially written from here on.
   _state = writer_state::FAILED;

@@ -184,8 +184,21 @@ struct persisted_statistics {
     num_rows = 0;
   }
 
+  /**
+   * @brief Persists the intermediate statistics until the file footer is written.
+   *
+   * String min/max values are copied into an owned pool unless they reference user input that is
+   * guaranteed to outlive the writer (single-write mode without writer-owned input copies).
+   *
+   * @param num_table_rows Number of rows in the written table
+   * @param write_mode Whether this is a single-write (one-shot) or chunked writer
+   * @param has_owned_input Whether the statistics may reference input data owned by the writer
+   * @param intermediate_stats Statistics to persist
+   * @param stream CUDA stream used for device memory operations and kernel launches
+   */
   void persist(uint64_t num_table_rows,
                single_write_mode write_mode,
+               bool has_owned_input,
                intermediate_statistics&& intermediate_stats,
                cuda::stream_ref stream);
 

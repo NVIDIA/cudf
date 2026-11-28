@@ -8,26 +8,23 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-fence
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-reduction
   cancel-in-progress: true
 
 jobs:
   arm64-polars-repro:
     name: Arm64 Polars (${{ matrix.trial }})
     runs-on: linux-arm64-gpu-l4-latest-1
-    timeout-minutes: 85
+    timeout-minutes: 28
     strategy:
       fail-fast: false
       matrix:
         trial:
-          - order-handoff-fence-reference
-          - order-handoff-fence-01
-          - order-handoff-fence-02
-          - order-handoff-fence-03
-          - order-handoff-fence-04
-          - order-handoff-fence-05
-          - order-handoff-fence-06
-          - order-handoff-fence-07
+          - order-reduction-reference
+          - order-reduction-probe-01
+          - order-reduction-probe-02
+          - order-reduction-probe-03
+          - order-reduction-probe-04
     permissions:
       actions: read
       contents: read

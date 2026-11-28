@@ -104,6 +104,16 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-repeat-* ]]; then
     cp ci/arm64_polars_diagnostics/repeat-spmd-tests.sh replay-source/ci/run_cudf_polars_pytests.sh
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck* ]]; then
     cp ci/arm64_polars_diagnostics/memcheck-pytest.sh replay-source/ci/run_cudf_polars_pytests.sh
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-reduction-dask-datetime ]]; then
+    cp ci/arm64_polars_diagnostics/test_chunk_handoff_reduction.py replay-source/python/cudf_polars/
+    cat > replay-source/ci/run_cudf_polars_pytests.sh <<'SH'
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/../python/cudf_polars"
+exec timeout --kill-after=15s 12m python -m pytest -x --numprocesses=4 --dist=each \
+    -p no:benchmark --junitxml="$RAPIDS_TESTS_DIR/junit-chunk-handoff.xml" \
+    test_chunk_handoff_reduction.py
+SH
 elif [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then
     # Resolve the exact packages once and run fresh pytest processes on the same GPU.
     mv replay-source/ci/run_cudf_polars_pytests{,-once}.sh

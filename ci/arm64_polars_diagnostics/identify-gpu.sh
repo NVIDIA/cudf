@@ -43,11 +43,16 @@ elif [[ "$trial" == order-focused-reference ]]; then
 elif [[ "$trial" == order-handoff-*-reference ]]; then
     mode=${trial#order-handoff-}
     trial="signal-order-handoff-${mode%-reference}-dask-datetime"
-elif [[ "$trial" == order-datetime-probe-* || "$trial" == order-handoff-* ]]; then
+elif [[ "$trial" == order-reduction-reference ]]; then
+    trial=signal-order-reduction-dask-datetime
+elif [[ "$trial" == order-datetime-probe-* || "$trial" == order-handoff-* ||
+        "$trial" == order-reduction-probe-* ]]; then
     for gpu in "${driver_gpus[@]}"; do
         if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
             if [[ "$trial" == order-datetime-probe-* ]]; then
                 trial=signal-order-dask-datetime
+            elif [[ "$trial" == order-reduction-probe-* ]]; then
+                trial=signal-order-reduction-dask-datetime
             else
                 mode=${trial#order-handoff-}
                 mode=${mode%-*}
@@ -119,6 +124,7 @@ if [[ "$repeat" == false &&
         "$trial" == order-alternate-probe-* ||
         "$trial" == order-focused-probe-* ||
         "$trial" == order-datetime-probe-* ||
+        "$trial" == order-reduction-probe-* ||
         "$trial" == order-handoff-* ||
         "$trial" == shuffle-probe-* ||
         "$trial" == gdb-[0-9][0-9] ||

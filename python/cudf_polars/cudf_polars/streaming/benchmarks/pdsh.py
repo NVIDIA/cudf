@@ -138,7 +138,12 @@ class PDSHQueries:
     @staticmethod
     def q1(run_config: RunConfig) -> QueryResult:
         """Query 1."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = date(1998, 9, 2)
 
@@ -175,11 +180,36 @@ class PDSHQueries:
     @staticmethod
     def q2(run_config: RunConfig) -> QueryResult:
         """Query 2."""
-        nation = get_data(run_config.dataset_path, "nation", run_config.suffix)
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
-        partsupp = get_data(run_config.dataset_path, "partsupp", run_config.suffix)
-        region = get_data(run_config.dataset_path, "region", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        nation = get_data(
+            run_config.dataset_path,
+            "nation",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        partsupp = get_data(
+            run_config.dataset_path,
+            "partsupp",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        region = get_data(
+            run_config.dataset_path,
+            "region",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = 15
         var2 = "BRASS"
@@ -230,9 +260,24 @@ class PDSHQueries:
     @staticmethod
     def q3(run_config: RunConfig) -> QueryResult:
         """Query 3."""
-        customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
+        customer = get_data(
+            run_config.dataset_path,
+            "customer",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "BUILDING"
         var2 = date(1995, 3, 15)
@@ -269,8 +314,18 @@ class PDSHQueries:
     @staticmethod
     def q4(run_config: RunConfig) -> QueryResult:
         """Query 4."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = date(1993, 7, 1)
         var2 = date(1993, 10, 1)
@@ -299,12 +354,13 @@ class PDSHQueries:
         """Query 5."""
         path = run_config.dataset_path
         suffix = run_config.suffix
-        customer = get_data(path, "customer", suffix)
-        lineitem = get_data(path, "lineitem", suffix)
-        nation = get_data(path, "nation", suffix)
-        orders = get_data(path, "orders", suffix)
-        region = get_data(path, "region", suffix)
-        supplier = get_data(path, "supplier", suffix)
+        input_format = run_config.input_format
+        customer = get_data(path, "customer", suffix, input_format=input_format)
+        lineitem = get_data(path, "lineitem", suffix, input_format=input_format)
+        nation = get_data(path, "nation", suffix, input_format=input_format)
+        orders = get_data(path, "orders", suffix, input_format=input_format)
+        region = get_data(path, "region", suffix, input_format=input_format)
+        supplier = get_data(path, "supplier", suffix, input_format=input_format)
 
         var1 = "ASIA"
         var2 = date(1994, 1, 1)
@@ -342,7 +398,8 @@ class PDSHQueries:
         """Query 6."""
         path = run_config.dataset_path
         suffix = run_config.suffix
-        lineitem = get_data(path, "lineitem", suffix)
+        input_format = run_config.input_format
+        lineitem = get_data(path, "lineitem", suffix, input_format=input_format)
 
         var1 = date(1994, 1, 1)
         var2 = date(1995, 1, 1)
@@ -368,11 +425,36 @@ class PDSHQueries:
     @staticmethod
     def q7(run_config: RunConfig) -> QueryResult:
         """Query 7."""
-        customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        nation = get_data(run_config.dataset_path, "nation", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        customer = get_data(
+            run_config.dataset_path,
+            "customer",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        nation = get_data(
+            run_config.dataset_path,
+            "nation",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "FRANCE"
         var2 = "GERMANY"
@@ -424,13 +506,48 @@ class PDSHQueries:
     @staticmethod
     def q8(run_config: RunConfig) -> QueryResult:
         """Query 8."""
-        customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        nation = get_data(run_config.dataset_path, "nation", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
-        region = get_data(run_config.dataset_path, "region", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        customer = get_data(
+            run_config.dataset_path,
+            "customer",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        nation = get_data(
+            run_config.dataset_path,
+            "nation",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        region = get_data(
+            run_config.dataset_path,
+            "region",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "BRAZIL"
         var2 = "AMERICA"
@@ -480,12 +597,13 @@ class PDSHQueries:
         """Query 9."""
         path = run_config.dataset_path
         suffix = run_config.suffix
-        lineitem = get_data(path, "lineitem", suffix)
-        nation = get_data(path, "nation", suffix)
-        orders = get_data(path, "orders", suffix)
-        part = get_data(path, "part", suffix)
-        partsupp = get_data(path, "partsupp", suffix)
-        supplier = get_data(path, "supplier", suffix)
+        input_format = run_config.input_format
+        lineitem = get_data(path, "lineitem", suffix, input_format=input_format)
+        nation = get_data(path, "nation", suffix, input_format=input_format)
+        orders = get_data(path, "orders", suffix, input_format=input_format)
+        part = get_data(path, "part", suffix, input_format=input_format)
+        partsupp = get_data(path, "partsupp", suffix, input_format=input_format)
+        supplier = get_data(path, "supplier", suffix, input_format=input_format)
 
         frame = (
             part.join(partsupp, left_on="p_partkey", right_on="ps_partkey")
@@ -521,10 +639,11 @@ class PDSHQueries:
         """Query 10."""
         path = run_config.dataset_path
         suffix = run_config.suffix
-        customer = get_data(path, "customer", suffix)
-        lineitem = get_data(path, "lineitem", suffix)
-        nation = get_data(path, "nation", suffix)
-        orders = get_data(path, "orders", suffix)
+        input_format = run_config.input_format
+        customer = get_data(path, "customer", suffix, input_format=input_format)
+        lineitem = get_data(path, "lineitem", suffix, input_format=input_format)
+        nation = get_data(path, "nation", suffix, input_format=input_format)
+        orders = get_data(path, "orders", suffix, input_format=input_format)
 
         var1 = date(1993, 10, 1)
         var2 = date(1994, 1, 1)
@@ -573,9 +692,24 @@ class PDSHQueries:
     @staticmethod
     def q11(run_config: RunConfig) -> QueryResult:
         """Query 11."""
-        nation = get_data(run_config.dataset_path, "nation", run_config.suffix)
-        partsupp = get_data(run_config.dataset_path, "partsupp", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        nation = get_data(
+            run_config.dataset_path,
+            "nation",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        partsupp = get_data(
+            run_config.dataset_path,
+            "partsupp",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "GERMANY"
         var2 = float(f"{0.0001 / run_config.scale_factor:.12f}")
@@ -615,8 +749,18 @@ class PDSHQueries:
     @staticmethod
     def q12(run_config: RunConfig) -> QueryResult:
         """Query 12."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "MAIL"
         var2 = "SHIP"
@@ -652,8 +796,18 @@ class PDSHQueries:
     @staticmethod
     def q13(run_config: RunConfig) -> QueryResult:
         """Query 13."""
-        customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
+        customer = get_data(
+            run_config.dataset_path,
+            "customer",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "special"
         var2 = "requests"
@@ -680,8 +834,18 @@ class PDSHQueries:
     @staticmethod
     def q14(run_config: RunConfig) -> QueryResult:
         """Query 14."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = date(1995, 9, 1)
         var2 = date(1995, 10, 1)
@@ -711,8 +875,18 @@ class PDSHQueries:
     @staticmethod
     def q15(run_config: RunConfig) -> QueryResult:
         """Query 15."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = date(1996, 1, 1)
         var2 = date(1996, 4, 1)
@@ -744,9 +918,24 @@ class PDSHQueries:
     @staticmethod
     def q16(run_config: RunConfig) -> QueryResult:
         """Query 16."""
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
-        partsupp = get_data(run_config.dataset_path, "partsupp", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        partsupp = get_data(
+            run_config.dataset_path,
+            "partsupp",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "Brand#45"
 
@@ -782,8 +971,18 @@ class PDSHQueries:
     @staticmethod
     def q17(run_config: RunConfig) -> QueryResult:
         """Query 17."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "Brand#23"
         var2 = "MED BOX"
@@ -815,9 +1014,10 @@ class PDSHQueries:
         """Query 18."""
         path = run_config.dataset_path
         suffix = run_config.suffix
-        customer = get_data(path, "customer", suffix)
-        lineitem = get_data(path, "lineitem", suffix)
-        orders = get_data(path, "orders", suffix)
+        input_format = run_config.input_format
+        customer = get_data(path, "customer", suffix, input_format=input_format)
+        lineitem = get_data(path, "lineitem", suffix, input_format=input_format)
+        orders = get_data(path, "orders", suffix, input_format=input_format)
 
         var1 = 300
 
@@ -856,8 +1056,18 @@ class PDSHQueries:
     @staticmethod
     def q19(run_config: RunConfig) -> QueryResult:
         """Query 19."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         frame = (
             part.join(lineitem, left_on="p_partkey", right_on="l_partkey")
@@ -905,11 +1115,36 @@ class PDSHQueries:
     @staticmethod
     def q20(run_config: RunConfig) -> QueryResult:
         """Query 20."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        nation = get_data(run_config.dataset_path, "nation", run_config.suffix)
-        part = get_data(run_config.dataset_path, "part", run_config.suffix)
-        partsupp = get_data(run_config.dataset_path, "partsupp", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        nation = get_data(
+            run_config.dataset_path,
+            "nation",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        part = get_data(
+            run_config.dataset_path,
+            "part",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        partsupp = get_data(
+            run_config.dataset_path,
+            "partsupp",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = date(1994, 1, 1)
         var2 = date(1995, 1, 1)
@@ -948,10 +1183,30 @@ class PDSHQueries:
     @staticmethod
     def q21(run_config: RunConfig) -> QueryResult:
         """Query 21."""
-        lineitem = get_data(run_config.dataset_path, "lineitem", run_config.suffix)
-        nation = get_data(run_config.dataset_path, "nation", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
-        supplier = get_data(run_config.dataset_path, "supplier", run_config.suffix)
+        lineitem = get_data(
+            run_config.dataset_path,
+            "lineitem",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        nation = get_data(
+            run_config.dataset_path,
+            "nation",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        supplier = get_data(
+            run_config.dataset_path,
+            "supplier",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         var1 = "SAUDI ARABIA"
 
@@ -990,8 +1245,18 @@ class PDSHQueries:
     @staticmethod
     def q22(run_config: RunConfig) -> QueryResult:
         """Query 22."""
-        customer = get_data(run_config.dataset_path, "customer", run_config.suffix)
-        orders = get_data(run_config.dataset_path, "orders", run_config.suffix)
+        customer = get_data(
+            run_config.dataset_path,
+            "customer",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
+        orders = get_data(
+            run_config.dataset_path,
+            "orders",
+            run_config.suffix,
+            input_format=run_config.input_format,
+        )
 
         q1 = (
             customer.with_columns(pl.col("c_phone").str.slice(0, 2).alias("cntrycode"))

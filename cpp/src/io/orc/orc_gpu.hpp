@@ -495,17 +495,23 @@ void orc_encode_statistics(uint8_t* blob_bfr,
                            bool write_legacy_timestamp_bounds,
                            cuda::stream_ref stream);
 
+/** @brief Number of logical bits emitted by a column in one rowgroup. */
+struct rowgroup_bit_counts {
+  size_type present;
+  size_type data;  ///< Used only for BOOLEAN columns.
+};
+
 /**
- * @brief Number of set bits in pushdown masks, per rowgroup.
+ * @brief Count PRESENT and BOOLEAN DATA bits in each column's own rowgroup coordinates.
  *
- * @param[in] orc_columns Pre-order flattened device array of ORC column views
- * @param[in] rowgroup_bounds Ranges of rows in each rowgroup [rowgroup][column]
- * @param[out] set_counts Per rowgroup number of set bits
+ * @param[in] columns Pre-order flattened device array of ORC column views
+ * @param[in] rowgroups Ranges of rows in each rowgroup [rowgroup][column]
+ * @param[out] counts Number of bits in each bit stream [rowgroup][column]
  * @param[in] stream CUDA stream used for device memory operations and kernel launches
  */
-void reduce_pushdown_masks(device_span<orc_column_device_view const> orc_columns,
-                           device_2dspan<rowgroup_rows const> rowgroup_bounds,
-                           device_2dspan<cudf::size_type> set_counts,
-                           cuda::stream_ref stream);
+void count_rowgroup_bits(device_span<orc_column_device_view const> columns,
+                         device_2dspan<rowgroup_rows const> rowgroups,
+                         device_2dspan<rowgroup_bit_counts> counts,
+                         cuda::stream_ref stream);
 
 }  // namespace cudf::io::orc::detail

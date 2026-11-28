@@ -11,6 +11,7 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/std/array>
+#include <cuda/std/bit>
 #include <cuda/stream>
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
@@ -521,9 +522,9 @@ CUDF_KERNEL void __launch_bounds__(128, 8)
 
 template <int block_size>
 CUDF_KERNEL void __launch_bounds__(block_size)
-  reduce_pushdown_masks_kernel(device_span<orc_column_device_view const> orc_columns,
-                               device_2dspan<rowgroup_rows const> rowgroup_bounds,
-                               device_2dspan<size_type> set_counts)
+  count_rowgroup_bits_kernel(device_span<orc_column_device_view const> orc_columns,
+                             device_2dspan<rowgroup_rows const> rowgroup_bounds,
+                             device_2dspan<rowgroup_bit_counts> counts)
 {
   using BlockReduce = cub::BlockReduce<size_type, block_size>;
   __shared__ typename BlockReduce::TempStorage temp_storage;
@@ -533,29 +534,43 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   auto const column      = orc_columns[column_id];
   auto const t           = threadIdx.x;
 
-  auto const use_child_rg = column.type().id() == type_id::LIST;
-  auto const rg           = rowgroup_bounds[rowgroup_id][column_id + (use_child_rg ? 1 : 0)];
-
-  if (column.pushdown_mask == nullptr) {
-    // All elements are valid if the null mask is not present
-    if (t == 0) { set_counts[rowgroup_id][column_id] = rg.size(); }
+  auto const rg          = rowgroup_bounds[rowgroup_id][column_id];
+  auto const is_boolean  = column.type().id() == type_id::BOOL8;
+  auto const parent_mask = column.parent_index.has_value()
+                             ? orc_columns[column.parent_index.value()].pushdown_mask
+                             : nullptr;
+  auto& out              = counts[rowgroup_id][column_id];
+  if (parent_mask == nullptr and (not is_boolean or column.null_mask() == nullptr)) {
+    if (t == 0) { out = {rg.size(), rg.size()}; }
     return;
-  };
-
-  size_type count                          = 0;
-  static constexpr size_type bits_per_word = sizeof(bitmask_type) * 8;
-  for (auto row = t * bits_per_word + rg.begin; row < rg.end; row += block_size * bits_per_word) {
-    auto const begin_bit = row;
-    auto const end_bit   = min(static_cast<size_type>(row + bits_per_word), rg.end);
-    auto const mask_len  = end_bit - begin_bit;
-    auto const mask_word =
-      cudf::detail::get_mask_offset_word(column.pushdown_mask, 0, row, end_bit) &
-      ((1 << mask_len) - 1);
-    count += __popc(mask_word);
   }
 
-  count = BlockReduce(temp_storage).Sum(count);
-  if (t == 0) { set_counts[rowgroup_id][column_id] = count; }
+  size_type present_count                  = 0;
+  size_type data_count                     = 0;
+  static constexpr size_type bits_per_word = sizeof(bitmask_type) * 8;
+  for (auto row = t * bits_per_word + rg.begin; row < rg.end; row += block_size * bits_per_word) {
+    auto const length     = min(bits_per_word, static_cast<size_type>(rg.end - row));
+    auto const valid_bits = ~bitmask_type{0} >> (bits_per_word - length);
+    auto const mask_word  = [=](bitmask_type const* mask, size_type offset) {
+      return mask == nullptr
+                ? ~bitmask_type{0}
+                : cudf::detail::get_mask_offset_word(mask, 0, offset + row, offset + row + length);
+    };
+    // PRESENT reads the parent mask in the child's rowgroup coordinates. BOOLEAN DATA
+    // uses the column offset for both masks, just as its encoder does.
+    present_count += cuda::std::popcount(mask_word(parent_mask, 0) & valid_bits);
+    if (is_boolean) {
+      data_count += cuda::std::popcount(mask_word(column.null_mask(), column.offset()) &
+                                        mask_word(parent_mask, column.offset()) & valid_bits);
+    }
+  }
+  present_count = BlockReduce(temp_storage).Sum(present_count);
+  if (t == 0) { out.present = present_count; }
+  if (is_boolean) {
+    __syncthreads();
+    data_count = BlockReduce(temp_storage).Sum(data_count);
+    if (t == 0) { out.data = data_count; }
+  }
 }
 
 void __host__ parse_compressed_stripe_data(compressed_stream_info* strm_info,
@@ -599,15 +614,15 @@ void __host__ parse_row_group_index(row_group* row_groups,
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
-void __host__ reduce_pushdown_masks(device_span<orc_column_device_view const> columns,
-                                    device_2dspan<rowgroup_rows const> rowgroups,
-                                    device_2dspan<cudf::size_type> valid_counts,
-                                    cuda::stream_ref stream)
+void __host__ count_rowgroup_bits(device_span<orc_column_device_view const> columns,
+                                  device_2dspan<rowgroup_rows const> rowgroups,
+                                  device_2dspan<rowgroup_bit_counts> counts,
+                                  cuda::stream_ref stream)
 {
   auto const num_blocks    = columns.size() * rowgroups.size().first;  // 1 block per rowgroup
   constexpr int block_size = 128;
-  reduce_pushdown_masks_kernel<block_size>
-    <<<num_blocks, block_size, 0, stream.get()>>>(columns, rowgroups, valid_counts);
+  count_rowgroup_bits_kernel<block_size>
+    <<<num_blocks, block_size, 0, stream.get()>>>(columns, rowgroups, counts);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

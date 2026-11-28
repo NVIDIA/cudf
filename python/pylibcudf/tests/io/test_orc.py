@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import pyarrow as pa
@@ -192,3 +192,53 @@ def test_roundtrip_pa_table(
     )
 
     assert_table_and_meta_eq(pa_table, res, check_field_nullability=False)
+
+
+@pytest.mark.uses_custom_stream
+def test_write_sliced_boolean_list_near_size_type_limit(
+    tmp_path, patch_cupy_stream
+):
+    import cupy as cp
+
+    # Slice away a large null prefix without copying the children. Only 16 child
+    # values are written, but their row coordinates are within a word of INT32_MAX.
+    prefix = 2**31 - 24
+    size = prefix + 16
+    with patch_cupy_stream:
+        values = cp.empty(size, dtype=cp.uint8)
+        values[prefix:] = 1
+        mask = cp.zeros(((size + 511) // 512) * 64, dtype=cp.uint8)
+        mask[prefix // 8 : prefix // 8 + 2] = cp.array(
+            [0x01, 0x7F], dtype=cp.uint8
+        )
+    children = plc.Column(
+        plc.DataType(plc.TypeId.BOOL8),
+        size,
+        plc.gpumemoryview(values),
+        plc.gpumemoryview(mask),
+        size - 8,
+        0,
+        [],
+    )
+    stride = 10000
+    # The retained lists with eight children start the two rowgroups.
+    offsets = [0, prefix] + [prefix + 8] * stride + [size] * stride
+    lists = plc.Column(
+        plc.DataType(plc.TypeId.LIST),
+        len(offsets) - 1,
+        None,
+        None,
+        0,
+        0,
+        [plc.Column.from_arrow(pa.array(offsets, type=pa.int32())), children],
+    )
+    table = plc.Table([plc.copying.slice(lists, [1, lists.size()])[0]])
+    path = str(tmp_path / "boolean.orc")
+    options = plc.io.orc.OrcWriterOptions.builder(
+        plc.io.SinkInfo([path]), table
+    ).build()
+    options.set_row_index_stride(stride)
+    plc.io.orc.write_orc(options)
+    rows = pa.orc.read_table(path).column(0)
+    assert rows[0].as_py() == [True] + [None] * 7
+    assert rows[stride].as_py() == [True] * 7 + [None]

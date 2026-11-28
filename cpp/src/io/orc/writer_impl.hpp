@@ -101,6 +101,14 @@ struct file_segmentation {
 };
 
 /**
+ * @brief Host-only positions of a rowgroup within its first encoded PRESENT and BOOLEAN DATA bytes.
+ */
+struct rowgroup_bit_offsets {
+  uint8_t present{0};
+  uint8_t data{0};
+};
+
+/**
  * @brief ORC per-chunk streams of encoded data.
  *
  * The encoded bytes of each (stripe, stream) pair occupy an aligned byte range (extent) within one
@@ -113,6 +121,8 @@ struct encoded_data {
   cuda::device_buffer<uint8_t> gathered_buffer;         // arena for gather_stripes output
   std::vector<std::vector<device_span<uint8_t>>> data;  // [stripe][strm_id] views
   hostdevice_2dvector<encoder_chunk_streams> streams;   // streams of encoded data, per chunk
+  // [column][rowgroup] host-only index positions; byte-aligned columns have empty vectors.
+  std::vector<std::vector<rowgroup_bit_offsets>> index_offsets;
 };
 
 /**

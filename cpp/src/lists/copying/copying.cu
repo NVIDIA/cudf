@@ -7,11 +7,10 @@
 #include <cudf/detail/copy_range.cuh>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -44,11 +43,11 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
   auto start_offset = cudf::detail::get_value<int32_t>(lists.offsets(), start, stream);
   auto end_offset   = cudf::detail::get_value<int32_t>(lists.offsets(), end, stream);
 
-  rmm::device_uvector<int32_t> out_offsets(offsets_count, stream);
+  rmm::device_uvector<int32_t> out_offsets(offsets_count, stream, mr.get_output_mr());
 
   // Compute the offsets column of the result:
   thrust::transform(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     offsets_data + start,
     offsets_data + end + 1,  // size of offsets column is 1 greater than slice length
     out_offsets.data(),

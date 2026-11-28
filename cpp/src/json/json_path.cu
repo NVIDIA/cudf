@@ -971,8 +971,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
                                               cudf::memory_resources mr)
 {
   // preprocess the json_path into a command buffer
-  auto preprocess =
-    build_command_buffer(json_path, stream, cudf::get_current_device_resource_ref());
+  auto preprocess = build_command_buffer(json_path, stream, mr.as_temporary());
   CUDF_EXPECTS(std::get<1>(preprocess) <= max_command_stack_depth,
                "Encountered JSONPath string that is too complex");
 
@@ -982,7 +981,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   if (!std::get<0>(preprocess).has_value()) {
     // Create a proper all-null strings column with valid structure (offsets + chars children)
     auto offsets = cudf::make_column_from_scalar(
-      cudf::numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
+      cudf::numeric_scalar<int32_t>(0, true, stream, mr.as_temporary()),
       col.size() + 1,
       stream,
       mr);
@@ -996,8 +995,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
   }
 
   // compute output sizes
-  cuda::device_buffer<size_type> sizes(
-    stream, cudf::get_current_device_resource_ref(), col.size(), cuda::no_init);
+  cuda::device_buffer<size_type> sizes(stream, mr.get_temporary_mr(), col.size(), cuda::no_init);
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(col.offsets());
 
   constexpr int block_size = 512;
@@ -1029,8 +1027,7 @@ std::unique_ptr<cudf::column> get_json_object(cudf::strings_column_view const& c
     cudf::detail::create_null_mask(col.size(), mask_state::UNINITIALIZED, stream, mr);
 
   // compute results
-  cudf::detail::device_scalar<size_type> d_valid_count{
-    0, stream, cudf::get_current_device_resource_ref()};
+  cudf::detail::device_scalar<size_type> d_valid_count{0, stream, mr.get_temporary_mr()};
 
   get_json_object_kernel<block_size>
     <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(

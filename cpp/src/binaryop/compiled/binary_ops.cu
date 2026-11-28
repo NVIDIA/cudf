@@ -12,12 +12,11 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/scalar/scalar_device_view.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -205,7 +204,7 @@ struct null_considering_binop {
     compare_functor<LhsViewT, RhsViewT, OutT, CompareFunc> binop_func{lhsv, rhsv, cfunc};
 
     // Execute it on every element
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{col_size},
                       out_col,
@@ -310,9 +309,8 @@ std::unique_ptr<column> string_null_min_max(column_view const& lhs,
                "Unsupported binary operation");
   CUDF_EXPECTS(lhs.size() == rhs.size(), "Column sizes do not match");
   if (lhs.is_empty()) return cudf::make_empty_column(output_type);
-  auto const temp_mr   = mr.get_temporary_mr();
-  auto lhs_device_view = cudf::column_device_view::create(lhs, stream, temp_mr);
-  auto rhs_device_view = cudf::column_device_view::create(rhs, stream, temp_mr);
+  auto lhs_device_view = cudf::column_device_view::create(lhs, stream, mr.as_temporary());
+  auto rhs_device_view = cudf::column_device_view::create(rhs, stream, mr.as_temporary());
   return null_considering_binop{}(
     *lhs_device_view, *rhs_device_view, op, output_type, lhs.size(), stream, mr);
 }

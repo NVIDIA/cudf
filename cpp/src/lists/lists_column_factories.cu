@@ -45,7 +45,7 @@ std::unique_ptr<cudf::column> make_lists_column_from_scalar(list_scalar const& v
   auto null_mask       = cudf::detail::create_null_mask(1, null_mask_state, stream, row_mr);
 
   if (size == 1) {
-    auto child = std::make_unique<column>(value.view(), stream, mr.get_output_mr());
+    auto child = std::make_unique<column>(value.view(), stream, mr);
     return make_lists_column(
       1, std::move(offsets), std::move(child), null_count, std::move(null_mask));
   }

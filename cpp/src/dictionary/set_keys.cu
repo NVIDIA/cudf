@@ -8,6 +8,7 @@
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sorting.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/detail/update_keys.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -81,8 +80,8 @@ struct remap_indices_dispatch_fn {
                           cudf::memory_resources mr)
   {
     // compute sorted-order so the new_keys can be searched more quickly
-    auto sorted_indices = cudf::detail::sorted_order(
-      table_view({new_keys}), {}, {}, stream, cudf::get_current_device_resource_ref());
+    auto sorted_indices =
+      cudf::detail::sorted_order(table_view({new_keys}), {}, {}, stream, mr.as_temporary());
     auto d_sorted_indices = sorted_indices->view().data<size_type>();
 
     auto const old_keys   = input.keys();
@@ -92,11 +91,11 @@ struct remap_indices_dispatch_fn {
     auto const iota     = cuda::counting_iterator<cudf::size_type>{0};
 
     // create a map from the old key indices to the new ones
-    auto indices_map = cuda::device_buffer<size_type>(
-      stream, cudf::get_current_device_resource_ref(), old_keys.size(), cuda::no_init);
+    auto indices_map =
+      cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), old_keys.size(), cuda::no_init);
     create_indices_map_fn<T, decltype(keys_itr)> map_fn{
       *d_old_keys, keys_itr, keys_itr + new_keys.size(), d_sorted_indices};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       iota,
                       iota + old_keys.size(),
                       indices_map.begin(),
@@ -109,7 +108,7 @@ struct remap_indices_dispatch_fn {
       cudf::detail::indexalator_factory::make_output_iterator(indices_column->mutable_view());
     auto d_input = cudf::column_device_view::create(input.parent(), stream);
     apply_indices_map_fn apply_fn{*d_input, indices_map.data()};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       iota,
                       iota + input.size(),
                       d_new_indices,

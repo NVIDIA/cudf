@@ -10,11 +10,10 @@
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/reverse.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -33,18 +32,17 @@ std::unique_ptr<column> reverse(lists_column_view const& input,
   auto const child = input.get_sliced_child(stream);
 
   // The labels are also a map from each list element to its corresponding zero-based list index.
-  auto const labels =
-    generate_labels(input, child.size(), stream, cudf::get_current_device_resource_ref());
+  auto const labels = generate_labels(input, child.size(), stream, mr.as_temporary());
 
   // The offsets of the output lists column.
   auto out_offsets = get_normalized_offsets(input, stream, mr);
 
   // Build a gather map to copy the output list elements from the input list elements.
   cuda::device_buffer<size_type> gather_map(
-    stream, cudf::get_current_device_resource_ref(), child.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), child.size(), cuda::no_init);
 
   // Build a segmented reversed order for the child column.
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      child.size(),
                      [list_offsets = out_offsets->view().begin<int32_t>(),

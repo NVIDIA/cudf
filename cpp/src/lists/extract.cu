@@ -10,14 +10,13 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
 #include <cudf/detail/structs/utilities.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/extract.hpp>
 #include <cudf/lists/detail/gather.cuh>
 #include <cudf/lists/extract.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/copy.h>
@@ -47,20 +46,15 @@ std::unique_ptr<cudf::column> make_index_child(column_view const& indices,
 {
   // New column, near identical to `indices`, except with null values replaced.
   // `segmented_gather()` on a null index should produce a null row.
-  if (not indices.nullable()) {
-    return std::make_unique<column>(indices, stream, mr.get_output_mr());
-  }
+  if (not indices.nullable()) { return std::make_unique<column>(indices, stream, mr); }
 
   auto const d_indices = column_device_view::create(indices, stream);
   // Replace null indices with MAX_SIZE_TYPE, so that gather() returns null for them.
   auto const null_replaced_iter_begin =
     cudf::detail::make_null_replacement_iterator(*d_indices, std::numeric_limits<size_type>::max());
-  auto index_child = make_numeric_column(data_type{type_to_id<size_type>()},
-                                         indices.size(),
-                                         mask_state::UNALLOCATED,
-                                         stream,
-                                         mr.get_output_mr());
-  thrust::copy_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  auto index_child = make_numeric_column(
+    data_type{type_to_id<size_type>()}, indices.size(), mask_state::UNALLOCATED, stream, mr);
+  thrust::copy_n(cudf::detail::exec_policy_nosync(stream, mr),
                  null_replaced_iter_begin,
                  indices.size(),
                  index_child->mutable_view().begin<size_type>());
@@ -82,12 +76,9 @@ std::unique_ptr<cudf::column> make_index_child(size_type index,
                                                cudf::memory_resources mr)
 {
   auto index_child =  // [index, index, index, ..., index]
-    make_numeric_column(data_type{type_to_id<size_type>()},
-                        num_rows,
-                        mask_state::UNALLOCATED,
-                        stream,
-                        mr.get_output_mr());
-  thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    make_numeric_column(
+      data_type{type_to_id<size_type>()}, num_rows, mask_state::UNALLOCATED, stream, mr);
+  thrust::fill_n(cudf::detail::exec_policy_nosync(stream, mr),
                  index_child->mutable_view().begin<size_type>(),
                  num_rows,
                  index);
@@ -109,7 +100,7 @@ std::unique_ptr<cudf::column> make_index_offsets(size_type num_lists,
     num_lists + 1,
     cudf::scalar_type_t<int32_t>(0, true, stream, mr.get_temporary_mr()),
     stream,
-    mr.get_output_mr());
+    mr);
 }
 
 }  // namespace
@@ -135,12 +126,12 @@ std::unique_ptr<column> extract_list_element_impl(lists_column_view lists_column
   // 2. If indices = {4, 3, 2, 1, null},
   //    index_lists_column = { {4}, {3}, {2}, {1}, {MAX_SIZE_TYPE} }.
 
-  auto const index_lists_column = make_lists_column(
-    num_lists,
-    make_index_offsets(num_lists, stream, cudf::get_current_device_resource_ref()),
-    make_index_child(index, num_lists, stream, cudf::get_current_device_resource_ref()),
-    0,
-    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+  auto const index_lists_column =
+    make_lists_column(num_lists,
+                      make_index_offsets(num_lists, stream, mr.as_temporary()),
+                      make_index_child(index, num_lists, stream, mr.as_temporary()),
+                      0,
+                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 
   // We want the output of `segmented_gather` to be a lists column in which each list has exactly
   // one element, even for the null lists.

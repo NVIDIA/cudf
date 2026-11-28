@@ -151,7 +151,7 @@ void copy_range(SourceValueIterator source_value_begin,
     kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
       source_value_begin,
       source_validity_begin,
-      *mutable_column_device_view::create(target, stream, temp_mr),
+      *mutable_column_device_view::create(target, stream, mr.as_temporary()),
       target_begin,
       target_end,
       null_count.data());
@@ -163,7 +163,7 @@ void copy_range(SourceValueIterator source_value_begin,
     kernel<<<grid.num_blocks, block_size, 0, stream.get()>>>(
       source_value_begin,
       source_validity_begin,
-      *mutable_column_device_view::create(target, stream, temp_mr),
+      *mutable_column_device_view::create(target, stream, mr.as_temporary()),
       target_begin,
       target_end,
       nullptr);

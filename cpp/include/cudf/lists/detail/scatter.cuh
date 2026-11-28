@@ -10,6 +10,7 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/scatter_helper.cuh>
 #include <cudf/lists/list_device_view.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -17,8 +18,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -47,7 +46,7 @@ cuda::device_buffer<unbound_list_view> list_vector_from_column(
   auto vector =
     cuda::device_buffer<unbound_list_view>(stream, mr.get_output_mr(), n_rows, cuda::no_init);
 
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     index_begin,
                     index_end,
                     vector.begin(),
@@ -93,7 +92,7 @@ std::unique_ptr<column> scatter_impl(cuda::device_buffer<unbound_list_view> cons
   auto const child_column_type = lists_column_view(target).child().type();
 
   // Scatter.
-  thrust::scatter(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::scatter(cudf::detail::exec_policy_nosync(stream, mr),
                   source_vector.begin(),
                   source_vector.end(),
                   scatter_map_begin,
@@ -233,7 +232,7 @@ std::unique_ptr<column> scatter(scalar const& slr,
               : cudf::create_null_mask(1, mask_state::ALL_NULL, stream, mr);
   auto offset_column =
     make_numeric_column(data_type{type_id::INT32}, 2, mask_state::UNALLOCATED, stream, mr);
-  thrust::sequence(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::sequence(cudf::detail::exec_policy_nosync(stream, mr),
                    offset_column->mutable_view().begin<int32_t>(),
                    offset_column->mutable_view().end<int32_t>(),
                    int32_t{0},

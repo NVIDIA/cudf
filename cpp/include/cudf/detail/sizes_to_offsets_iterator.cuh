@@ -8,6 +8,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
@@ -273,7 +274,7 @@ auto sizes_to_offsets(SizesIterator begin,
     make_sizes_to_offsets_iterator(result, result + std::distance(begin, end), last_element.data());
   // This function uses the type of the initialization parameter as the accumulator type
   // when computing the individual scan output elements.
-  thrust::exclusive_scan(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::exclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          begin,
                          end,
                          output_itr,
@@ -308,9 +309,9 @@ std::pair<std::unique_ptr<column>, size_type> make_offsets_child_column(InputIte
                                                                         cuda::stream_ref stream,
                                                                         cudf::memory_resources mr)
 {
-  auto count          = static_cast<size_type>(std::distance(begin, end));
-  auto offsets_column = make_numeric_column(
-    data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto count = static_cast<size_type>(std::distance(begin, end));
+  auto offsets_column =
+    make_numeric_column(data_type{type_id::INT32}, count + 1, mask_state::UNALLOCATED, stream, mr);
   auto offsets_view = offsets_column->mutable_view();
   auto d_offsets    = offsets_view.template data<int32_t>();
 

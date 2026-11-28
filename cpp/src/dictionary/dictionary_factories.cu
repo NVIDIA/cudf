@@ -29,7 +29,7 @@ struct dispatch_create_indices {
       cudf::is_signed<IndexType>(), "indices must be a signed type", std::invalid_argument);
     column_view indices_view{
       indices.type(), indices.size(), indices.data<IndexType>(), nullptr, 0, indices.offset()};
-    return std::make_unique<column>(indices_view, stream, mr.get_output_mr());
+    return std::make_unique<column>(indices_view, stream, mr);
   }
   template <typename IndexType>
   std::unique_ptr<column> operator()(column_view const&, cuda::stream_ref, cudf::memory_resources)
@@ -46,7 +46,7 @@ std::unique_ptr<column> make_dictionary_column(column_view const& keys_column,
 {
   CUDF_EXPECTS(!keys_column.has_nulls(), "keys column must not have nulls", std::invalid_argument);
 
-  auto keys_copy = std::make_unique<column>(keys_column, stream, mr.get_output_mr());
+  auto keys_copy = std::make_unique<column>(keys_column, stream, mr);
   auto indices_copy =
     type_dispatcher(indices_column.type(), dispatch_create_indices{}, indices_column, stream, mr);
   auto null_mask  = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr);

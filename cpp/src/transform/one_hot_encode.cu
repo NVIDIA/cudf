@@ -9,6 +9,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_checks.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -69,14 +68,14 @@ std::pair<std::unique_ptr<column>, table_view> one_hot_encode(column_view const&
   auto all_encodings =
     make_numeric_column(data_type{type_id::BOOL8}, total_size, mask_state::UNALLOCATED, stream, mr);
 
-  auto const temp_mr = cudf::get_current_device_resource_ref();
+  auto const temp_mr = mr.get_temporary_mr();
   auto const t_lhs   = table_view{{input}};
   auto const t_rhs   = table_view{{categories}};
   auto const comparator =
     cudf::detail::row::equality::two_table_comparator{t_lhs, t_rhs, stream, temp_mr};
 
   auto const comparator_helper = [&](auto const fn) {
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<cudf::size_type>{0},
                       cuda::counting_iterator{total_size},
                       all_encodings->mutable_view().begin<bool>(),

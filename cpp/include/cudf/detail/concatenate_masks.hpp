@@ -29,13 +29,15 @@ namespace detail {
  * @param dest_mask The output buffer to copy null masks into
  * @param output_size The total number of null masks bits that are being copied
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources; only the temporary resource is used
  * @return The number of nulls
  */
 size_type concatenate_masks(device_span<column_device_view const> d_views,
                             device_span<size_t const> d_offsets,
                             bitmask_type* dest_mask,
                             size_type output_size,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr);
 
 /**
  * @brief Concatenates `views[i]`'s bitmask from the bits
@@ -45,11 +47,13 @@ size_type concatenate_masks(device_span<column_device_view const> d_views,
  * @param views Column views whose bitmasks will be concatenated
  * @param dest_mask The output buffer to copy null masks into
  * @param stream CUDA stream used for device memory operations and kernel launches.
+ * @param mr Memory resources; only the temporary resource is used
  * @return The number of nulls
  */
 size_type concatenate_masks(host_span<column_view const> views,
                             bitmask_type* dest_mask,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr);
 
 /**
  * @copydoc cudf::concatenate_masks(std::span<column_view const>, cudf::memory_resources)

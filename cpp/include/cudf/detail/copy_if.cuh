@@ -8,13 +8,12 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -55,7 +54,7 @@ std::unique_ptr<table> copy_if(table_view const& input,
   auto const begin       = cuda::counting_iterator<size_type>{0};
   auto const end         = begin + input.num_rows();
   auto const indices_end = thrust::copy_if(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()), begin, end, indices.begin(), filter);
+    cudf::detail::exec_policy_nosync(stream, mr), begin, end, indices.begin(), filter);
 
   auto const output_size =
     static_cast<size_type>(cuda::std::distance(indices.begin(), indices_end));
@@ -63,9 +62,7 @@ std::unique_ptr<table> copy_if(table_view const& input,
   // nothing selected
   if (output_size == 0) { return empty_like(input); }
   // everything selected
-  if (output_size == input.num_rows()) {
-    return std::make_unique<table>(input, stream, mr.get_output_mr());
-  }
+  if (output_size == input.num_rows()) { return std::make_unique<table>(input, stream, mr); }
 
   auto const map = device_span<size_type const>(indices.data(), output_size);
   return cudf::detail::gather(

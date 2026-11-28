@@ -11,12 +11,11 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/stream_compaction.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/detail/stream_compaction.hpp>
 #include <cudf/lists/stream_compaction.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -77,7 +76,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
         cuda::counting_iterator<size_type>{0},
         cudf::detail::mask_filter<decltype(mask_iter)>{mask_iter, is_retention});
       // Pass a size_type init so the scan does not accumulate in bool
-      thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                              keep_begin,
                              keep_begin + num_elements,
                              kept_counts.data() + 1,
@@ -98,7 +97,7 @@ std::unique_ptr<column> apply_mask(lists_column_view const& input,
     auto output_offsets = cudf::make_numeric_column(
       offset_data_type, num_rows + 1, mask_state::UNALLOCATED, stream, mr);
     thrust::transform(
-      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       boolean_mask.offsets_begin(),
       boolean_mask.offsets_end(),
       output_offsets->mutable_view().begin<size_type>(),

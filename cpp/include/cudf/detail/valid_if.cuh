@@ -87,8 +87,7 @@ std::pair<cuda::device_buffer<cudf::bitmask_type>, size_type> valid_if(
 
   size_type size = cuda::std::distance(begin, end);
 
-  auto null_mask =
-    cudf::create_null_mask(size, mask_state::UNINITIALIZED, stream, resources.get_output_mr());
+  auto null_mask = cudf::create_null_mask(size, mask_state::UNINITIALIZED, stream, resources);
 
   size_type null_count{0};
   if (size > 0) {

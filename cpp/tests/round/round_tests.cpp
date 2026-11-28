@@ -602,4 +602,115 @@ TEST_F(RoundTests, HalfUpErrorsA)
   }
 }
 
+template <typename T>
+struct RoundTestsAllIntegerTypes : public cudf::test::BaseFixture {};
+
+TYPED_TEST_SUITE(RoundTestsAllIntegerTypes, cudf::test::IntegralTypesNotBool);
+
+TYPED_TEST(RoundTestsAllIntegerTypes, ScaleExceedingMaxDigits)
+{
+  using T          = TypeParam;
+  using fw_wrapper = cudf::test::fixed_width_column_wrapper<T>;
+
+  auto constexpr min_v      = std::numeric_limits<T>::min();
+  auto constexpr max_v      = std::numeric_limits<T>::max();
+  auto constexpr max_digits = std::numeric_limits<T>::digits10;
+
+  auto const input    = fw_wrapper{{min_v, T{0}, T{1}, T{5}, max_v, T{7}}, {1, 1, 1, 1, 1, 0}};
+  auto const expected = fw_wrapper{{T{0}, T{0}, T{0}, T{0}, T{0}, T{0}}, {1, 1, 1, 1, 1, 0}};
+
+  for (auto const decimal_places : {-(max_digits + 2), -100, std::numeric_limits<int32_t>::min()}) {
+    for (auto const method : {cudf::rounding_method::HALF_UP, cudf::rounding_method::HALF_EVEN}) {
+      auto const result = cudf::round_decimal(input, decimal_places, method);
+      CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+    }
+  }
+}
+
+TYPED_TEST(RoundTestsAllIntegerTypes, ScaleAtMaxDigits)
+{
+  using T          = TypeParam;
+  using fw_wrapper = cudf::test::fixed_width_column_wrapper<T>;
+
+  // int64 and uint16 can round up past their limits at this scale (tested separately)
+  if constexpr (std::is_same_v<T, int64_t> || std::is_same_v<T, uint16_t>) { GTEST_SKIP(); }
+
+  auto constexpr min_v          = std::numeric_limits<T>::min();
+  auto constexpr max_v          = std::numeric_limits<T>::max();
+  auto constexpr decimal_places = -(std::numeric_limits<T>::digits10 + 1);
+
+  auto const input    = fw_wrapper{{min_v, T{0}, T{1}, T{5}, max_v, T{7}}, {1, 1, 1, 1, 1, 0}};
+  auto const expected = fw_wrapper{{T{0}, T{0}, T{0}, T{0}, T{0}, T{0}}, {1, 1, 1, 1, 1, 0}};
+
+  for (auto const method : {cudf::rounding_method::HALF_UP, cudf::rounding_method::HALF_EVEN}) {
+    auto const result = cudf::round_decimal(input, decimal_places, method);
+    CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+  }
+}
+
+TEST_F(RoundTests, Int64ScaleAtMaxDigitsWraps)
+{
+  using fw_wrapper = cudf::test::fixed_width_column_wrapper<int64_t>;
+
+  auto constexpr min_v = std::numeric_limits<int64_t>::min();
+  auto constexpr max_v = std::numeric_limits<int64_t>::max();
+  // +/-1e19 does not fit in int64 and wraps to -/+8446744073709551616
+  auto constexpr up = int64_t{-8446744073709551616};
+  auto constexpr dn = int64_t{8446744073709551616};
+
+  auto const input = fw_wrapper{min_v,
+                                -5000000000000000000,
+                                -4999999999999999999,
+                                0L,
+                                4999999999999999999,
+                                5000000000000000000,
+                                max_v};
+
+  auto const expected_up = fw_wrapper{dn, dn, 0L, 0L, 0L, up, up};
+  auto const result_up   = cudf::round_decimal(input, -19, cudf::rounding_method::HALF_UP);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_up, result_up->view());
+
+  auto const expected_even = fw_wrapper{dn, 0L, 0L, 0L, 0L, 0L, up};
+  auto const result_even   = cudf::round_decimal(input, -19, cudf::rounding_method::HALF_EVEN);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_even, result_even->view());
+}
+
+TEST_F(RoundTests, Uint16ScaleAtMaxDigitsWraps)
+{
+  using fw_wrapper = cudf::test::fixed_width_column_wrapper<uint16_t>;
+
+  // 100000 does not fit in uint16 and wraps to 34464
+  auto const input = fw_wrapper{0, 49999, 50000, 65535};
+
+  auto const expected_up = fw_wrapper{0, 0, 34464, 34464};
+  auto const result_up   = cudf::round_decimal(input, -5, cudf::rounding_method::HALF_UP);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_up, result_up->view());
+
+  auto const expected_even = fw_wrapper{0, 0, 0, 34464};
+  auto const result_even   = cudf::round_decimal(input, -5, cudf::rounding_method::HALF_EVEN);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_even, result_even->view());
+}
+
+TEST_F(RoundTests, Uint64ScaleAtMaxDivisor)
+{
+  using fw_wrapper = cudf::test::fixed_width_column_wrapper<uint64_t>;
+
+  // 10^19 is the largest power of 10 that fits in uint64
+  auto const input = fw_wrapper{0UL,
+                                4999999999999999999UL,
+                                5000000000000000000UL,
+                                14999999999999999999UL,
+                                15000000000000000000UL};
+
+  auto const expected_up =
+    fw_wrapper{0UL, 0UL, 10000000000000000000UL, 10000000000000000000UL, 1553255926290448384UL};
+  auto const result_up = cudf::round_decimal(input, -19, cudf::rounding_method::HALF_UP);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_up, result_up->view());
+
+  auto const expected_even =
+    fw_wrapper{0UL, 0UL, 0UL, 10000000000000000000UL, 1553255926290448384UL};
+  auto const result_even = cudf::round_decimal(input, -19, cudf::rounding_method::HALF_EVEN);
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected_even, result_even->view());
+}
+
 CUDF_TEST_PROGRAM_MAIN()

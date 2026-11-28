@@ -11,8 +11,12 @@
 #include "parquet_gpu.hpp"
 
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/integer_utils.hpp>
 
+#include <cuda/atomic>
 #include <cuda/std/algorithm.lower_bound.h>
+#include <cuda/std/bit>
+#include <cuda/std/limits>
 
 namespace cudf::io::parquet::detail {
 
@@ -31,6 +35,13 @@ constexpr int delta_nz_buf_size = 4 * delta_max_batch_size;
 
 // One producer warp and one writer warp
 constexpr int decode_delta_binary_with_nz_map_block_size = 64;
+// Two warps decode the prefix and suffix lengths and six build strings. More string-building warps
+// gain little because each batch's strings are built only after the previous batch's.
+constexpr int decode_delta_byte_array_with_nz_map_block_size = 256;
+// Blocks of the DELTA_BYTE_ARRAY consumer per SM, the most that fit in the 1024 threads of an
+// sm_75 SM. Uncapped, the kernel's registers leave room for only two, which made large reads with
+// few nulls about 20% slower than the level-decoding kernel.
+constexpr int decode_delta_byte_array_with_nz_map_min_blocks = 4;
 
 // DELTA_BYTE_ARRAY encoding (incremental encoding or front compression), is used for BYTE_ARRAY
 // columns. For each element in a sequence of strings, a prefix length from the preceding string
@@ -747,6 +758,7 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
                                  size_t min_row,
                                  size_t num_rows,
                                  cudf::device_span<bool const> page_mask,
+                                 bool has_flat_nz_map,
                                  cudf::device_span<size_t> initial_str_offsets,
                                  kernel_error::pointer error_code)
 {
@@ -763,6 +775,9 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
   auto* const suffix_db = &db_state.suffixes;
   auto* const dba       = &db_state;
   if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
+  // Skip pages that `decode_delta_byte_array_kernel_with_nz_map` decodes. Gated on the same flag
+  // that launches that kernel, so the two always agree on which pages it takes.
+  if (has_flat_nz_map and pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
   [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
 
   if (!setup_local_page_info(s,
@@ -955,6 +970,509 @@ CUDF_KERNEL void __launch_bounds__(decode_block_size)
     } else {
       convert_small_string_lengths_to_offsets<decode_block_size, false>(s);
     }
+  }
+
+  if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
+}
+
+// Decodes flat DELTA_BYTE_ARRAY pages like `decode_delta_byte_array_kernel`, but places values
+// using the nz map instead of decoding definition levels. Warps 0 and 1 decode the prefix and
+// suffix lengths of batch b + 1 into one half of a double buffer while the other six warps build
+// the strings of batch b from the other half.
+//
+// This kernel also avoids some of the decoder's functionality like `calculate_string_values`,
+// `string_scan` or `skip` that implicitly encode a dependency between groups of strings that leads
+// to unnecessary serialization. With the nz map the stalls from the warps impacted by that
+// serialization are a bigger limiting factor, so this kernel takes a different approach. Byte j of
+// string i's prefix is byte j of string i - 1. Following that back, it is byte `j - p_k` of the
+// suffix of the latest string k <= i with prefix length `p_k <= j`, or byte j of the last string of
+// the previous batch if no string in the batch qualifies. With this approach each string can be
+// built from the suffix data alone, independently of the other strings in its batch. With this
+// change, within a batch no string waits for another, and only the previous batch's last string is
+// carried over. A skipped batch builds only that string, not all of its strings as `skip` does.
+CUDF_KERNEL void __launch_bounds__(decode_delta_byte_array_with_nz_map_block_size,
+                                   decode_delta_byte_array_with_nz_map_min_blocks)
+  decode_delta_byte_array_kernel_with_nz_map(PageInfo* pages,
+                                             device_span<ColumnChunkDesc const> chunks,
+                                             size_t min_row,
+                                             size_t num_rows,
+                                             cudf::device_span<bool const> page_mask,
+                                             cudf::device_span<size_t> initial_str_offsets,
+                                             kernel_error::pointer error_code)
+{
+  using cudf::detail::warp_size;
+  constexpr int block_size        = decode_delta_byte_array_with_nz_map_block_size;
+  constexpr int num_length_warps  = 2;  // one decodes prefix lengths, one suffix lengths
+  constexpr int num_builders      = block_size - num_length_warps * warp_size;
+  constexpr int num_builder_warps = num_builders / warp_size;
+  // Strings each builder thread scans per batch. 3 keeps shared memory usage low so GPUs with less
+  // of it per SM fit more blocks. On H100 larger values were not meaningfully faster.
+  constexpr int strings_per_builder = 3;
+  constexpr int batch_size          = num_builders * strings_per_builder;
+  // Rounds of pointer jumping per batch: enough for pointers that double every round to cross the
+  // batch. `build` follows whatever pointers remain.
+  constexpr int max_jump_rounds = cuda::std::bit_width(static_cast<unsigned>(batch_size)) + 1;
+  // Bits of `batch_flags`. They share one `int` rather than being separate `bool`s so that one warp
+  // reduction and one `fetch_or` per warp combine both.
+  constexpr int needs_jump   = 1;
+  constexpr int is_malformed = 2;
+
+  __shared__ __align__(16) delta_byte_array_decoder db_state;
+  __shared__ __align__(16) full_page_decode_state state_g;
+  __shared__ int prefix_lens[2][batch_size];         // double buffered
+  __shared__ int suffix_lens[2][batch_size];         // double buffered
+  __shared__ int64_t string_offsets[batch_size];     // output offset within the batch
+  __shared__ int suffix_offsets[batch_size];         // suffix data offset within the batch
+  __shared__ int shorter_prefix_idx[2][batch_size];  // see the pointer jumping below
+  __shared__ int64_t warp_string_bytes[num_builder_warps];
+  __shared__ int64_t warp_suffix_bytes[num_builder_warps];
+  // Relaxed is enough for `batch_flags`: the builder barriers order its accesses.
+  __shared__ cuda::atomic<int, cuda::thread_scope_block> batch_flags;
+  // Set with `atomicOr` rather than being a `cuda::atomic<int, cuda::thread_scope_block>`. libcu++
+  // implements `fetch_or` as inline PTX on a generic address, which compiles to the generic `ATOM`
+  // instead of the shared memory `ATOMS` (an `__isShared` assume does not change that).
+  // `batch_flags` pays that once per warp per batch, which measured neutral; these flags pay it
+  // once per warp per pointer-jumping round, which measured 0.2-0.5% slower (H100, CTK 12.9).
+  // TODO: Make these a `cuda::atomic` too once builds use CTK 13.5 or newer, where CCCL's
+  // `__nv_atomic` backend (NVIDIA/cccl#11075) should compile `fetch_or` to `ATOMS`.
+  __shared__ int jump_changed[3];
+  // State the builders carry from one batch to the next, and the page's rank map. They live in
+  // shared memory and are read where they are used, as are the page constants in `state_g`:
+  // holding them all in registers made the kernel spill under its register cap.
+  struct builder_state {
+    uint8_t* string_out;
+    uint8_t const* suffix_data;
+    uint8_t const* prev_str;
+    int prev_len;
+  };
+  __shared__ builder_state bs;
+  __shared__ uint32_t const* nz_idx_sh;
+
+  auto* const s         = &state_g;
+  int const page_idx    = cg::this_grid().block_rank();
+  auto const block      = cg::this_thread_block();
+  auto const warp       = cg::tiled_partition<warp_size>(block);
+  auto* const prefix_db = &db_state.prefixes;
+  auto* const suffix_db = &db_state.suffixes;
+  auto* const dba       = &db_state;
+  if (page_mask.size() > 0 and not page_mask[page_idx]) { return; }
+  // Decode only the pages with a map. `decode_delta_byte_array_kernel` skips them.
+  if (not pages[page_idx].has_nz_map(nz_map_kind::DELTA_FLAT)) { return; }
+  [[maybe_unused]] null_count_back_copier _{s, static_cast<int>(block.thread_rank())};
+
+  if (!setup_local_page_info(s,
+                             &pages[page_idx],
+                             chunks,
+                             min_row,
+                             num_rows,
+                             mask_filter{decode_kernel_mask::DELTA_BYTE_ARRAY},
+                             page_processing_stage::DECODE)) {
+    return;
+  }
+
+  if (s->setup.col.logical_type.has_value() &&
+      s->setup.col.logical_type->type == LogicalType::DECIMAL) {
+    // we cannot read decimal encoded with DELTA_BYTE_ARRAY yet
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::INVALID_DATA_TYPE), error_code);
+    }
+    return;
+  }
+
+  bool const process_nulls = should_process_nulls(s);
+
+  // Capture initial valid_map_offset before any processing that might modify it
+  int const init_valid_map_offset =
+    s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1].valid_map_offset;
+
+  // choose a character parallel string copy when the average string is longer than a warp
+  auto const use_char_ll = s->setup.page.num_valids > 0 &&
+                           (s->setup.page.str_bytes / s->setup.page.num_valids) > warp_size;
+
+  // Get the nz map for this page, which takes the place of its level decode buffers
+  PageInfo* pp             = &pages[page_idx];
+  auto const* const nz_idx = pp->nz_map->nz_idx;
+  int const nz_count_in    = pp->nz_map->nz_count;
+  auto& ni                 = s->nesting.nesting_info[s->setup.col.max_nesting_depth - 1];
+
+  if (block.thread_rank() == 0) {
+    // initialize the prefixes and suffixes blocks
+    dba->init(s->stream.data_start,
+              s->stream.data_end,
+              s->setup.page.start_val,
+              s->setup.page.temp_string_buf,
+              s->setup.page.temp_string_size);
+    // the null count and progress that the level decoder would set
+    ni.null_count =
+      process_nulls ? nz_map_null_count(nz_idx, nz_count_in, s->setup.first_row, s->setup.num_rows)
+                    : 0;
+    s->progress.nz_count = nz_count_in;
+    bs                   = {ni.string_out, dba->suffix_char_data, nullptr, 0};
+    nz_idx_sh            = nz_idx;
+  }
+  block.sync();
+
+  // Propagate malformed-header errors from either underlying DELTA_BINARY_PACKED decoder.
+  if (prefix_db->error or suffix_db->error) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAMS_UNSUPPORTED),
+                error_code);
+    }
+    return;
+  }
+
+  // assert that prefix and suffix have same mini-block size
+  if (prefix_db->values_per_mb != suffix_db->values_per_mb or
+      prefix_db->block_size != suffix_db->block_size or
+      prefix_db->value_count != suffix_db->value_count) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DELTA_PARAM_MISMATCH),
+                error_code);
+    }
+    return;
+  }
+
+  // Reject the page if it needs more values than the streams declare. `nz_count` counts from the
+  // start of the page, so it is the number of values the read needs.
+  if (static_cast<uleb128_t>(nz_count_in) > prefix_db->value_count) {
+    if (block.thread_rank() == 0) {
+      set_error(static_cast<kernel_error::value_type>(decode_error::DATA_STREAM_OVERRUN),
+                error_code);
+    }
+    return;
+  }
+
+  // Writes strings [start_val, end_val) to the output. Earlier strings are only copied from, so
+  // they are not written, except the last string of a batch that ends before `start_val` when a
+  // later batch has output strings. It goes to the page's `temp_string_buf`, which a page with
+  // `start_val > 0` has, alternating between two slots so that building batch b's last string never
+  // overwrites batch b - 1's while it is being read. Each slot fits any string but the page's
+  // first, which is never stored: a batch ending with it is the page's only batch.
+  int const lane        = warp.thread_rank();
+  int const wid         = warp.meta_group_rank();
+  int const num_batches = cudf::detail::div_rounding_up_safe(nz_count_in, batch_size);
+
+  // Synchronizes the string-building warps only, on barrier 1 (`__syncthreads` uses 0), so the
+  // length-decoding warps never wait on it. Do not replace it with a `cuda::barrier`, which made
+  // reads of long strings about 1.3% slower on H100: it compiles to a shared memory arrive by every
+  // thread and a polling wait (`SYNCS.ARRIVE`, then a `SYNCS.PHASECHK` loop), where this is a
+  // single `BAR.SYNC` per warp.
+  // TODO: Use CCCL's `interwarp_synchronizer`, which wraps `__barrier_sync_count`, once it moves
+  // from cudax into libcu++ (NVIDIA/cccl#11211).
+  auto const builder_sync = [] { __barrier_sync_count(1, num_builders); };
+
+  enum class length_status { ok, stream_ended, malformed };
+  // Copies lengths [first, last) of `db` into `dst`, decoding passes as needed. Called by one warp.
+  // A length is malformed if it is negative or does not fit in an `int`. It is called below once
+  // per decoder rather than inlined with `db` chosen by warp: with a fixed decoder each call
+  // addresses its decoder's shared state directly, and choosing it at run time quadrupled spills.
+  auto const decode_lengths = [](cg::thread_block_tile<warp_size, cg::thread_block> const& warp,
+                                 int lane,
+                                 delta_binary_decoder& db,
+                                 int* dst,
+                                 int first,
+                                 int last) -> length_status {
+    int copied = first;
+    while (true) {
+      // Value 0 comes from the header, so it is available before the first pass. The decoder's
+      // position stays a `uint32_t` until it is clamped to `last`, since it can round up past
+      // INT32_MAX at the end of a stream. Indices are relative to `first` so none can overflow.
+      auto const avail =
+        max(db.next_pass_start_idx(), db.value_count > 0 ? uint32_t{1} : uint32_t{0});
+      int const upto = static_cast<int>(min(avail, static_cast<uint32_t>(last)));
+      bool bad       = false;
+      for (int i = copied - first + lane; i < upto - first; i += warp_size) {
+        auto const v = db.value_at(first + i);
+        bad          = bad or v < 0 or v > cuda::std::numeric_limits<int>::max();
+        dst[i]       = static_cast<int>(v);
+      }
+      if (warp.any(bad)) { return length_status::malformed; }
+      copied = max(copied, upto);
+      if (copied >= last) { return length_status::ok; }
+      warp.sync();
+      db.decode_next_pass(warp);
+      warp.sync();
+      if (db.error) { return length_status::malformed; }
+      if (db.next_pass_start_idx() <= avail) { return length_status::stream_ended; }
+    }
+  };
+
+  // Iteration `it` decodes the lengths of batch `it` and builds batch `it - 1`, so there is one
+  // more iteration than batches.
+  for (int it = 0; it <= num_batches; ++it) {
+    bool stream_ended = false;  // this thread's length decode ran out of values
+    bool malformed    = false;  // this thread found a malformed length or string
+    if (wid < num_length_warps) {
+      if (it < num_batches) {
+        int const first = it * batch_size;
+        int const last  = first + min(batch_size, nz_count_in - first);
+        auto const status =
+          wid == 0 ? decode_lengths(warp, lane, *prefix_db, prefix_lens[it % 2], first, last)
+                   : decode_lengths(warp, lane, *suffix_db, suffix_lens[it % 2], first, last);
+        stream_ended = status == length_status::stream_ended;
+        malformed    = status == length_status::malformed;
+      }
+    } else if (it > 0) {
+      int const batch_idx    = it - 1;
+      int const batch_start  = batch_idx * batch_size;
+      int const n            = min(batch_size, nz_count_in - batch_start);
+      int const* const p     = prefix_lens[batch_idx % 2];
+      int const* const l     = suffix_lens[batch_idx % 2];
+      int const builder_rank = static_cast<int>(block.thread_rank()) - num_length_warps * warp_size;
+      int const builder_warp = wid - num_length_warps;
+
+      // Computes each string's output offset and suffix data offset within the batch. Each builder
+      // owns `strings_per_builder` consecutive strings, whose sums are scanned within the warp and
+      // then across the builder warps. Only strings in [start_val, end_val) take output space. The
+      // sums are 64-bit because one batch can decode to more than 2 GiB even from a small page: a
+      // string that repeats the previous one is stored as a prefix length with no new bytes, so a
+      // string of a few MB followed by a batch of copies of it decodes to over 2 GiB.
+      int64_t string_bytes[strings_per_builder];
+      int64_t suffix_bytes[strings_per_builder];
+      int64_t thread_string_bytes = 0;
+      int64_t thread_suffix_bytes = 0;
+      for (int i = 0; i < strings_per_builder; ++i) {
+        int const idx = builder_rank * strings_per_builder + i;
+        bool const in = idx < n;
+        // Padding slots past the end of the last batch get no rank: near INT32_MAX values,
+        // `batch_start + idx` would overflow for them.
+        int const sp      = in ? batch_start + idx : 0;
+        bool const is_out = in and sp >= s->setup.page.start_val and sp < s->setup.page.end_val;
+        string_bytes[i]   = is_out ? int64_t{p[idx]} + l[idx] : 0;
+        suffix_bytes[i]   = in ? l[idx] : 0;
+        thread_string_bytes += string_bytes[i];
+        thread_suffix_bytes += suffix_bytes[i];
+      }
+      auto string_off = cg::exclusive_scan(warp, thread_string_bytes, cg::plus<int64_t>{});
+      auto suffix_off = cg::exclusive_scan(warp, thread_suffix_bytes, cg::plus<int64_t>{});
+      if (lane == warp_size - 1) {
+        warp_string_bytes[builder_warp] = string_off + thread_string_bytes;
+        warp_suffix_bytes[builder_warp] = suffix_off + thread_suffix_bytes;
+      }
+      if (builder_rank == 0) { batch_flags.store(0, cuda::std::memory_order_relaxed); }
+      builder_sync();
+      for (int w = 0; w < builder_warp; ++w) {
+        string_off += warp_string_bytes[w];
+        suffix_off += warp_suffix_bytes[w];
+      }
+
+      // Checks every string before any is built, since building a string reads the strings its
+      // prefix comes from. A prefix longer than the string before it, or a suffix past the end of
+      // the page, is malformed.
+      auto const suffix_bytes_left = static_cast<int64_t>(s->stream.data_end - bs.suffix_data);
+      int flags                    = 0;
+      for (int i = 0; i < strings_per_builder; ++i) {
+        int const idx = builder_rank * strings_per_builder + i;
+        if (idx < n) {
+          string_offsets[idx]  = string_off;
+          suffix_offsets[idx]  = static_cast<int>(suffix_off);
+          auto const prev_size = idx > 0 ? int64_t{p[idx - 1]} + l[idx - 1] : int64_t{bs.prev_len};
+          if (p[idx] > prev_size or suffix_off + l[idx] > suffix_bytes_left) {
+            flags |= is_malformed;
+          }
+          if (idx > 0 and p[idx] > 0 and p[idx - 1] >= p[idx]) { flags |= needs_jump; }
+        }
+        string_off += string_bytes[i];
+        suffix_off += suffix_bytes[i];
+      }
+      flags = cg::reduce(warp, flags, cg::bit_or<int>{});
+      if (lane == 0 and flags != 0) {
+        batch_flags.fetch_or(flags, cuda::std::memory_order_relaxed);
+      }
+      for (int idx = builder_rank; idx < n; idx += num_builders) {
+        shorter_prefix_idx[0][idx] = idx - 1;
+      }
+      if (builder_rank < 3) { jump_changed[builder_rank] = 0; }
+      builder_sync();
+      int const all_flags = batch_flags.load(cuda::std::memory_order_relaxed);
+
+      if (all_flags & is_malformed) {
+        malformed = true;
+      } else {
+        // Finds, for each string, the latest earlier string in the batch with a shorter prefix.
+        // Each round, a string whose target's prefix is at least as long as its own takes the
+        // target's pointer, until none changes or the rounds run out. A pointer only skips strings
+        // whose prefix is at least as long, so `build` can follow a pointer at any round. Round r
+        // sets jump_changed[r % 3] and clears jump_changed[(r + 2) % 3], which nobody reads after
+        // round r's barrier and nobody writes before round r + 1's.
+        //
+        // Jumping only shortens `build`'s walk by skipping strings that supply none of the missing
+        // bytes, and the walk only meets such a string k where p_k >= p_k+1 > 0. Without such a
+        // pair in the batch, every step of every walk copies bytes, so the rounds are skipped. That
+        // is the common case for random strings, where the rounds have a small cost, but runs of
+        // repeated strings need them to avoid a ~2x slowdown.
+        int cur = 0;
+        if (all_flags & needs_jump) {
+          for (int round = 0; round < max_jump_rounds; ++round) {
+            bool changed = false;
+            for (int idx = builder_rank; idx < n; idx += num_builders) {
+              int const q = shorter_prefix_idx[cur][idx];
+              int nq      = q;
+              if (q >= 0 && p[q] >= p[idx]) {
+                nq      = shorter_prefix_idx[cur][q];
+                changed = true;
+              }
+              shorter_prefix_idx[cur ^ 1][idx] = nq;
+            }
+            if (warp.any(changed) and lane == 0) { atomicOr(&jump_changed[round % 3], 1); }
+            cur ^= 1;
+            builder_sync();
+            int const any_changed = jump_changed[round % 3];
+            if (builder_rank == 0) { jump_changed[(round + 2) % 3] = 0; }
+            if (not any_changed) { break; }
+          }
+        }
+
+        // Read here, after the last barrier before the build, so they are not held across barriers.
+        // The pointers are read from `bs` where they are used: holding them here adds spills.
+        int const start_val = s->setup.page.start_val;
+        int const end_val   = s->setup.page.end_val;
+
+        // Writes string `idx` to `out`. The suffix comes from the suffix data. The prefix comes
+        // from the suffixes of earlier strings in the batch, following `shorter_prefix_idx` back
+        // from `idx - 1`: string k supplies prefix bytes [p_k, hi), where hi is the lowest byte
+        // filled so far. Bytes still missing at the start of the batch come from `bs.prev_str`.
+        // `copy` copies one byte range, on one thread or on every lane of a warp.
+        auto const build = [&](int idx, uint8_t* out, auto const& copy) {
+          int const pl = p[idx];
+          copy(out + pl, bs.suffix_data + suffix_offsets[idx], l[idx]);
+          int hi = pl;
+          int k  = idx - 1;
+          while (hi > 0) {
+            if (k < 0) {
+              copy(out, bs.prev_str, hi);
+              break;
+            }
+            int const pk = p[k];
+            if (pk < hi) {
+              copy(out + pk, bs.suffix_data + suffix_offsets[k], hi - pk);
+              hi = pk;
+            }
+            k = shorter_prefix_idx[cur][k];
+          }
+        };
+        auto const thread_copy = [](uint8_t* dst, uint8_t const* src, int len) {
+          memcpy(dst, src, len);
+        };
+        // Copies one byte range with every lane, using `wideStrcpy` for ranges over 64 bytes.
+        auto const warp_copy = [&](uint8_t* dst, uint8_t const* src, int len) {
+          if (len > 64) {
+            wideStrcpy(dst, src, len, lane);
+          } else {
+            for (int i = lane; i < len; i += warp_size) {
+              dst[i] = src[i];
+            }
+          }
+        };
+
+        // Strings averaging more than a warp's width are built by a whole warp each, as in
+        // `calculate_string_values_cp`; shorter ones by one thread each. The first loop gives each
+        // builder thread its own strings: it writes every string's length to the output and, for
+        // short strings, builds the string too. A warp builds each long string, which needs a
+        // different split, so those builds run in the second loop. One loop per mode with separate
+        // length writes was measured, and was slower.
+        for (int idx = builder_rank; idx < n; idx += num_builders) {
+          int const sp = batch_start + idx;
+          if (not use_char_ll and sp >= start_val and sp < end_val) {
+            build(idx, bs.string_out + string_offsets[idx], thread_copy);
+          }
+          auto dst_pos =
+            process_nulls ? static_cast<int32_t>(nz_idx_sh[sp]) : static_cast<int32_t>(sp);
+          dst_pos -= s->setup.first_row;
+          if (dst_pos >= 0) {
+            reinterpret_cast<size_type*>(ni.data_out)[dst_pos] = p[idx] + l[idx];
+          }
+        }
+        if (use_char_ll) {
+          for (int idx = builder_warp; idx < n; idx += num_builder_warps) {
+            int const sp = batch_start + idx;
+            if (sp >= start_val and sp < end_val) {
+              build(idx, bs.string_out + string_offsets[idx], warp_copy);
+            }
+          }
+        }
+
+        // Keep the batch's last string for the next batch to copy from. A batch entirely before
+        // `start_val` writes nothing to the output, so its last string is built here into a slot
+        // of `temp_string_buf`. Building it inside the loops above instead, by choosing each
+        // string's destination there, was measured about 1.7% slower on long strings (H100).
+        uint8_t const* next_prev_str = bs.prev_str;
+        int const last               = n - 1;
+        int const batch_end          = batch_start + n;
+        if (batch_end <= start_val) {
+          if (batch_end < end_val) {
+            auto* const buf = batch_idx % 2 == 0 ? dba->prefix_seed : dba->temp_buf;
+            if (use_char_ll) {
+              if (builder_warp == 0) { build(last, buf, warp_copy); }
+            } else if (builder_rank == 0) {
+              build(last, buf, thread_copy);
+            }
+            next_prev_str = buf;
+          }
+        } else {
+          next_prev_str = bs.string_out + string_offsets[last];
+        }
+        // Builder 0 advances the carried state once every builder is done reading it.
+        builder_sync();
+        if (builder_rank == 0) {
+          int64_t batch_string_bytes = 0;
+          int64_t batch_suffix_bytes = 0;
+          for (int w = 0; w < num_builder_warps; ++w) {
+            batch_string_bytes += warp_string_bytes[w];
+            batch_suffix_bytes += warp_suffix_bytes[w];
+          }
+          bs.prev_str = next_prev_str;
+          bs.prev_len = p[last] + l[last];
+          bs.string_out += batch_string_bytes;
+          bs.suffix_data += batch_suffix_bytes;
+        }
+      }
+    }
+    // Also the barrier that hands this iteration's lengths to the next iteration's builders.
+    bool const any_stream_ended = __syncthreads_or(stream_ended);
+    bool const any_malformed    = __syncthreads_or(malformed);
+    if (any_stream_ended or any_malformed) {
+      if (block.thread_rank() == 0) {
+        set_error(static_cast<kernel_error::value_type>(any_malformed
+                                                          ? decode_error::DELTA_PARAMS_UNSUPPORTED
+                                                          : decode_error::DATA_STREAM_OVERRUN),
+                  error_code);
+      }
+      return;
+    }
+  }
+
+  // Set the counts that `gpuDecodeLevels` sets in the level-decoding kernel. The offsets scan below
+  // reads `ni.value_count`.
+  if (block.thread_rank() == 0) {
+    auto const page_rows =
+      min(s->setup.page.num_input_values, s->setup.first_row + s->setup.num_rows);
+    ni.value_count                = page_rows;
+    s->progress.input_value_count = page_rows;
+    s->progress.input_row_count   = page_rows;
+  }
+  block.sync();
+
+  // Zero-fill null positions after decoding valid values
+  if (ni.valid_map != nullptr) {
+    // the level decoder would have advanced valid_map_offset past the page's rows
+    int const num_values = s->setup.num_rows;
+    zero_fill_null_positions_shared<block_size>(s,
+                                                sizeof(size_type),
+                                                init_valid_map_offset,
+                                                num_values,
+                                                static_cast<int>(block.thread_rank()));
+  }
+
+  // For large strings, update the initial string buffer offset to be used during large string
+  // column construction. Otherwise, convert string sizes to final offsets.
+  if (s->setup.col.is_large_string_col) {
+    // page.chunk_idx are ordered by input_col_idx and row_group_idx respectively.
+    auto const chunks_per_rowgroup = initial_str_offsets.size();
+    auto const input_col_idx       = pages[page_idx].chunk_idx % chunks_per_rowgroup;
+    compute_initial_large_strings_offset<false>(s, initial_str_offsets[input_col_idx]);
+  } else {
+    convert_small_string_lengths_to_offsets<block_size, false>(s);
   }
 
   if (block.thread_rank() == 0 and s->setup.error != 0) { set_error(s->setup.error, error_code); }
@@ -1443,22 +1961,55 @@ void decode_delta_byte_array(cudf::detail::hostdevice_span<PageInfo> pages,
                              size_t min_row,
                              int level_type_size,
                              cudf::device_span<bool const> page_mask,
+                             bool has_flat_nz_map,
+                             bool needs_level_decoder,
                              cudf::device_span<size_t> initial_str_offsets,
                              kernel_error::pointer error_code,
-                             cuda::stream_ref stream)
+                             cuda::stream_ref stream,
+                             cuda::stream_ref consumer_stream)
 {
   CUDF_EXPECTS(pages.size() > 0, "There is no page to decode");
 
   dim3 const dim_block(decode_block_size, 1);
   dim3 const dim_grid(pages.size(), 1);  // 1 threadblock per page
+  dim3 const dim_block_nz_map(decode_delta_byte_array_with_nz_map_block_size, 1);
 
-  if (level_type_size == 1) {
-    decode_delta_byte_array_kernel<uint8_t><<<dim_grid, dim_block, 0, stream.get()>>>(
+  // `consumer_stream` is ordered after the producer by the caller. The level-decoding kernel below
+  // needs no such ordering because it reads only fields set on the host.
+  if (has_flat_nz_map) {
+    decode_delta_byte_array_kernel_with_nz_map<<<dim_grid,
+                                                 dim_block_nz_map,
+                                                 0,
+                                                 consumer_stream.get()>>>(
       pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
+  }
+
+  // Skip the launch when every DELTA_BYTE_ARRAY page has a map, since every block would just
+  // return.
+  if (not needs_level_decoder) { return; }
+
+  if (level_type_size == 1) {
+    decode_delta_byte_array_kernel<uint8_t>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                 chunks,
+                                                 min_row,
+                                                 num_rows,
+                                                 page_mask,
+                                                 has_flat_nz_map,
+                                                 initial_str_offsets,
+                                                 error_code);
+    CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    decode_delta_byte_array_kernel<uint16_t><<<dim_grid, dim_block, 0, stream.get()>>>(
-      pages.device_ptr(), chunks, min_row, num_rows, page_mask, initial_str_offsets, error_code);
+    decode_delta_byte_array_kernel<uint16_t>
+      <<<dim_grid, dim_block, 0, stream.get()>>>(pages.device_ptr(),
+                                                 chunks,
+                                                 min_row,
+                                                 num_rows,
+                                                 page_mask,
+                                                 has_flat_nz_map,
+                                                 initial_str_offsets,
+                                                 error_code);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }

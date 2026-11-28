@@ -272,6 +272,28 @@ def test_fixed_rolling_mean_with_nulls(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+@pytest.mark.parametrize("rolling_fn", ["rolling_min", "rolling_max"])
+def test_fixed_rolling_min_max_nan(engine: pl.GPUEngine, rolling_fn):
+    # Polars returns NaN for a window that contains a NaN
+    nan = float("nan")
+    df = pl.LazyFrame({"x": [1.0, nan, 2.0, 3.0, None, nan, nan, 4.0]})
+    q = df.select(getattr(pl.col("x"), rolling_fn)(window_size=2, min_samples=1))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("rolling_fn", ["rolling_min", "rolling_max"])
+def test_fixed_rolling_min_max_nan_over(in_memory_engine: pl.GPUEngine, rolling_fn):
+    nan = float("nan")
+    lf = pl.LazyFrame(
+        {
+            "g": ["A", "A", "A", "A", "B", "B", "B"],
+            "x": [1.0, nan, 2.0, 3.0, nan, nan, 4.0],
+        }
+    )
+    q = lf.select(getattr(pl.col("x"), rolling_fn)(window_size=2).over("g"))
+    assert_gpu_result_equal(q, engine=in_memory_engine)
+
+
 def test_fixed_rolling_var(df, engine: pl.GPUEngine):
     q = df.select(pl.col("x").rolling_var(window_size=3))
     assert_gpu_result_equal(q, engine=engine)

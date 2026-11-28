@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import math
@@ -754,3 +754,55 @@ def test_binaryops(tests):
         expect = py_op(pa_lhs, pa_rhs).cast(py_outtype)
         got = get_result()
         assert_column_eq(expect, got)
+
+
+_NAN = float("nan")
+
+
+@pytest.mark.parametrize(
+    "op, unordered, totally_ordered",
+    [
+        (
+            plc.binaryop.BinaryOperator.EQUAL,
+            [False, False, False, True],
+            [False, True, False, True],
+        ),
+        (
+            plc.binaryop.BinaryOperator.NOT_EQUAL,
+            [True, True, True, False],
+            [True, False, True, False],
+        ),
+        (
+            plc.binaryop.BinaryOperator.LESS,
+            [False, False, False, False],
+            [True, False, False, False],
+        ),
+        (
+            plc.binaryop.BinaryOperator.GREATER_EQUAL,
+            [False, False, False, True],
+            [False, True, True, True],
+        ),
+    ],
+)
+def test_binaryop_nan_semantics(op, unordered, totally_ordered):
+    lhs = plc.Column.from_arrow(pa.array([1.0, _NAN, _NAN, 3.0]))
+    rhs = plc.Column.from_arrow(pa.array([_NAN, _NAN, 1.0, 3.0]))
+    bool_type = plc.DataType(plc.TypeId.BOOL8)
+
+    # The default is UNORDERED
+    got = plc.binaryop.binary_operation(lhs, rhs, op, bool_type)
+    assert got.to_arrow().to_pylist() == unordered
+    for semantics in (
+        plc.types.NanSemantics.DEFAULT,
+        plc.types.NanSemantics.UNORDERED,
+    ):
+        got = plc.binaryop.binary_operation(lhs, rhs, op, bool_type, semantics)
+        assert got.to_arrow().to_pylist() == unordered
+    got = plc.binaryop.binary_operation(
+        lhs,
+        rhs,
+        op,
+        bool_type,
+        semantics=plc.types.NanSemantics.TOTALLY_ORDERED,
+    )
+    assert got.to_arrow().to_pylist() == totally_ordered

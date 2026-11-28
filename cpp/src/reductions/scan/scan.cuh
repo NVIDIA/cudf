@@ -44,6 +44,18 @@ std::unique_ptr<column> scan_agg_dispatch(column_view const& input,
       return type_dispatcher<dispatch_storage_type>(
         input.type(), DispatchFn<DeviceSum>(), input, output_mask, stream, mr);
     case aggregation::MIN:
+      // TOTALLY_ORDERED only changes floating-point results, so only float and double are
+      // instantiated with DeviceMinTotallyOrdered.
+      if (cudf::detail::get_nan_semantics(agg) == nan_semantics::TOTALLY_ORDERED) {
+        if (input.type().id() == type_id::FLOAT32) {
+          return DispatchFn<DeviceMinTotallyOrdered>{}.template operator()<float>(
+            input, output_mask, stream, mr);
+        }
+        if (input.type().id() == type_id::FLOAT64) {
+          return DispatchFn<DeviceMinTotallyOrdered>{}.template operator()<double>(
+            input, output_mask, stream, mr);
+        }
+      }
       return type_dispatcher<dispatch_storage_type>(
         input.type(), DispatchFn<DeviceMin>(), input, output_mask, stream, mr);
     case aggregation::MAX:

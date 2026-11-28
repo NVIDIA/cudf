@@ -21,6 +21,7 @@ from cudf_polars.testing.asserts import (
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
 from cudf_polars.typing import Duration
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 if TYPE_CHECKING:
     from cudf_polars.typing import RankMethod
@@ -195,6 +196,28 @@ def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
         out=pl.col("null_windows").sum().rolling("orderby", period="2i", closed="both")
     )
     # Expected: [null, null, 5, 5, 5, 1]
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 range rolling min/max can propagate NaN",
+)
+@pytest.mark.parametrize("agg", ["min", "max"])
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
+def test_rolling_min_max_nan(engine: pl.GPUEngine, agg: str, dtype) -> None:
+    # Range-based rolling min/max skip NaN in a window that holds other values, unlike
+    # fixed-size rolling, which propagates NaN
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "g": [1, 1, 1, 1, 2, 2, 2, 2],
+            "orderby": [1, 2, 3, 4, 5, 6, 7, 8],
+            "x": pl.Series([1.0, nan, 3.0, nan, 2.0, None, -1.0, nan], dtype=dtype),
+        }
+    )
+    rolling = getattr(pl.col("x"), agg)().rolling("orderby", period="2i")
+    q = df.select(rolling.alias("rolling"), rolling.over("g").alias("over"))
     assert_gpu_result_equal(q, engine=engine)
 
 

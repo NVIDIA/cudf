@@ -26,6 +26,7 @@
 #include <cub/warp/warp_reduce.cuh>
 #include <cuda/cmath>
 #include <cuda/iterator>
+#include <cuda/std/algorithm.all_of.h>
 #include <cuda/std/algorithm.any_of.h>
 #include <cuda/std/algorithm.max.h>
 #include <cuda/std/algorithm.min.h>
@@ -35,6 +36,7 @@
 #include <cuda/std/functional>
 #include <cuda/std/iterator>
 #include <cuda/std/limits>
+#include <cuda/std/optional>
 #include <cuda/std/tuple>
 #include <cuda/std/utility>
 #include <cuda/stream>
@@ -569,6 +571,7 @@ CUDF_KERNEL void __launch_bounds__(128)
                uint32_t page_align,
                bool write_v2_headers,
                bool write_page_stats,
+               int32_t stats_len_limit,
                kernel_error::pointer error_code)
 {
   // TODO: All writing seems to be done by thread 0. Could be replaced by thrust foreach
@@ -694,6 +697,12 @@ CUDF_KERNEL void __launch_bounds__(128)
           } else if (col_g.stats_dtype == dtype_byte_array) {
             minmax_len = cuda::std::max(ck_g.stats[fragments_in_chunk].min_value.byte_val.length,
                                         ck_g.stats[fragments_in_chunk].max_value.byte_val.length);
+          }
+          // encoded min/max values are truncated to at most `stats_len_limit` bytes, except
+          // fixed-length values which must keep their full width
+          if (stats_len_limit != NO_TRUNC_STATS and
+              col_g.physical_type != Type::FIXED_LEN_BYTE_ARRAY) {
+            minmax_len = cuda::std::min<uint32_t>(minmax_len, stats_len_limit);
           }
         }
       } else if (!t) {
@@ -2747,7 +2756,7 @@ __device__ void byte_reverse128(__int128_t v, void* dst)
  * @param span device_span to test.
  * @return true if the span contains all valid UTF-8 characters.
  */
-__device__ bool is_valid_utf8(device_span<unsigned char const> span)
+[[nodiscard]] __device__ bool is_valid_utf8(device_span<unsigned char const> span)
 {
   auto idx = 0;
   while (idx < span.size_bytes()) {
@@ -2763,128 +2772,96 @@ __device__ bool is_valid_utf8(device_span<unsigned char const> span)
   return true;
 }
 
+/// Pointer to an encoded min or max value and its length in bytes
+using extremum = cuda::std::pair<void const*, uint32_t>;
+
 /**
- * @brief Increment part of a UTF-8 character.
+ * @brief Truncates binary data to at most `truncate_length` bytes.
  *
- * Attempt to increment the char pointed to by ptr, which is assumed to be part of a valid UTF-8
- * character. Returns true if successful, false if the increment caused an overflow, in which case
- * the data at ptr will be set to the lowest valid UTF-8 bit pattern (start or continuation).
- * Will halt execution if passed invalid UTF-8.
+ * A max increments its last byte below `max_byte` and drops the bytes after it, using `scratch`.
+ *
+ * @return Truncated value, or nullopt if no valid max fits
  */
-__device__ bool increment_utf8_at(unsigned char* ptr)
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_binary(
+  device_span<uint8_t const> arr,
+  bool is_min,
+  void* scratch,
+  int32_t truncate_length,
+  uint8_t max_byte)
 {
-  unsigned char elem = *ptr;
-  // elem is one of (no 5 or 6 byte chars allowed):
-  //  0b0vvvvvvv a 1 byte character
-  //  0b10vvvvvv a continuation byte
-  //  0b110vvvvv start of a 2 byte character
-  //  0b1110vvvv start of a 3 byte character
-  //  0b11110vvv start of a 4 byte character
-
-  // TODO(ets): starting at 4 byte and working down.  Should probably start low and work higher.
-  uint8_t mask  = 0xF8;
-  uint8_t valid = 0xF0;
-
-  while (mask != 0) {
-    if ((elem & mask) == valid) {
-      elem++;
-      if ((elem & mask) != mask) {  // no overflow
-        *ptr = elem;
-        return true;
-      }
-      *ptr = valid;
-      return false;
+  if (is_min) { return extremum{arr.data(), truncate_length}; }
+  // increment the last byte that won't exceed max_byte, dropping the saturated bytes after it
+  for (int32_t i = truncate_length - 1; i >= 0; i--) {
+    if (arr[i] < max_byte) {
+      auto const ptr = static_cast<uint8_t*>(scratch);
+      cuda::std::memcpy(ptr, arr.data(), i + 1);
+      ptr[i]++;
+      return extremum{scratch, i + 1};
     }
-    mask <<= 1;
-    valid <<= 1;
   }
-
-  // should not reach here since we test for valid UTF-8 higher up the call chain
-  CUDF_UNREACHABLE("Trying to increment non-utf8");
+  // cannot increment
+  return cuda::std::nullopt;
 }
 
 /**
- * @brief Attempt to truncate a span of UTF-8 characters to at most truncate_length_bytes.
+ * @brief Truncates UTF-8 data to at most `truncate_length` bytes on a character boundary.
  *
- * If is_min is false, then the final character (or characters if there is overflow) will be
- * incremented so that the resultant UTF-8 will still be a valid maximum. scratch is only used when
- * is_min is false, and must be at least truncate_length bytes in size. If the span cannot be
- * truncated, leave it untouched and return the original length.
+ * A max increments its last character to the next valid code point of the same width, dropping
+ * characters that have none, using `scratch`.
  *
- * @return Pair object containing a pointer to the truncated data and its length.
+ * @return Truncated value, or nullopt if no valid max fits
  */
-__device__ cuda::std::pair<void const*, uint32_t> truncate_utf8(
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_utf8(
   device_span<unsigned char const> span, bool is_min, void* scratch, int32_t truncate_length)
 {
-  // we know at this point that truncate_length < size_bytes, so
-  // there is data at [len]. work backwards until we find
-  // the start of a UTF-8 encoded character, since UTF-8 characters may be multi-byte.
-  auto len = truncate_length;
-  while (not strings::detail::is_begin_utf8_char(span[len]) && len > 0) {
-    len--;
-  }
+  // Longest prefix of at most `truncate_length` bytes that ends on a character boundary: up to
+  // the start of the character at byte `truncate_length`, which exists since the string is longer
+  auto const str    = string_view{reinterpret_cast<char const*>(span.data()), truncate_length + 1};
+  auto const prefix = string_view{str.data(), (--str.end()).byte_offset()};
 
-  if (len != 0) {
-    if (is_min) { return {span.data(), len}; }
-    memcpy(scratch, span.data(), len);
-    // increment last byte, working backwards if the byte overflows
-    auto const ptr = static_cast<unsigned char*>(scratch);
-    for (int32_t i = len - 1; i >= 0; i--) {
-      if (increment_utf8_at(&ptr[i])) {  // true if no overflow
-        return {scratch, len};
-      }
-    }
-    // cannot increment, so fall through
+  // An empty prefix is still a valid min
+  if (is_min) { return extremum{prefix.data(), prefix.size_bytes()}; }
+  // Input with an invalid code point falls back to incrementing its last ASCII byte, which always
+  // yields valid UTF-8
+  auto const is_valid_unicode = cuda::std::all_of(prefix.begin(), prefix.end(), [](char_utf8 chr) {
+    return strings::detail::is_valid_codepoint(strings::detail::utf8_to_codepoint(chr));
+  });
+  if (not is_valid_unicode) {
+    return truncate_binary(
+      span, false, scratch, truncate_length, cuda::std::numeric_limits<int8_t>::max());
   }
-
-  // couldn't truncate, return original value
-  return {span.data(), span.size_bytes()};
+  // Increment the last character. A character without a successor of the same width is dropped
+  // and the preceding character is incremented instead
+  for (auto itr = prefix.end(); itr != prefix.begin();) {
+    auto const chr  = *--itr;
+    auto const next = strings::detail::next_codepoint(strings::detail::utf8_to_codepoint(chr));
+    if (not next.has_value()) { continue; }
+    auto const next_chr = strings::detail::codepoint_to_utf8(*next);
+    auto const width    = strings::detail::bytes_in_char_utf8(chr);
+    if (strings::detail::bytes_in_char_utf8(next_chr) != width) { continue; }
+    auto const offset = itr.byte_offset();
+    auto const ptr    = static_cast<char*>(scratch);
+    if (offset > 0) { cuda::std::memcpy(ptr, prefix.data(), offset); }
+    strings::detail::from_char_utf8(next_chr, ptr + offset);
+    return extremum{scratch, offset + width};
+  }
+  // No character can be incremented
+  return cuda::std::nullopt;
 }
 
 /**
- * @brief Attempt to truncate a span of binary data to at most truncate_length bytes.
+ * @brief Truncates a string to at most `truncate_length` bytes.
  *
- * If is_min is false, then the final byte (or bytes if there is overflow) will be
- * incremented so that the resultant binary will still be a valid maximum. scratch is only used when
- * is_min is false, and must be at least truncate_length bytes in size. If the span cannot be
- * truncated, leave it untouched and return the original length.
- *
- * @return Pair object containing a pointer to the truncated data and its length.
+ * ASCII-only or non-UTF-8 strings are truncated as binary, incrementing only bytes below 0x7F so
+ * that a max stays valid UTF-8.
  */
-__device__ cuda::std::pair<void const*, uint32_t> truncate_binary(device_span<uint8_t const> arr,
-                                                                  bool is_min,
-                                                                  void* scratch,
-                                                                  int32_t truncate_length)
-{
-  if (is_min) { return {arr.data(), truncate_length}; }
-  memcpy(scratch, arr.data(), truncate_length);
-  // increment last byte, working backwards if the byte overflows
-  auto const ptr = static_cast<uint8_t*>(scratch);
-  for (int32_t i = truncate_length - 1; i >= 0; i--) {
-    ptr[i]++;
-    if (ptr[i] != 0) {  // no overflow
-      return {scratch, i + 1};
-    }
-  }
-
-  // couldn't truncate, return original value
-  return {arr.data(), arr.size_bytes()};
-}
-
-// TODO (ets): the assumption here is that string columns might have UTF-8 or plain binary,
-// while binary columns are assumed to be binary and will be treated as such.  If this assumption
-// is incorrect, then truncate_byte_array() and truncate_string() should just be combined into
-// a single function.
-/**
- * @brief Attempt to truncate a UTF-8 string to at most truncate_length bytes.
- */
-__device__ cuda::std::pair<void const*, uint32_t> truncate_string(string_view const& str,
-                                                                  bool is_min,
-                                                                  void* scratch,
-                                                                  int32_t truncate_length)
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_string(string_view const& str,
+                                                                       bool is_min,
+                                                                       void* scratch,
+                                                                       int32_t truncate_length)
 {
   if (truncate_length == NO_TRUNC_STATS or str.size_bytes() <= truncate_length) {
-    return {str.data(), str.size_bytes()};
+    return extremum{str.data(), str.size_bytes()};
   }
 
   // convert char to unsigned since UTF-8 is just bytes, not chars.  can't use std::byte because
@@ -2892,27 +2869,43 @@ __device__ cuda::std::pair<void const*, uint32_t> truncate_string(string_view co
   auto const span = device_span<unsigned char const>(
     reinterpret_cast<unsigned char const*>(str.data()), str.size_bytes());
 
-  // if str is all 8-bit chars, or is actually not UTF-8, then we can just use truncate_binary()
   if (str.size_bytes() != str.length() and is_valid_utf8(span.first(truncate_length))) {
     return truncate_utf8(span, is_min, scratch, truncate_length);
   }
-  return truncate_binary(span, is_min, scratch, truncate_length);
+  return truncate_binary(
+    span, is_min, scratch, truncate_length, cuda::std::numeric_limits<int8_t>::max());
 }
 
 /**
  * @brief Attempt to truncate a binary array to at most truncate_length bytes.
  */
-__device__ cuda::std::pair<void const*, uint32_t> truncate_byte_array(
+[[nodiscard]] __device__ cuda::std::optional<extremum> truncate_byte_array(
   statistics::byte_array_view const& arr, bool is_min, void* scratch, int32_t truncate_length)
 {
   if (truncate_length == NO_TRUNC_STATS or arr.size_bytes() <= truncate_length) {
-    return {arr.data(), arr.size_bytes()};
+    return extremum{arr.data(), arr.size_bytes()};
   }
 
   // convert std::byte to uint8_t since bytes can't be incremented
   device_span<uint8_t const> const span{reinterpret_cast<uint8_t const*>(arr.data()),
                                         arr.size_bytes()};
-  return truncate_binary(span, is_min, scratch, truncate_length);
+  return truncate_binary(
+    span, is_min, scratch, truncate_length, cuda::std::numeric_limits<uint8_t>::max());
+}
+
+/**
+ * @brief Returns true if get_extremum() truncates the given min or max value.
+ */
+[[nodiscard]] __device__ bool is_truncated(statistics_val const& stats_val,
+                                           statistics_dtype dtype,
+                                           int32_t truncate_length)
+{
+  if (truncate_length == NO_TRUNC_STATS) { return false; }
+  switch (dtype) {
+    case dtype_string: return stats_val.str_val.length > truncate_length;
+    case dtype_byte_array: return stats_val.byte_val.length > truncate_length;
+    default: return false;
+  }
 }
 
 /**
@@ -2921,32 +2914,32 @@ __device__ cuda::std::pair<void const*, uint32_t> truncate_byte_array(
  *
  * Given a statistics_val union and a data type, perform any transformations needed to produce a
  * valid min or max binary value.  String and byte array types will be truncated if they exceed
- * truncate_length.
+ * truncate_length. Returns nullopt if a truncated max cannot be made a valid upper bound.
  */
-__device__ cuda::std::pair<void const*, uint32_t> get_extremum(statistics_val const* stats_val,
-                                                               statistics_dtype dtype,
-                                                               void* scratch,
-                                                               bool is_min,
-                                                               int32_t truncate_length)
+[[nodiscard]] __device__ cuda::std::optional<extremum> get_extremum(statistics_val const* stats_val,
+                                                                    statistics_dtype dtype,
+                                                                    void* scratch,
+                                                                    bool is_min,
+                                                                    int32_t truncate_length)
 {
   switch (dtype) {
-    case dtype_bool: return {stats_val, sizeof(bool)};
+    case dtype_bool: return extremum{stats_val, sizeof(bool)};
     case dtype_int8:
     case dtype_int16:
     case dtype_int32:
-    case dtype_date32: return {stats_val, sizeof(int32_t)};
+    case dtype_date32: return extremum{stats_val, sizeof(int32_t)};
     case dtype_float32: {
       auto const fp_scratch = static_cast<float*>(scratch);
       fp_scratch[0]         = stats_val->fp_val;
-      return {scratch, sizeof(float)};
+      return extremum{scratch, sizeof(float)};
     }
     case dtype_int64:
     case dtype_decimal64:
     case dtype_timestamp64:
-    case dtype_float64: return {stats_val, sizeof(int64_t)};
+    case dtype_float64: return extremum{stats_val, sizeof(int64_t)};
     case dtype_decimal128:
       byte_reverse128(stats_val->d128_val, scratch);
-      return {scratch, sizeof(__int128_t)};
+      return extremum{scratch, sizeof(__int128_t)};
     case dtype_string: return truncate_string(stats_val->str_val, is_min, scratch, truncate_length);
     case dtype_byte_array:
       return truncate_byte_array(stats_val->byte_val, is_min, scratch, truncate_length);
@@ -2954,26 +2947,60 @@ __device__ cuda::std::pair<void const*, uint32_t> get_extremum(statistics_val co
   }
 }
 
+/**
+ * @brief Returns true if a fixed-length byte array column's min/max values are too wide for
+ * `truncate_length` and so must be omitted, since fixed-length values are never truncated.
+ *
+ * Fixed-width values are always allowed at least `sizeof(__int128_t)` bytes.
+ */
+[[nodiscard]] __device__ bool is_flba_too_wide(parquet_column_device_view const& col,
+                                               int32_t truncate_length)
+{
+  return col.physical_type == Type::FIXED_LEN_BYTE_ARRAY and truncate_length != NO_TRUNC_STATS and
+         col.type_length >
+           cuda::std::max(truncate_length, static_cast<int32_t>(sizeof(__int128_t)));
+}
+
 }  // namespace
 
 __device__ uint8_t* EncodeStatistics(uint8_t* start,
                                      statistics_chunk const* s,
-                                     statistics_dtype dtype,
-                                     void* scratch)
+                                     parquet_column_device_view const& col,
+                                     void* scratch,
+                                     int32_t statistics_truncate_length)
 {
+  auto const dtype = col.stats_dtype;
+  // Fixed-length min/max values must keep their full width so are never truncated, and are
+  // omitted if too wide
+  auto const has_minmax = s->has_minmax and not is_flba_too_wide(col, statistics_truncate_length);
+  auto const truncate_length =
+    col.physical_type == Type::FIXED_LEN_BYTE_ARRAY ? NO_TRUNC_STATS : statistics_truncate_length;
+
   uint8_t* end;
   header_encoder encoder(start);
   encoder.field_int64(3, s->null_count);
-  if (s->has_minmax) {
-    auto const [max_ptr, max_size] =
-      get_extremum(&s->max_value, dtype, scratch, false, NO_TRUNC_STATS);
-    encoder.field_binary(5, max_ptr, max_size);
+  if (has_minmax) {
+    // A truncated string/binary max is built in the output buffer past the space its encoding
+    // (1 byte field header + up to 5 bytes length + truncate_length bytes) needs, which is within
+    // the space reserved for the min and max values by gpuInitPages
+    auto const max_scratch = (dtype == dtype_string or dtype == dtype_byte_array)
+                               ? encoder.get_ptr() + 6 + truncate_length
+                               : scratch;
+    // Omit the max if it cannot be truncated to a valid upper bound
+    auto const max = get_extremum(&s->max_value, dtype, max_scratch, false, truncate_length);
+    if (max.has_value()) { encoder.field_binary(5, max->first, max->second); }
     auto const [min_ptr, min_size] =
-      get_extremum(&s->min_value, dtype, scratch, true, NO_TRUNC_STATS);
+      *get_extremum(&s->min_value, dtype, scratch, true, truncate_length);
     encoder.field_binary(6, min_ptr, min_size);
-    // cudf min/max statistics are always exact (i.e. not truncated)
-    encoder.field_bool(7, true);
-    encoder.field_bool(8, true);
+    if (max.has_value()) {
+      encoder.field_bool(7, not is_truncated(s->max_value, dtype, truncate_length));
+    }
+    // A string min that never dropped below the initial max string sentinel is not a column value
+    auto const is_min_sentinel =
+      dtype == dtype_string and
+      static_cast<string_view>(s->min_value.str_val) == string_view::max();
+    encoder.field_bool(
+      8, not is_min_sentinel and not is_truncated(s->min_value, dtype, truncate_length));
   }
   // nan_count must be written for floating point columns, even if zero
   if (dtype == dtype_float32 or dtype == dtype_float64) { encoder.field_int64(9, s->nan_count); }
@@ -2986,22 +3013,23 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
   gpuEncodePageHeaders(device_span<EncPage> pages,
                        device_span<codec_exec_result const> comp_results,
                        device_span<statistics_chunk const> page_stats,
-                       statistics_chunk const* chunk_stats)
+                       statistics_chunk const* chunk_stats,
+                       int32_t statistics_truncate_length)
 {
   __align__(8) unsigned char scratch[MIN_STATS_SCRATCH_SIZE];
 
   auto const page_idx = cudf::detail::grid_1d::global_thread_id();
   if (page_idx >= pages.size()) { return; }
 
-  auto page             = pages[page_idx];
-  auto const chunk      = *page.chunk;
-  auto const stats_type = chunk.col_desc->stats_dtype;
+  auto page        = pages[page_idx];
+  auto const chunk = *page.chunk;
 
   uint8_t* hdr_start{};
   uint8_t* hdr_end{};
   if (chunk_stats && &pages[page_idx] == chunk.pages) {  // Is this the first page in a chunk?
     hdr_start = (chunk.is_compressed) ? chunk.compressed_bfr : chunk.uncompressed_bfr;
-    hdr_end   = EncodeStatistics(hdr_start, &chunk_stats[page.chunk_id], stats_type, scratch);
+    hdr_end   = EncodeStatistics(
+      hdr_start, &chunk_stats[page.chunk_id], *chunk.col_desc, scratch, statistics_truncate_length);
     page.chunk->ck_stat_size = static_cast<uint32_t>(hdr_end - hdr_start);
   }
   // For V2 pages, compressed_page_size and uncompressed_page_size include level bytes.
@@ -3037,8 +3065,11 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
     // Optionally encode page-level statistics
     if (not page_stats.empty()) {
       encoder.field_struct_begin(5);
-      encoder.set_ptr(
-        EncodeStatistics(encoder.get_ptr(), &page_stats[page_idx], stats_type, scratch));
+      encoder.set_ptr(EncodeStatistics(encoder.get_ptr(),
+                                       &page_stats[page_idx],
+                                       *chunk.col_desc,
+                                       scratch,
+                                       statistics_truncate_length));
       encoder.field_struct_end(5);
     }
     encoder.field_struct_end(5);
@@ -3055,8 +3086,11 @@ CUDF_KERNEL void __launch_bounds__(encode_block_size)
     // Optionally encode page-level statistics
     if (not page_stats.empty()) {
       encoder.field_struct_begin(8);
-      encoder.set_ptr(
-        EncodeStatistics(encoder.get_ptr(), &page_stats[page_idx], stats_type, scratch));
+      encoder.set_ptr(EncodeStatistics(encoder.get_ptr(),
+                                       &page_stats[page_idx],
+                                       *chunk.col_desc,
+                                       scratch,
+                                       statistics_truncate_length));
       encoder.field_struct_end(8);
     }
     encoder.field_struct_end(8);
@@ -3138,7 +3172,7 @@ namespace {
  * @brief Tests if statistics are comparable given the column's
  * physical and converted types
  */
-__device__ bool is_comparable(Type ptype, ConvertedType ctype)
+[[nodiscard]] __device__ bool is_comparable(Type ptype, ConvertedType ctype)
 {
   switch (ptype) {
     case Type::BOOLEAN:
@@ -3199,10 +3233,10 @@ __device__ int32_t compare_values(Type ptype,
 /**
  * @brief Determine if a set of statstistics are in ascending order.
  */
-__device__ bool is_ascending(statistics_chunk const* s,
-                             Type ptype,
-                             ConvertedType ctype,
-                             uint32_t num_pages)
+[[nodiscard]] __device__ bool is_ascending(statistics_chunk const* s,
+                                           Type ptype,
+                                           ConvertedType ctype,
+                                           uint32_t num_pages)
 {
   for (uint32_t i = 1; i < num_pages; i++) {
     if (compare_values(ptype, ctype, s[i - 1].min_value, s[i].min_value) > 0 ||
@@ -3216,10 +3250,10 @@ __device__ bool is_ascending(statistics_chunk const* s,
 /**
  * @brief Determine if a set of statstistics are in descending order.
  */
-__device__ bool is_descending(statistics_chunk const* s,
-                              Type ptype,
-                              ConvertedType ctype,
-                              uint32_t num_pages)
+[[nodiscard]] __device__ bool is_descending(statistics_chunk const* s,
+                                            Type ptype,
+                                            ConvertedType ctype,
+                                            uint32_t num_pages)
 {
   for (uint32_t i = 1; i < num_pages; i++) {
     if (compare_values(ptype, ctype, s[i - 1].min_value, s[i].min_value) < 0 ||
@@ -3261,11 +3295,41 @@ struct mask_tform {
 
 }  // namespace
 
+/**
+ * @brief Tracks whether consecutive encoded binary values are ascending and descending, comparing
+ * them byte-wise as unsigned, which is the Parquet order for strings and binary.
+ */
+struct binary_order_tracker {
+  extremum prev{nullptr, 0};
+  bool ascending  = true;
+  bool descending = true;
+
+  __device__ void update(extremum curr)
+  {
+    if (prev.first != nullptr) {
+      auto const lhs = static_cast<uint8_t const*>(prev.first);
+      auto const rhs = static_cast<uint8_t const*>(curr.first);
+      auto const len = cuda::std::min(prev.second, curr.second);
+      uint32_t i     = 0;
+      while (i < len and lhs[i] == rhs[i]) {
+        i++;
+      }
+      auto const cmp = (i < len) ? (lhs[i] < rhs[i] ? -1 : 1)
+                                 : (prev.second < curr.second ? -1 : prev.second > curr.second);
+      ascending &= cmp <= 0;
+      descending &= cmp >= 0;
+    }
+    prev = curr;
+  }
+};
+
 // blockDim(1, 1, 1)
 CUDF_KERNEL void __launch_bounds__(1)
   gpuEncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
-                         int32_t column_index_truncate_length)
+                         int32_t column_index_truncate_length,
+                         int32_t statistics_truncate_length,
+                         int32_t stats_len_limit)
 {
   __align__(8) unsigned char s_scratch[MIN_STATS_SCRATCH_SIZE];
   uint8_t* col_idx_end;
@@ -3290,6 +3354,13 @@ CUDF_KERNEL void __launch_bounds__(1)
 
   header_encoder encoder(ck_g->column_index_blob);
 
+  // Fixed-length min/max values must keep their full width so are never truncated. If too wide
+  // for the chunk statistics, they are omitted there so no column index is written for the chunk
+  auto const ci_truncate_length = col_g.physical_type == Type::FIXED_LEN_BYTE_ARRAY
+                                    ? NO_TRUNC_STATS
+                                    : column_index_truncate_length;
+  auto const is_too_wide        = is_flba_too_wide(col_g, statistics_truncate_length);
+
   // make sure scratch is aligned properly. here column_index_size indicates
   // how much scratch space is available for this chunk, including space for
   // truncation scratch + padding for alignment.
@@ -3304,35 +3375,53 @@ CUDF_KERNEL void __launch_bounds__(1)
     encoder.put_bool(column_stats[pageidx + page].non_nulls == 0);
   }
   encoder.field_list_end(1);
+  // Truncation can reorder string and binary bounds, so track the order of the encoded values
+  binary_order_tracker min_order;
+  binary_order_tracker max_order;
+
   // min_values
   encoder.field_list_begin(2, num_data_pages, FieldType::BINARY);
   for (uint32_t page = first_data_page; page < num_pages; page++) {
-    auto const [min_ptr, min_size] = get_extremum(&column_stats[pageidx + page].min_value,
-                                                  col_g.stats_dtype,
-                                                  scratch,
-                                                  true,
-                                                  column_index_truncate_length);
+    auto const [min_ptr, min_size] = *get_extremum(&column_stats[pageidx + page].min_value,
+                                                   col_g.stats_dtype,
+                                                   scratch,
+                                                   true,
+                                                   ci_truncate_length);
     encoder.put_binary(min_ptr, min_size);
+    min_order.update({encoder.get_ptr() - min_size, min_size});
   }
   encoder.field_list_end(2);
-  // max_values
+  // max_values. A page max that cannot be truncated to a valid upper bound is written in full if
+  // it fits in the space reserved for it, else no column index is written for the chunk
+  auto has_unbounded_max = false;
   encoder.field_list_begin(3, num_data_pages, FieldType::BINARY);
   for (uint32_t page = first_data_page; page < num_pages; page++) {
-    auto const [max_ptr, max_size] = get_extremum(&column_stats[pageidx + page].max_value,
-                                                  col_g.stats_dtype,
-                                                  scratch,
-                                                  false,
-                                                  column_index_truncate_length);
+    auto const& max_value = column_stats[pageidx + page].max_value;
+    auto max = get_extremum(&max_value, col_g.stats_dtype, scratch, false, ci_truncate_length);
+    if (not max.has_value() and not is_truncated(max_value, col_g.stats_dtype, stats_len_limit)) {
+      max = get_extremum(&max_value, col_g.stats_dtype, scratch, false, NO_TRUNC_STATS);
+    }
+    has_unbounded_max |= not max.has_value();
+    // the column index is discarded if any max is missing, so write an empty placeholder
+    auto const [max_ptr, max_size] = max.value_or(extremum{scratch, 0});
     encoder.put_binary(max_ptr, max_size);
+    max_order.update({encoder.get_ptr() - max_size, max_size});
   }
   encoder.field_list_end(3);
-  // boundary_order
-  encoder.field_int32(
-    4,
-    static_cast<int32_t>(calculate_boundary_order(&column_stats[first_data_page + pageidx],
-                                                  col_g.physical_type,
-                                                  col_g.converted_type,
-                                                  num_pages - first_data_page)));
+  // boundary_order, which must hold for the encoded (possibly truncated) string and binary bounds
+  auto boundary_order = calculate_boundary_order(&column_stats[first_data_page + pageidx],
+                                                 col_g.physical_type,
+                                                 col_g.converted_type,
+                                                 num_pages - first_data_page);
+  if (col_g.stats_dtype == dtype_string or col_g.stats_dtype == dtype_byte_array) {
+    if ((boundary_order == BoundaryOrder::ASCENDING and
+         not(min_order.ascending and max_order.ascending)) or
+        (boundary_order == BoundaryOrder::DESCENDING and
+         not(min_order.descending and max_order.descending))) {
+      boundary_order = BoundaryOrder::UNORDERED;
+    }
+  }
+  encoder.field_int32(4, static_cast<int32_t>(boundary_order));
   // null_counts
   encoder.field_list_begin(5, num_data_pages, FieldType::I64);
   for (uint32_t page = first_data_page; page < num_pages; page++) {
@@ -3389,9 +3478,10 @@ CUDF_KERNEL void __launch_bounds__(1)
   encoder.end(&col_idx_end, false);
 
   // now reset column_index_size to the actual size of the encoded column index blob
-  ck_g->column_index_size =
-    has_nan_page ? 0 : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
-  ck_g->var_bytes_size = var_bytes;
+  ck_g->column_index_size = (has_nan_page or has_unbounded_max or is_too_wide)
+                              ? 0
+                              : static_cast<uint32_t>(col_idx_end - ck_g->column_index_blob);
+  ck_g->var_bytes_size    = var_bytes;
 }
 
 void InitRowGroupFragments(device_2dspan<PageFragment> frag,
@@ -3440,6 +3530,7 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
                       uint32_t page_align,
                       bool write_v2_headers,
                       bool write_page_stats,
+                      int32_t stats_len_limit,
                       statistics_merge_group* page_grstats,
                       statistics_merge_group* chunk_grstats,
                       kernel_error::pointer error_code,
@@ -3460,6 +3551,7 @@ void InitEncoderPages(device_2dspan<EncColumnChunk> chunks,
                                                                  page_align,
                                                                  write_v2_headers,
                                                                  write_page_stats,
+                                                                 stats_len_limit,
                                                                  error_code);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
@@ -3564,11 +3656,12 @@ void EncodePageHeaders(device_span<EncPage> pages,
                        device_span<codec_exec_result const> comp_results,
                        device_span<statistics_chunk const> page_stats,
                        statistics_chunk const* chunk_stats,
+                       int32_t statistics_truncate_length,
                        cuda::stream_ref stream)
 {
   auto const num_blocks = cudf::detail::div_rounding_up_safe<int>(pages.size(), encode_block_size);
   gpuEncodePageHeaders<<<num_blocks, encode_block_size, 0, stream.get()>>>(
-    pages, comp_results, page_stats, chunk_stats);
+    pages, comp_results, page_stats, chunk_stats, statistics_truncate_length);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 
@@ -3581,10 +3674,15 @@ void GatherPages(device_span<EncColumnChunk> chunks, cuda::stream_ref stream)
 void EncodeColumnIndexes(device_span<EncColumnChunk> chunks,
                          device_span<statistics_chunk const> column_stats,
                          int32_t column_index_truncate_length,
+                         int32_t statistics_truncate_length,
+                         int32_t stats_len_limit,
                          cuda::stream_ref stream)
 {
-  gpuEncodeColumnIndexes<<<chunks.size(), 1, 0, stream.get()>>>(
-    chunks, column_stats, column_index_truncate_length);
+  gpuEncodeColumnIndexes<<<chunks.size(), 1, 0, stream.get()>>>(chunks,
+                                                                column_stats,
+                                                                column_index_truncate_length,
+                                                                statistics_truncate_length,
+                                                                stats_len_limit);
   CUDF_CUDA_TRY(cudaGetLastError());
 }
 

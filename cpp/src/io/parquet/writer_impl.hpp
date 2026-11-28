@@ -156,6 +156,7 @@ class writer::impl {
   bool const _write_arrow_schema;
   std::optional<std::vector<sorting_column>> _sorting_columns;
   int32_t const _column_index_truncate_length;
+  int32_t const _statistics_truncate_length;
   std::vector<std::map<std::string, std::string>> const _kv_meta;  // Optional user metadata.
   cudf::io::detail::single_write_mode const
     _single_write_mode;  // Special parameter only used by `write()` to

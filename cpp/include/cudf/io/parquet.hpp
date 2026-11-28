@@ -34,11 +34,12 @@ namespace io {
  */
 
 constexpr size_t default_row_group_size_bytes =
-  std::numeric_limits<size_t>::max();                          ///< Infinite bytes per row group
-constexpr size_type default_row_group_size_rows = 1'000'000;   ///< 1 million rows per row group
-constexpr size_t default_max_page_size_bytes    = 512 * 1024;  ///< 512KB per page
-constexpr size_type default_max_page_size_rows  = 20000;       ///< 20k rows per page
-constexpr int32_t default_column_index_truncate_length = 64;   ///< truncate to 64 bytes
+  std::numeric_limits<size_t>::max();                           ///< Infinite bytes per row group
+constexpr size_type default_row_group_size_rows = 1'000'000;    ///< 1 million rows per row group
+constexpr size_t default_max_page_size_bytes    = 512 * 1024;   ///< 512KB per page
+constexpr size_type default_max_page_size_rows  = 20000;        ///< 20k rows per page
+constexpr int32_t default_column_index_truncate_length = 64;    ///< truncate to 64 bytes
+constexpr int32_t default_statistics_truncate_length   = 4096;  ///< truncate to 4096 bytes
 constexpr size_t default_max_dictionary_size           = 1024 * 1024;  ///< 1MB dictionary size
 constexpr size_type default_max_page_fragment_size     = 5000;  ///< 5000 rows per page fragment
 
@@ -1270,6 +1271,8 @@ class parquet_writer_options_base {
   size_type _max_page_size_rows = default_max_page_size_rows;
   // Maximum size of min or max values in column index
   int32_t _column_index_truncate_length = default_column_index_truncate_length;
+  // Maximum size of min or max values in column chunk and page header statistics
+  int32_t _statistics_truncate_length = default_statistics_truncate_length;
   // When to use dictionary encoding for data
   dictionary_policy _dictionary_policy = dictionary_policy::ADAPTIVE;
   // Maximum size of column chunk dictionary (in bytes)
@@ -1410,6 +1413,14 @@ class parquet_writer_options_base {
   }
 
   /**
+   * @brief Returns maximum length of min or max values in column chunk and page header
+   * statistics, in bytes.
+   *
+   * @return length min/max will be truncated to
+   */
+  [[nodiscard]] auto get_statistics_truncate_length() const { return _statistics_truncate_length; }
+
+  /**
    * @brief Returns policy for dictionary use.
    *
    * @return policy for dictionary use
@@ -1548,6 +1559,14 @@ class parquet_writer_options_base {
    * @param size_bytes length min/max will be truncated to
    */
   void set_column_index_truncate_length(int32_t size_bytes);
+
+  /**
+   * @brief Sets the maximum length of min or max values in column chunk and page header
+   * statistics, in bytes.
+   *
+   * @param size_bytes length min/max will be truncated to
+   */
+  void set_statistics_truncate_length(int32_t size_bytes);
 
   /**
    * @brief Sets the policy for dictionary use.
@@ -1707,8 +1726,8 @@ class parquet_writer_options_builder_base {
    *
    * Values exceeding this limit will be truncated, but modified such that they will still
    * be valid lower and upper bounds. This only applies to variable length types, such as string.
-   * Maximum values will not be truncated if there is no suitable truncation that results in
-   * a valid upper bound.
+   * A max with no valid truncation is written in full if it fits `statistics_truncate_length`, else
+   * the chunk's column index is omitted.
    *
    * Default value is 64.
    *
@@ -1716,6 +1735,18 @@ class parquet_writer_options_builder_base {
    * @return this for chaining
    */
   BuilderT& column_index_truncate_length(int32_t val);
+
+  /**
+   * @brief Sets the maximum size in bytes of string and binary min/max statistics values.
+   *
+   * Longer values are truncated to valid bounds and marked inexact. A max with no valid truncation
+   * is omitted. Fixed-length byte array values are never truncated: if wider than this limit and
+   * `sizeof(__int128_t)` bytes, their min/max and the chunk's column index are omitted.
+   *
+   * @param val length min/max will be truncated to, with 0 indicating no truncation
+   * @return this for chaining
+   */
+  BuilderT& statistics_truncate_length(int32_t val);
 
   /**
    * @brief Sets the policy for dictionary use.

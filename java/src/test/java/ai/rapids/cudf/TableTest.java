@@ -24,6 +24,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
+import org.apache.parquet.column.statistics.Statistics;
 import org.apache.parquet.hadoop.ParquetFileReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.schema.GroupType;
@@ -11069,6 +11070,35 @@ public class TableTest extends CudfTestBase {
         assertTablesAreEqual(table0, table2);
       }
     }
+  }
+
+  @Test
+  void testParquetWriteStatisticsTruncateLength() throws IOException {
+    String longString = String.join("", Collections.nCopies(100, "a"));
+    for (int truncateLength : new int[]{8, 0}) {
+      try (TempFile tempFile = TempFile.create("test-stats-truncate", ".parquet");
+           Table table0 = new Table.TestBuilder().column(longString, longString).build()) {
+        File file = tempFile.getFile();
+        ParquetWriterOptions options = ParquetWriterOptions.builder()
+            .withNonNullableColumns("a")
+            .withStatisticsTruncateLength(truncateLength)
+            .build();
+        try (TableWriter writer = Table.writeParquetChunked(options, file.getAbsoluteFile())) {
+          writer.write(table0);
+        }
+        try (ParquetFileReader reader = ParquetFileReader.open(HadoopInputFile.fromPath(
+            new Path(file.getAbsolutePath()), new Configuration()))) {
+          // 0 keeps the full values, otherwise min/max are truncated to `truncateLength` bytes
+          Statistics<?> stats = reader.getFooter().getBlocks().get(0).getColumns().get(0)
+              .getStatistics();
+          int expectedLength = truncateLength == 0 ? longString.length() : truncateLength;
+          assertEquals(expectedLength, stats.getMinBytes().length);
+          assertEquals(expectedLength, stats.getMaxBytes().length);
+        }
+      }
+    }
+    assertThrows(IllegalArgumentException.class,
+        () -> ParquetWriterOptions.builder().withStatisticsTruncateLength(-1));
   }
 
   @Test

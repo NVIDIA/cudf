@@ -95,6 +95,36 @@ def test_correlated_exists(engine: pl.GPUEngine, orders, customers, negate):
     assert_gpu_result_equal(q, engine=engine, check_row_order=False)
 
 
+def test_correlated_decimal_product(engine: pl.GPUEngine):
+    ps = pl.LazyFrame(
+        {"k": [1, 2, 3], "qty": pl.Series([100, 5, None], dtype=pl.Int32)}
+    )
+    li = pl.LazyFrame(
+        {
+            "k": [1, 1, 2, 3],
+            "q": pl.Series(["10.00", "20.00", "30.00", "1.00"]).cast(pl.Decimal(15, 2)),
+        }
+    )
+    q = pl.SQLContext(ps=ps, li=li).execute(
+        "SELECT k FROM ps WHERE qty > (SELECT 0.5 * sum(q) FROM li WHERE li.k = ps.k)"
+    )
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_decimal_predicate_with_integer_cast_that_may_overflow(
+    in_memory_engine: pl.GPUEngine,
+):
+    left = pl.LazyFrame({"k": [1], "qty": [-(2**63)]})
+    # Rescaling an Int64 to scale 20 can require 39 digits.
+    right = (
+        pl.DataFrame({"k": [1], "q": ["0.5"]}).cast({"q": pl.Decimal(38, 20)}).lazy()
+    )
+    q = pl.SQLContext(l=left, r=right).execute(
+        "SELECT l.k FROM l, r WHERE l.k = r.k AND qty < q"
+    )
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
 def test_empty_result(engine: pl.GPUEngine, orders, customers):
     q = orders.join(customers, on="key", how="inner").filter(
         pl.col("supp_nation") != pl.col("supp_nation")

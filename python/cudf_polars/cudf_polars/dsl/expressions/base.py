@@ -248,16 +248,19 @@ class Col(Expr):
 
 
 class ColRef(Expr):
-    __slots__ = ("index", "table_ref")
-    _non_child = ("dtype", "index", "table_ref")
+    __slots__ = ("decimal_precision", "index", "table_ref")
+    _non_child = ("dtype", "index", "table_ref", "decimal_precision")
     index: int
     table_ref: plc.expressions.TableReference
+    decimal_precision: int | None
+    """Precision bound from the expression materialized on a join input."""
 
     def __init__(
         self,
         dtype: DataType,
         index: int,
         table_ref: plc.expressions.TableReference,
+        decimal_precision: int | None,
         column: Expr,
     ) -> None:
         if not isinstance(column, Col):
@@ -265,6 +268,7 @@ class ColRef(Expr):
         self.dtype = dtype
         self.index = index
         self.table_ref = table_ref
+        self.decimal_precision = decimal_precision
         self.is_pointwise = True
         self.children = (column,)
 

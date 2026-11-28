@@ -15,6 +15,21 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-alternate-dask-datetime
     attempts=(alternate alternate-repeat)
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused*-dask-datetime ]]; then
     attempts=({1..20})
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-fix-compare-dask-datetime ]]; then
+    package_dir="$(dirname "${BASH_SOURCE[0]}")/../python/cudf_polars"
+    archived_utils="$package_dir/cudf_polars/streaming/actor_graph/utils.py"
+    variants=$(mktemp -d /tmp/cudf-polars-fix-comparison.XXXXXX)
+    cp "$archived_utils" "$variants/old.py"
+    (cd "$package_dir" && python -m apply_ownership_fix "$CUDF_POLARS_OWNERSHIP_UTILS")
+    cp "$archived_utils" "$variants/fixed.py"
+    attempts=()
+    for round in {1..12}; do
+        if (( round % 2 )); then
+            attempts+=("old-$round" "fixed-$round")
+        else
+            attempts+=("fixed-$round" "old-$round")
+        fi
+    done
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-handoff-* ]]; then
     handoff_mode=${CUDF_POLARS_DIAGNOSTICS_TRIAL#signal-order-handoff-}
     handoff_mode=${handoff_mode%%-*}
@@ -42,7 +57,13 @@ for attempt in "${attempts[@]}"; do
     done
     trial=$CUDF_POLARS_DIAGNOSTICS_TRIAL
     environment=("CUDF_POLARS_DIAGNOSTICS_DIR=$output")
-    if [[ -n "$handoff_mode" ]]; then
+    if [[ "$trial" == signal-order-fix-compare-dask-datetime ]]; then
+        condition=${attempt%-*}
+        cp "$variants/$condition.py" "$archived_utils"
+        sha256sum "$archived_utils" > "$output/ownership-source.sha256"
+        printf '%s\n' "$condition" > "$output/condition.txt"
+        echo "Ownership fix comparison $attempt"
+    elif [[ -n "$handoff_mode" ]]; then
         condition=${attempt%-*}
         environment+=("CUDF_POLARS_HANDOFF_MODE=$condition")
         printf '%s\n' "$condition" > "$output/condition.txt"

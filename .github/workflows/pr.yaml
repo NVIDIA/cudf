@@ -8,21 +8,27 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-packed-kernels
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-ownership-fix-comparison
   cancel-in-progress: true
 
 jobs:
   arm64-polars-repro:
     name: Arm64 Polars (${{ matrix.trial }})
     runs-on: linux-arm64-gpu-l4-latest-1
-    timeout-minutes: 28
+    timeout-minutes: 54
     strategy:
       fail-fast: false
       matrix:
         trial:
-          - packed-kernel-names
-          - sanitizer-packed-baseline
-          - sanitizer-packed-alternate
+          - order-fix-compare-reference
+          - order-fix-compare-probe-01
+          - order-fix-compare-probe-02
+          - order-fix-compare-probe-03
+          - order-fix-compare-probe-04
+          - order-fix-compare-probe-05
+          - order-fix-compare-probe-06
+          - order-fix-compare-probe-07
+          - order-fix-compare-probe-08
     permissions:
       actions: read
       contents: read

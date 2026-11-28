@@ -128,7 +128,12 @@ SH
 elif [[ "$CUDF_POLARS_REPEAT_REPLAY" == true ]]; then
     # Resolve the exact packages once and run fresh pytest processes on the same GPU.
     mv replay-source/ci/run_cudf_polars_pytests{,-once}.sh
-    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused*-dask-datetime ||
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-fix-compare-dask-datetime ]]; then
+        export CUDF_POLARS_OWNERSHIP_UTILS="$PWD/python/cudf_polars/cudf_polars/streaming/actor_graph/utils.py"
+        export CUDF_POLARS_KERNEL_NAMES=1
+    fi
+    if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-fix-compare-dask-datetime ||
+          "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused*-dask-datetime ||
           ( "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-handoff-* &&
             "$CUDF_POLARS_DIAGNOSTICS_TRIAL" != *-full-dask-datetime ) ]]; then
         cp ci/arm64_polars_diagnostics/focused-datetime-tests.sh replay-source/ci/run_cudf_polars_pytests-once.sh

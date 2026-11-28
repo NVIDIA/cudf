@@ -34,6 +34,11 @@ endif()
 if(NOT rapids-cmake-branch)
   set(rapids-cmake-branch "${RAPIDS_BRANCH}")
 endif()
+
+# TODO: Revert once rapids_cmake_target_sources lands in rapids-cmake
+# (https://github.com/rapidsai/rapids-cmake/pull/1130)
+set(rapids-cmake-repo "robertmaynard/rapids-cmake")
+set(rapids-cmake-branch "fea/support_json_defined_srcs")
 include("${CMAKE_CURRENT_LIST_DIR}/RAPIDS.cmake")
 
 # Don't use sccache-dist for CMake's compiler tests

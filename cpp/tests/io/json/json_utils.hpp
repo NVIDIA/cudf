@@ -7,9 +7,8 @@
 #include <cudf/io/datasource.hpp>
 #include <cudf/io/json.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/resource_ref.hpp>
 
 #include <cuda/buffer>
 #include <cuda/stream>
@@ -27,7 +26,7 @@ std::vector<cudf::io::table_with_metadata> split_byte_range_reading(
   cudf::io::json_reader_options const& creader_opts,
   IndexType chunk_size,
   cuda::stream_ref stream,
-  rmm::device_async_resource_ref mr);
+  cudf::memory_resources mr);
 
 /// Returns length of each string in the column
 cuda::device_buffer<cudf::size_type> string_offset_to_length(

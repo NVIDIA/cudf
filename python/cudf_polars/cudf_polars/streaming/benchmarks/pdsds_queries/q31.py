@@ -121,6 +121,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
     store_sales = get_data(run_config.dataset_path, "store_sales", run_config.suffix)
     web_sales = get_data(run_config.dataset_path, "web_sales", run_config.suffix)
     date_dim = get_data(run_config.dataset_path, "date_dim", run_config.suffix)
+    year_dtype = date_dim.collect_schema()["d_year"]
     customer_address = get_data(
         run_config.dataset_path, "customer_address", run_config.suffix
     )
@@ -269,7 +270,7 @@ def polars_impl(run_config: RunConfig) -> QueryResult:
         .select(
             [
                 pl.col("ca_county"),
-                pl.lit(year, dtype=pl.Int64).alias("d_year"),
+                pl.lit(year, dtype=year_dtype).alias("d_year"),
                 "web_q1_q2_increase",
                 "store_q1_q2_increase",
                 "web_q2_q3_increase",

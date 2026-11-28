@@ -22,16 +22,16 @@ Because `cudf-polars` pins to a tested range of Polars versions, the nightly whe
 the highest Polars version the GPU engine currently supports, which may not be the latest
 Polars release.
 
-<!-- TODO: consider adding a [benchmark] pip extra to cudf-polars that includes tpchgen-cli
+<!-- TODO: consider adding a [benchmark] pip extra to cudf-polars that includes tpcgen-cli
      so benchmark dependencies can be installed in one step:
      pip install "cudf-polars-cu${CUDA_MAJOR}[ray,benchmark]>=0.0.0a0"
      Requires changes to pyproject.toml and dependencies.yaml. -->
 
-Then install `tpchgen-cli`, a Rust-based TPC-H data generator used to produce the benchmark
+Then install `tpcgen-cli`, a Rust-based TPC-H and TPC-DS data generator used to produce the benchmark
 dataset as Parquet files:
 
 ```bash
-pip install tpchgen-cli
+pip install tpcgen-cli
 ```
 
 ### Generate data
@@ -43,7 +43,7 @@ Set the scale factor once and reuse it across all steps. The following generates
 export SCALE_FACTOR=1000.0
 export DATA_PATH="data/tables/scale-${SCALE_FACTOR}"
 
-tpchgen-cli --output-dir="${DATA_PATH}" --format=parquet -s ${SCALE_FACTOR}
+tpcgen-cli tpch parquet --output-dir="${DATA_PATH}" -s ${SCALE_FACTOR}
 ```
 
 ### Run

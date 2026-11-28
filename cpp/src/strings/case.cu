@@ -11,6 +11,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/case.hpp>
 #include <cudf/strings/detail/char_tables.hpp>
@@ -21,8 +22,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -392,7 +391,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
     return std::make_unique<column>(input.parent(), stream, mr);
   }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_flags   = get_character_flags_table(stream);
   auto const d_cases   = get_character_cases_table(stream);
   auto const d_special = get_special_case_mapping_table(stream);
@@ -424,7 +423,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
   // after the threshold check above. The check makes very little impact for long strings
   // but results in a large performance gain when the input contains no special characters.
   constexpr int64_t bytes_per_thread = 4;
-  cudf::detail::device_scalar<int64_t> mb_count(0, stream, cudf::get_current_device_resource_ref());
+  cudf::detail::device_scalar<int64_t> mb_count(0, stream, mr.get_temporary_mr());
   auto const grid = cudf::detail::grid_1d(chars_size, block_size, bytes_per_thread);
   mismatch_multibytes_kernel<bytes_per_thread>
     <<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
@@ -448,7 +447,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
   // note: tried to use segmented-reduce approach instead here and it was consistently slower
   auto [offsets, bytes] = [&] {
     cuda::device_buffer<size_type> sizes(
-      stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+      stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
     constexpr thread_index_type warp_size = cudf::detail::warp_size;
     auto grid = cudf::detail::grid_1d(input.size() * warp_size, block_size);
     count_bytes_kernel<bytes_per_thread>
@@ -463,12 +462,12 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
   // build sub-offsets
   auto const sub_count = chars_size / LS_SUB_BLOCK_SIZE;
   auto tmp_offsets     = cuda::device_buffer<int64_t>(
-    stream, cudf::get_current_device_resource_ref(), sub_count + input.size() + 1, cuda::no_init);
+    stream, mr.get_temporary_mr(), sub_count + input.size() + 1, cuda::no_init);
   {
     cuda::device_buffer<int64_t> sub_offsets(
-      stream, cudf::get_current_device_resource_ref(), sub_count, cuda::no_init);
+      stream, mr.get_temporary_mr(), sub_count, cuda::no_init);
     auto const count_itr = cuda::counting_iterator<int64_t>{0};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       count_itr,
                       count_itr + sub_count,
                       sub_offsets.data(),
@@ -477,7 +476,7 @@ std::unique_ptr<column> convert_case(strings_column_view const& input,
     // merge them with input offsets
     auto input_offsets =
       cudf::detail::offsetalator_factory::make_input_iterator(input.offsets(), input.offset());
-    thrust::merge(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::merge(cudf::detail::exec_policy_nosync(stream, mr),
                   input_offsets,
                   input_offsets + input.size() + 1,
                   sub_offsets.begin(),

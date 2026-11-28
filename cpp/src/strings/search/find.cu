@@ -9,6 +9,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/find.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
@@ -165,7 +164,7 @@ void find_utility(strings_column_view const& input,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr)
 {
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_results = output.mutable_view().data<size_type>();
   if ((input.chars_size(stream) / (input.size() - input.null_count())) > AVG_CHAR_BYTES_THRESHOLD) {
     // warp-per-string runs faster for longer strings (but not shorter ones)
@@ -178,7 +177,7 @@ void find_utility(strings_column_view const& input,
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
     // string-per-thread function
-    thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -212,9 +211,9 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
 
   // special logic for empty target results
   if (d_target.empty()) {
-    auto d_strings = column_device_view::create(input.parent(), stream);
+    auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
     auto d_results = results->mutable_view().data<size_type>();
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -226,7 +225,7 @@ std::unique_ptr<column> find_fn(strings_column_view const& input,
   auto target_itr      = cuda::make_constant_iterator(d_target);
   using TargetIterator = decltype(target_itr);
   find_utility<TargetIterator, forward>(
-    input, target_itr, *results, start, stop, stream, cudf::get_current_device_resource_ref());
+    input, target_itr, *results, start, stop, stream, mr.as_temporary());
   results->set_null_count(input.null_count());
   return results;
 }
@@ -283,11 +282,11 @@ std::unique_ptr<column> find(strings_column_view const& input,
   results->set_null_mask(std::move(null_mask), null_count);
 
   // call find utility with target iterator
-  auto d_targets  = column_device_view::create(target.parent(), stream);
+  auto d_targets  = column_device_view::create(target.parent(), stream, mr.as_temporary());
   auto target_itr = cudf::detail::make_null_replacement_iterator<string_view>(
     *d_targets, string_view{}, target.has_nulls());
   find_utility<decltype(target_itr), forward>(
-    input, target_itr, *results, start, -1, stream, cudf::get_current_device_resource_ref());
+    input, target_itr, *results, start, -1, stream, mr.as_temporary());
   return results;
 }
 

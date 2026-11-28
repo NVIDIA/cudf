@@ -79,23 +79,20 @@ std::unique_ptr<table> extract(strings_column_view const& input,
                                cudf::memory_resources mr)
 {
   // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
 
   auto const groups = d_prog->group_counts();
   CUDF_EXPECTS(groups > 0, "Group indicators not found in regex pattern");
 
   auto indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size() * groups, cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size() * groups, cuda::no_init);
   auto d_indices = cudf::detail::device_2dspan<string_index_pair>(indices, groups);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (!input.is_empty()) {
-    launch_for_each_kernel(extract_fn{*d_strings, d_indices},
-                           *d_prog,
-                           input.size(),
-                           stream,
-                           cudf::get_current_device_resource_ref());
+    launch_for_each_kernel(
+      extract_fn{*d_strings, d_indices}, *d_prog, input.size(), stream, mr.as_temporary());
   }
 
   // build a result column for each group
@@ -156,7 +153,7 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
   if (input.is_empty()) { return make_empty_column(type_id::STRING); }
 
   // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
 
   auto const groups = d_prog->group_counts();
   CUDF_EXPECTS(groups > 0, "capture groups not found in regex pattern", std::invalid_argument);
@@ -165,16 +162,16 @@ std::unique_ptr<column> extract_single(strings_column_view const& input,
                std::invalid_argument);
 
   auto indices = cuda::device_buffer<string_index_pair>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
+    stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   launch_transform_kernel(extract_single_fn{*d_strings, group},
                           *d_prog,
                           indices.data(),
                           input.size(),
                           stream,
-                          cudf::get_current_device_resource_ref());
+                          mr.as_temporary());
 
   return cudf::make_strings_column(indices, stream, mr);
 }

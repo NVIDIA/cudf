@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/fill.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -58,13 +59,13 @@ std::unique_ptr<column> fill(strings_column_view const& input,
   CUDF_EXPECTS(begin <= end, "Parameters [begin,end) have invalid range values");
   if (begin == end) { return std::make_unique<column>(input.parent(), stream, mr); }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_value   = cudf::get_scalar_device_view(const_cast<string_scalar&>(value));
 
   auto fn = fill_fn{*d_strings, begin, end, d_value};
   cuda::device_buffer<string_index_pair> indices(
-    stream, cudf::get_current_device_resource_ref(), strings_count, cuda::no_init);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    stream, mr.get_temporary_mr(), strings_count, cuda::no_init);
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     indices.begin(),

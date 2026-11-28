@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/replace.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
@@ -38,7 +39,7 @@ std::unique_ptr<column> replace_nulls(strings_column_view const& input,
 
   string_view d_repl(repl.data(), repl.size());
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
 
   // build offsets column
@@ -54,7 +55,7 @@ std::unique_ptr<column> replace_nulls(strings_column_view const& input,
   // build chars column
   rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
   auto d_chars = chars.data();
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<size_type>{0},
                      strings_count,
                      [d_strings, d_repl, d_offsets, d_chars] __device__(size_type idx) {

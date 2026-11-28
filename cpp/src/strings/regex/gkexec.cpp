@@ -40,7 +40,7 @@ namespace detail {
  *   [_classes : classes_count × reclass_device + variable-length literals]
  */
 std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_device::create(
-  gkprog const& h_gp, cuda::stream_ref stream)
+  gkprog const& h_gp, cuda::stream_ref stream, cudf::memory_resources mr)
 {
   auto const num_states  = h_gp.num_states;
   auto const classes_cnt = static_cast<int32_t>(h_gp.classes.size());
@@ -70,7 +70,7 @@ std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> gkprog_devic
   auto h_buffer = cudf::detail::make_host_vector<u_char>(memsize, stream);
   auto h_ptr    = h_buffer.data();
   auto d_buffer = std::make_unique<cuda::device_buffer<u_char>>(
-    stream, cudf::get_current_device_resource_ref(), memsize, cuda::no_init);
+    stream, mr.get_output_mr(), memsize, cuda::no_init);
   auto d_ptr = d_buffer->data();
 
   // create our device object; this is managed separately and returned to the caller.

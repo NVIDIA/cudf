@@ -8,6 +8,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/convert/convert_fixed_point.hpp>
 #include <cudf/strings/detail/convert/fixed_point.cuh>
 #include <cudf/strings/detail/convert/fixed_point_to_string.cuh>
@@ -19,8 +20,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/climits>
@@ -124,7 +123,7 @@ struct dispatch_to_fixed_point_fn {
   {
     using DecimalType = device_storage_type_t<T>;
 
-    auto const d_column = column_device_view::create(input.parent(), stream);
+    auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
     // create output column
     auto results   = make_fixed_point_column(output_type,
@@ -136,7 +135,7 @@ struct dispatch_to_fixed_point_fn {
     auto d_results = results->mutable_view().data<DecimalType>();
 
     // convert strings into decimal values
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,
@@ -229,7 +228,7 @@ struct dispatch_from_fixed_point_fn {
   {
     using DecimalType = device_storage_type_t<T>;  // underlying value type
 
-    auto const d_column = column_device_view::create(input, stream);
+    auto const d_column = column_device_view::create(input, stream, mr.as_temporary());
 
     auto [offsets, chars] =
       make_strings_children(from_fixed_point_fn<DecimalType>{*d_column}, input.size(), stream, mr);
@@ -284,7 +283,7 @@ struct dispatch_is_fixed_point_fn {
   {
     using DecimalType = device_storage_type_t<T>;
 
-    auto const d_column = column_device_view::create(input.parent(), stream);
+    auto const d_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
     // create output column
     auto results   = make_numeric_column(data_type{type_id::BOOL8},
@@ -296,7 +295,7 @@ struct dispatch_is_fixed_point_fn {
     auto d_results = results->mutable_view().data<bool>();
 
     // check strings for valid fixed-point chars
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{input.size()},
                       d_results,

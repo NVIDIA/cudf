@@ -11,6 +11,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/buffer_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/strings/convert/convert_datetime.hpp>
 #include <cudf/strings/detail/converters.hpp>
@@ -113,8 +114,9 @@ struct format_compiler {
 
   format_compiler(std::string_view fmt,
                   cuda::stream_ref stream,
+                  cudf::memory_resources mr,
                   specifier_map extra_specifiers = {})
-    : format(fmt), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+    : format(fmt), d_items(stream, mr.get_temporary_mr(), 0, cuda::no_init)
   {
     specifiers.insert(extra_specifiers.begin(), extra_specifiers.end());
     auto items  = cudf::detail::make_empty_host_vector<format_item>(format.length(), stream);
@@ -157,8 +159,7 @@ struct format_compiler {
     }
 
     // copy format_items to device memory
-    d_items =
-      cudf::detail::make_device_buffer(items, stream, cudf::get_current_device_resource_ref());
+    d_items = cudf::detail::make_device_buffer(items, stream, mr.as_temporary());
   }
 
   device_span<format_item const> format_items() { return device_span<format_item const>(d_items); }
@@ -398,11 +399,12 @@ struct dispatch_to_timestamps_fn {
   void operator()(column_device_view const& d_strings,
                   std::string_view format,
                   mutable_column_view& results_view,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
-    format_compiler compiler(format, stream);
+    format_compiler compiler(format, stream, mr);
     parse_datetime<T> pfn{d_strings, compiler.format_items(), compiler.subsecond_precision()};
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{results_view.size()},
                       results_view.data<T>(),
@@ -412,7 +414,8 @@ struct dispatch_to_timestamps_fn {
   void operator()(column_device_view const&,
                   std::string_view,
                   mutable_column_view&,
-                  cuda::stream_ref) const
+                  cuda::stream_ref,
+                  cudf::memory_resources) const
   {
     CUDF_FAIL("Only timestamps type are expected", std::invalid_argument);
   }
@@ -431,7 +434,7 @@ std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
 
   CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.", std::invalid_argument);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results = make_timestamp_column(timestamp_type,
                                        input.size(),
@@ -442,7 +445,7 @@ std::unique_ptr<cudf::column> to_timestamps(strings_column_view const& input,
 
   auto results_view = results->mutable_view();
   cudf::type_dispatcher(
-    timestamp_type, dispatch_to_timestamps_fn(), *d_strings, format, results_view, stream);
+    timestamp_type, dispatch_to_timestamps_fn(), *d_strings, format, results_view, stream, mr);
 
   results->set_null_count(input.null_count());
   return results;
@@ -670,7 +673,7 @@ std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
 
   CUDF_EXPECTS(!format.empty(), "Format parameter must not be empty.", std::invalid_argument);
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto results   = make_numeric_column(data_type{type_id::BOOL8},
                                      strings_count,
@@ -680,8 +683,8 @@ std::unique_ptr<cudf::column> is_timestamp(strings_column_view const& input,
                                      mr);
   auto d_results = results->mutable_view().data<bool>();
 
-  format_compiler compiler(format, stream);
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  format_compiler compiler(format, stream, mr);
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings_count},
                     d_results,
@@ -1128,15 +1131,15 @@ std::unique_ptr<column> from_timestamps(column_view const& timestamps,
                "Invalid size for format names.",
                std::invalid_argument);
 
-  auto const d_names = column_device_view::create(names.parent(), stream);
+  auto const d_names = column_device_view::create(names.parent(), stream, mr.as_temporary());
 
   // This API supports a few more specifiers than to_timestamps.
   // clang-format off
-  format_compiler compiler(format, stream,
+  format_compiler compiler(format, stream, mr,
     specifier_map{{'V', 2}, {'G', 4}, {'a', 3}, {'A', 3}, {'b', 3}, {'B', 3}});
   // clang-format on
   auto const d_format_items = compiler.format_items();
-  auto const d_timestamps   = column_device_view::create(timestamps, stream);
+  auto const d_timestamps   = column_device_view::create(timestamps, stream, mr.as_temporary());
 
   // dispatcher is called to handle the different timestamp types
   auto [offsets_column, chars] = cudf::type_dispatcher(timestamps.type(),

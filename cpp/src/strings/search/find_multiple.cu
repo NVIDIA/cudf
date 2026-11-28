@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/sequence.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/strings/find_multiple.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -14,8 +15,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -42,9 +41,9 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
     "Size of output exceeds the column size limit",
     std::overflow_error);
 
-  auto strings_column = column_device_view::create(input.parent(), stream);
+  auto strings_column = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
-  auto targets_column = column_device_view::create(targets.parent(), stream);
+  auto targets_column = column_device_view::create(targets.parent(), stream, mr.as_temporary());
   auto d_targets      = *targets_column;
 
   auto const total_count = static_cast<size_type>(total_elements);
@@ -59,7 +58,7 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
                         mr);
 
   // fill output column with position values
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{total_count},
                     results->mutable_view().begin<int32_t>(),
@@ -72,12 +71,12 @@ std::unique_ptr<column> find_multiple(strings_column_view const& input,
                     });
   results->set_null_count(0);
 
-  auto offsets = cudf::detail::sequence(
-    strings_count + 1,
-    numeric_scalar<int32_t>(0, true, stream, cudf::get_current_device_resource_ref()),
-    numeric_scalar<int32_t>(targets_count, true, stream, cudf::get_current_device_resource_ref()),
-    stream,
-    mr);
+  auto offsets =
+    cudf::detail::sequence(strings_count + 1,
+                           numeric_scalar<int32_t>(0, true, stream, mr.as_temporary()),
+                           numeric_scalar<int32_t>(targets_count, true, stream, mr.as_temporary()),
+                           stream,
+                           mr);
   return make_lists_column(strings_count,
                            std::move(offsets),
                            std::move(results),

@@ -10,6 +10,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/string_view.cuh>
@@ -20,8 +21,6 @@
 
 #include <nvtext/detail/tokenize.hpp>
 #include <nvtext/ngrams_tokenize.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -143,9 +142,10 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
   auto strings_count = strings.size();
   if (strings.is_empty()) return cudf::make_empty_column(cudf::data_type{cudf::type_id::STRING});
 
-  auto const temp_mr  = mr.get_temporary_mr();
-  auto strings_column = cudf::column_device_view::create(strings.parent(), stream, temp_mr);
-  auto d_strings      = *strings_column;
+  auto const temp_mr = mr.get_temporary_mr();
+  auto strings_column =
+    cudf::column_device_view::create(strings.parent(), stream, mr.as_temporary());
+  auto d_strings = *strings_column;
 
   // Example for comments with ngrams=2
   // ["a bb ccc","dd e"] => ["a_bb", "bb_ccc", "dd_e"]
@@ -164,7 +164,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
   cuda::device_buffer<position_pair> token_positions(stream, temp_mr, total_tokens, cuda::no_init);
   auto d_token_positions = token_positions.data();
   thrust::for_each_n(
-    rmm::exec_policy_nosync(stream, temp_mr),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     strings_count,
     string_tokens_positions_fn{d_strings, d_delimiter, d_token_offsets, d_token_positions});
@@ -209,7 +209,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
   // Generate the ngrams into the chars column data buffer.
   // The ngram_builder_fn functor also fills the ngram_sizes vector with the
   // size of each ngram.
-  thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::for_each_n(cudf::detail::exec_policy_nosync(stream, mr),
                      cuda::counting_iterator<cudf::size_type>{0},
                      strings_count,
                      ngram_builder_fn{d_strings,

@@ -9,6 +9,7 @@
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
 #include <cudf/strings/find.hpp>
@@ -16,8 +17,6 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cooperative_groups.h>
 #include <cooperative_groups/scan.h>
@@ -423,10 +422,8 @@ std::unique_ptr<column> contains(strings_column_view const& input,
                                      mr);
   auto d_results = results->mutable_view().data<bool>();
   if (d_target.empty()) {
-    thrust::fill(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-                 d_results,
-                 d_results + num_rows,
-                 true);
+    thrust::fill(
+      cudf::detail::exec_policy_nosync(stream, mr), d_results, d_results + num_rows, true);
     results->set_null_count(input.null_count());
     return results;
   }
@@ -488,7 +485,7 @@ std::unique_ptr<column> contains(strings_column_view const& strings,
                                      stream,
                                      mr);
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings.size()},
     results->mutable_view().data<bool>(),

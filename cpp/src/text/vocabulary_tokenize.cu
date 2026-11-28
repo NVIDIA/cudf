@@ -16,6 +16,7 @@
 #include <cudf/detail/offsets_iterator_factory.cuh>
 #include <cudf/detail/sizes_to_offsets_iterator.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/hashing/detail/murmurhash3_x86_32.cuh>
 #include <cudf/strings/detail/utilities.hpp>
@@ -136,8 +137,8 @@ tokenize_vocabulary::tokenize_vocabulary(cudf::strings_column_view const& input,
 
   // need to hold a copy of the input
   auto const output_mr = mr.get_output_mr();
-  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, output_mr);
-  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, output_mr);
+  auto vocabulary      = std::make_unique<cudf::column>(input.parent(), stream, mr);
+  auto d_vocabulary    = cudf::column_device_view::create(vocabulary->view(), stream, mr);
 
   auto vocab_map = std::make_unique<detail::vocabulary_map_type>(
     static_cast<size_t>(vocabulary->size() * 2),
@@ -360,8 +361,9 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   if (input.size() == input.null_count()) { return cudf::make_empty_column(output_type); }
 
   // count the tokens per string and build the offsets from the counts
-  auto const temp_mr     = mr.get_temporary_mr();
-  auto const d_strings   = cudf::column_device_view::create(input.parent(), stream, temp_mr);
+  auto const temp_mr = mr.get_temporary_mr();
+  auto const d_strings =
+    cudf::column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const d_delimiter = delimiter.value(stream);
   auto map_ref           = vocabulary._impl->get_map_ref();
 
@@ -369,7 +371,7 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
     auto const zero_itr = cuda::counting_iterator<cudf::size_type>{0};
     auto d_sizes =
       cuda::device_buffer<cudf::size_type>(stream, temp_mr, input.size(), cuda::no_init);
-    thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       zero_itr,
                       zero_itr + input.size(),
                       d_sizes.begin(),
@@ -379,12 +381,13 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
 
     // build the output column to hold all the token ids
     auto tokens = cudf::make_numeric_column(
-      output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+      output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
     auto d_tokens  = tokens->mutable_view().data<cudf::size_type>();
     auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(token_offsets->view());
     vocabulary_tokenizer_fn<decltype(map_ref)> tokenizer{
       *d_strings, d_delimiter, map_ref, default_id, d_offsets, d_tokens};
-    thrust::for_each_n(rmm::exec_policy_nosync(stream, temp_mr), zero_itr, input.size(), tokenizer);
+    thrust::for_each_n(
+      cudf::detail::exec_policy_nosync(stream, mr), zero_itr, input.size(), tokenizer);
     return cudf::make_lists_column(input.size(),
                                    std::move(token_offsets),
                                    std::move(tokens),
@@ -442,14 +445,14 @@ std::unique_ptr<cudf::column> tokenize_with_vocabulary(cudf::strings_column_view
   auto const tmp_input = cudf::column_view(
     input.parent().type(), total_count, d_input_chars, nullptr, 0, 0, {tmp_offsets->view()});
 
-  auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream, temp_mr);
+  auto const d_tmp_strings = cudf::column_device_view::create(tmp_input, stream, mr.as_temporary());
 
-  auto tokens = cudf::make_numeric_column(
-    output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr.get_output_mr());
+  auto tokens =
+    cudf::make_numeric_column(output_type, total_count, cudf::mask_state::UNALLOCATED, stream, mr);
   auto d_tokens = tokens->mutable_view().data<cudf::size_type>();
 
   transform_tokenizer_fn<decltype(map_ref)> tokenizer{d_delimiter, map_ref, default_id};
-  thrust::transform(rmm::exec_policy_nosync(stream, temp_mr),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     d_tmp_strings->begin<cudf::string_view>(),
                     d_tmp_strings->end<cudf::string_view>(),
                     d_tokens,

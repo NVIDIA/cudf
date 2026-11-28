@@ -12,6 +12,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/split.hpp>
 #include <cudf/strings/detail/strings_column_factories.cuh>
 #include <cudf/strings/split/split_re.hpp>
@@ -136,8 +137,7 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   auto const strings_count = d_strings.size();
   auto const max_tokens    = maxsplit > 0 ? maxsplit : std::numeric_limits<size_type>::max();
 
-  auto const counts =
-    count_matches(d_strings, d_prog, strings_count, stream, mr.get_temporary_mr());
+  auto const counts   = count_matches(d_strings, d_prog, strings_count, stream, mr.as_temporary());
   auto const d_counts = counts->view().template data<size_type>();
 
   // convert match counts to token offsets
@@ -174,10 +174,10 @@ std::pair<cuda::device_buffer<string_index_pair>, std::unique_ptr<column>> gener
   cudf::memory_resources mr)
 {
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
     return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream, mr);
   }
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
   return generate_tokens(d_strings, *d_prog, direction, maxsplit, stream, mr);
 }
 
@@ -216,7 +216,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
   // Fast-path: literal-only patterns bypass the regex engine entirely
   auto const [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
-    auto const delim = string_scalar(literal, true, stream);
+    auto const delim = string_scalar(literal, true, stream, mr.as_temporary());
     return direction == split_direction::FORWARD
              ? cudf::strings::detail::split(input, delim, maxsplit, stream, mr)
              : cudf::strings::detail::rsplit(input, delim, maxsplit, stream, mr);
@@ -230,17 +230,17 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
     return std::make_unique<table>(std::move(results));
   }
 
-  auto d_strings = column_device_view::create(input.parent(), stream);
+  auto d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build
-  auto [tokens, offsets] = generate_tokens(
-    *d_strings, prog, direction, maxsplit, stream, cudf::get_current_device_resource_ref());
+  auto [tokens, offsets] =
+    generate_tokens(*d_strings, prog, direction, maxsplit, stream, mr.as_temporary());
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets->view());
 
   // the output column count is the maximum number of tokens generated for any input string
   auto const columns_count = thrust::transform_reduce(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{strings_count},
     cuda::proclaim_return_type<size_type>([d_offsets] __device__(auto const idx) -> size_type {
@@ -290,14 +290,14 @@ std::unique_ptr<column> split_record_re(strings_column_view const& input,
   // Fast-path: literal-only patterns bypass the regex engine entirely
   auto const [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
-    auto const delim = string_scalar(literal, true, stream);
+    auto const delim = string_scalar(literal, true, stream, mr.as_temporary());
     return direction == split_direction::FORWARD
              ? cudf::strings::detail::split_record(input, delim, maxsplit, stream, mr)
              : cudf::strings::detail::rsplit_record(input, delim, maxsplit, stream, mr);
   }
 
   auto const strings_count = input.size();
-  auto d_strings           = column_device_view::create(input.parent(), stream);
+  auto d_strings           = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // get the split tokens from the input column; this also computes the match counts
   // and converts them into offsets, using a single device regex program build

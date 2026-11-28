@@ -7,6 +7,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/convert/convert_integers.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
@@ -16,8 +17,6 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -86,10 +85,11 @@ struct dispatch_hex_to_integers_fn {
   template <cudf::concepts::integral_not_bool IntegerType>
   void operator()(column_device_view const& strings_column,
                   mutable_column_view& output_column,
-                  cuda::stream_ref stream) const
+                  cuda::stream_ref stream,
+                  cudf::memory_resources mr) const
   {
     auto d_results = output_column.data<IntegerType>();
-    thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                       cuda::counting_iterator<size_type>{0},
                       cuda::counting_iterator<size_type>{strings_column.size()},
                       d_results,
@@ -168,7 +168,7 @@ struct dispatch_integers_to_hex_fn {
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr) const
   {
-    auto const d_column = column_device_view::create(input, stream);
+    auto const d_column = column_device_view::create(input, stream, mr.as_temporary());
 
     auto [offsets_column, chars] =
       make_strings_children(integer_to_hex_fn<IntegerType>{*d_column}, input.size(), stream, mr);
@@ -198,7 +198,7 @@ std::unique_ptr<column> hex_to_integers(strings_column_view const& strings,
 {
   size_type strings_count = strings.size();
   if (strings_count == 0) return make_empty_column(output_type);
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_strings      = *strings_column;
   // create integer output column copying the strings null-mask
   auto results      = make_numeric_column(output_type,
@@ -209,7 +209,7 @@ std::unique_ptr<column> hex_to_integers(strings_column_view const& strings,
                                      mr);
   auto results_view = results->mutable_view();
   // fill output column with integers
-  type_dispatcher(output_type, dispatch_hex_to_integers_fn{}, d_strings, results_view, stream);
+  type_dispatcher(output_type, dispatch_hex_to_integers_fn{}, d_strings, results_view, stream, mr);
   results->set_null_count(strings.null_count());
   return results;
 }
@@ -218,7 +218,7 @@ std::unique_ptr<column> is_hex(strings_column_view const& strings,
                                cuda::stream_ref stream,
                                cudf::memory_resources mr)
 {
-  auto strings_column = column_device_view::create(strings.parent(), stream);
+  auto strings_column = column_device_view::create(strings.parent(), stream, mr.as_temporary());
   auto d_column       = *strings_column;
   // create output column
   auto results   = make_numeric_column(data_type{type_id::BOOL8},
@@ -228,7 +228,7 @@ std::unique_ptr<column> is_hex(strings_column_view const& strings,
                                      stream,
                                      mr);
   auto d_results = results->mutable_view().data<bool>();
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     cuda::counting_iterator<size_type>{0},
                     cuda::counting_iterator<size_type>{strings.size()},
                     d_results,

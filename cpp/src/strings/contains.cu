@@ -63,24 +63,24 @@ std::unique_ptr<column> contains_impl(strings_column_view const& input,
   if (input.is_empty()) { return results; }
 
   auto d_results       = results->mutable_view().data<bool>();
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   if (regex_device_builder::glushkov_fast_path_supported(prog)) {
-    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_gkprog_device(prog, stream, mr.as_temporary());
     launch_transform_kernel(contains_fn{*d_strings, beginning_only},
                             *d_prog,
                             d_results,
                             input.size(),
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr.as_temporary());
   } else {
-    auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+    auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
     launch_transform_kernel(contains_fn{*d_strings, beginning_only},
                             *d_prog,
                             d_results,
                             input.size(),
                             stream,
-                            cudf::get_current_device_resource_ref());
+                            mr.as_temporary());
   }
 
   return results;
@@ -97,18 +97,15 @@ std::unique_ptr<column> contains_re(strings_column_view const& input,
   auto [fp, literal] = prog.get_literal_fast_path();
   switch (fp) {
     case literal_fast_path::LITERAL_ONLY: {
-      auto const target =
-        cudf::string_scalar(literal, true, stream, cudf::get_current_device_resource_ref());
+      auto const target = cudf::string_scalar(literal, true, stream, mr.as_temporary());
       return contains(input, target, stream, mr);
     }
     case literal_fast_path::STARTS_WITH: {
-      auto const target =
-        cudf::string_scalar(literal, true, stream, cudf::get_current_device_resource_ref());
+      auto const target = cudf::string_scalar(literal, true, stream, mr.as_temporary());
       return starts_with(input, target, stream, mr);
     }
     case literal_fast_path::ENDS_WITH: {
-      auto const target =
-        cudf::string_scalar(literal, true, stream, cudf::get_current_device_resource_ref());
+      auto const target = cudf::string_scalar(literal, true, stream, mr.as_temporary());
       return ends_with(input, target, stream, mr);
     }
     default: break;
@@ -124,8 +121,7 @@ std::unique_ptr<column> matches_re(strings_column_view const& input,
 {
   auto [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY or fp == literal_fast_path::STARTS_WITH) {
-    auto const target =
-      cudf::string_scalar(literal, true, stream, cudf::get_current_device_resource_ref());
+    auto const target = cudf::string_scalar(literal, true, stream, mr.as_temporary());
     return starts_with(input, target, stream, mr);
   }
 
@@ -139,12 +135,11 @@ std::unique_ptr<column> count_re(strings_column_view const& input,
 {
   auto [fp, literal] = prog.get_literal_fast_path();
   if (fp == literal_fast_path::LITERAL_ONLY) {
-    auto const target =
-      cudf::string_scalar(literal, true, stream, cudf::get_current_device_resource_ref());
+    auto const target = cudf::string_scalar(literal, true, stream, mr.as_temporary());
     return count(input, target, stream, mr);
   }
 
-  auto const d_strings = column_device_view::create(input.parent(), stream);
+  auto const d_strings = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   auto result = count_matches(*d_strings, prog, stream, mr);
   if (input.has_nulls()) {

@@ -95,10 +95,10 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
                                            cudf::memory_resources mr)
 {
   auto const strings_count = input.size();
-  auto const d_strings     = column_device_view::create(input.parent(), stream);
+  auto const d_strings     = column_device_view::create(input.parent(), stream, mr.as_temporary());
 
   // create device object from regex_program
-  auto d_prog = regex_device_builder::create_prog_device(prog, stream);
+  auto d_prog = regex_device_builder::create_prog_device(prog, stream, mr.as_temporary());
 
   // The extract pattern should always include groups.
   auto const groups = d_prog->group_counts();
@@ -130,13 +130,13 @@ std::unique_ptr<column> extract_all_record(strings_column_view const& input,
   auto d_offsets = offsets->view().data<size_type>();
 
   cuda::device_buffer<string_index_pair> indices(
-    stream, cudf::get_current_device_resource_ref(), total_strings, cuda::no_init);
+    stream, mr.get_temporary_mr(), total_strings, cuda::no_init);
 
   launch_for_each_kernel(extract_fn{*d_strings, d_offsets, indices.data()},
                          *d_prog,
                          strings_count,
                          stream,
-                         cudf::get_current_device_resource_ref());
+                         mr.as_temporary());
 
   auto strings_output = cudf::make_strings_column(
     cudf::device_span<string_index_pair const>{indices.data(), indices.size()}, stream, mr);

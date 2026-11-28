@@ -131,7 +131,7 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
   auto d_narep = get_scalar_device_view(const_cast<string_scalar&>(narep));
 
   // Create device views from the strings columns.
-  auto d_table = table_device_view::create(strings_columns, stream);
+  auto d_table = table_device_view::create(strings_columns, stream, mr.as_temporary());
   concat_strings_fn fn{*d_table, d_separator, d_narep, separate_nulls};
   auto [offsets_column, chars] = make_strings_children(fn, strings_count, stream, mr);
 
@@ -217,11 +217,12 @@ std::unique_ptr<column> concatenate(table_view const& strings_columns,
   string_view const invalid_str{nullptr, 0};
   auto const separator_rep = get_scalar_device_view(const_cast<string_scalar&>(separator_narep));
   auto const col_rep       = get_scalar_device_view(const_cast<string_scalar&>(col_narep));
-  auto const separator_col_view_ptr = column_device_view::create(separators.parent(), stream);
-  auto const separator_col_view     = *separator_col_view_ptr;
+  auto const separator_col_view_ptr =
+    column_device_view::create(separators.parent(), stream, mr.as_temporary());
+  auto const separator_col_view = *separator_col_view_ptr;
 
   // Create device views from the strings columns.
-  auto d_table = table_device_view::create(strings_columns, stream);
+  auto d_table = table_device_view::create(strings_columns, stream, mr.as_temporary());
 
   multi_separator_concat_fn mscf{
     *d_table, separator_col_view, separator_rep, col_rep, separate_nulls};

@@ -10,6 +10,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/offsets_iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.cuh>
 #include <cudf/strings/repeat_strings.hpp>
@@ -46,7 +47,7 @@ std::unique_ptr<string_scalar> repeat_string(string_scalar const& input,
   auto buff           = rmm::device_buffer(repeat_times * input.size(), stream, mr.get_output_mr());
 
   // Pull data from the input string into each byte of the output string.
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     iter,
                     iter + repeat_times * str_size,
                     static_cast<char*>(buff.data()),
@@ -148,7 +149,7 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
   // If `repeat_times == 1`, just make a copy of the input.
   if (repeat_times == 1) { return std::make_unique<column>(input.parent(), stream, mr); }
 
-  auto const strings_dv_ptr = column_device_view::create(input.parent(), stream);
+  auto const strings_dv_ptr = column_device_view::create(input.parent(), stream, mr.as_temporary());
   auto const fn = compute_size_and_repeat_fn{*strings_dv_ptr, repeat_times, input.has_nulls()};
 
   auto [offsets_column, chars] =
@@ -225,8 +226,9 @@ std::unique_ptr<column> repeat_strings(strings_column_view const& input,
   auto const strings_count = input.size();
   if (strings_count == 0) { return make_empty_column(type_id::STRING); }
 
-  auto const strings_dv_ptr      = column_device_view::create(input.parent(), stream);
-  auto const repeat_times_dv_ptr = column_device_view::create(repeat_times, stream);
+  auto const strings_dv_ptr = column_device_view::create(input.parent(), stream, mr.as_temporary());
+  auto const repeat_times_dv_ptr =
+    column_device_view::create(repeat_times, stream, mr.as_temporary());
   auto const repeat_times_iter =
     cudf::detail::indexalator_factory::make_input_iterator(repeat_times);
   auto const fn =

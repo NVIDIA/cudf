@@ -10,6 +10,7 @@
 #include <cudf/strings/regex/flags.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/stream>
 #include <cuda_runtime.h>
@@ -56,10 +57,11 @@ class alignas(16) reprog_device {
    *
    * @param prog The regex program to create from
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used to allocate the returned object's device memory
    * @return The program device object
    */
   static std::unique_ptr<reprog_device, std::function<void(reprog_device*)>> create(
-    reprog const& prog, cuda::stream_ref stream);
+    reprog const& prog, cuda::stream_ref stream, cudf::memory_resources mr);
 
   /**
    * @brief Called automatically by the unique_ptr returned from create().

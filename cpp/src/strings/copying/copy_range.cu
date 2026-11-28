@@ -5,6 +5,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/detail/offsets_iterator_factory.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/strings/detail/copy_range.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
@@ -12,8 +13,6 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -58,9 +57,9 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
     std::invalid_argument);
 
   if (target_end == target_begin) { return std::make_unique<column>(target.parent(), stream, mr); }
-  auto source_device_view = column_device_view::create(source.parent(), stream);
+  auto source_device_view = column_device_view::create(source.parent(), stream, mr.as_temporary());
   auto d_source           = *source_device_view;
-  auto target_device_view = column_device_view::create(target.parent(), stream);
+  auto target_device_view = column_device_view::create(target.parent(), stream, mr.as_temporary());
   auto d_target           = *target_device_view;
 
   // create null mask
@@ -91,7 +90,7 @@ std::unique_ptr<column> copy_range(strings_column_view const& source,
   auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
   auto d_chars    = chars_data.data();
   thrust::for_each(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<cudf::size_type>{0},
     cuda::counting_iterator{target.size()},
     [d_source, d_target, source_begin, target_begin, target_end, d_offsets, d_chars] __device__(

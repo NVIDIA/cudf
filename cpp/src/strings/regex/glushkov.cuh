@@ -7,6 +7,7 @@
 #include "common.cuh"
 
 #include <cudf/strings/string_view.cuh>
+#include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/bit>
 #include <cuda/std/array>
@@ -66,7 +67,7 @@ struct gkprog_device {
   gkprog_device& operator=(gkprog_device&&)      = default;
 
   static std::unique_ptr<gkprog_device, std::function<void(gkprog_device*)>> create(
-    gkprog const& prog, cuda::stream_ref stream);
+    gkprog const& prog, cuda::stream_ref stream, cudf::memory_resources mr);
 
   /**
    * @brief Called automatically by the unique_ptr returned from create().

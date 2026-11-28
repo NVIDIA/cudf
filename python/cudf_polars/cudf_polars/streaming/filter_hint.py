@@ -119,6 +119,34 @@ class JoinWithPrefilter(Join):
         )
 
 
+class JoinInputKeys(IR):
+    """
+    Placeholder domain: the key values of the enclosing join's other input.
+
+    Only valid as the domain of a ``PushdownFilterHint`` placed directly on a
+    join input. Lowering resolves it to a :class:`JoinInputDomain` (or drops
+    the hint), so the join projects the keys from the input it materializes
+    anyway. Unlike a domain that references that input, it adds no edge to
+    the plan, so the input does not become shared.
+    """
+
+    __slots__ = ()
+    _non_child = ("schema",)
+    _n_non_child_args = 0
+
+    def __init__(self, schema: Schema):
+        self.schema = schema
+        self._non_child_args = ()
+        self.children = ()
+
+    @classmethod
+    def do_evaluate(
+        cls, *, context: IRExecutionContext
+    ) -> DataFrame:  # pragma: no cover
+        """Not executable: lowering must resolve or drop the hint."""
+        raise NotImplementedError("JoinInputKeys must be resolved during lowering")
+
+
 class PushdownFilterHint(IR):
     """
     Optional join-key filter placed in a logical plan.

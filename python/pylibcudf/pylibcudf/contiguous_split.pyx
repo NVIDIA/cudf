@@ -27,6 +27,7 @@ from pylibcudf.libcudf.contiguous_split cimport (
 )
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.libcudf.table.table_view cimport table_view
+from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 from pylibcudf.libcudf.utilities.span cimport device_span
 
 from rmm.pylibrmm.device_buffer cimport DeviceBuffer
@@ -192,8 +193,12 @@ cdef class ChunkedPack:
         """
         cdef Stream _stream = _get_stream(stream)
         temp_mr = _get_memory_resource(temp_mr)
+        # chunked_pack returns no device memory, so temp_mr is both resources.
         cdef unique_ptr[chunked_pack] obj = chunked_pack.create(
-            input.view(), user_buffer_size, _stream.view().get(), temp_mr.get_mr()
+            input.view(),
+            user_buffer_size,
+            _stream.view().get(),
+            memory_resources(temp_mr.get_mr(), temp_mr.get_mr()),
         )
 
         cdef ChunkedPack out = ChunkedPack.__new__(ChunkedPack)

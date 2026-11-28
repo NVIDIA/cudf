@@ -25,8 +25,63 @@
 #include <cudf_test/column_wrapper.hpp>
 
 #include <cudf/binaryop.hpp>
+#include <cudf/detail/binaryop.hpp>
+#include <cudf/utilities/traits.hpp>
+
+#include <optional>
 
 struct BinopVerifyInputTest : public cudf::test::BaseFixture {};
+
+TEST_F(BinopVerifyInputTest, CommonTypeSelectionPreservesPruningInvariants)
+{
+  // Input-conversion and logical-body pruning rely on these host-selection invariants.
+  // Include output types because they participate in selection and fallback.
+  using cudf::binops::compiled::detail::get_common_type;
+  auto const num_types            = static_cast<int>(cudf::type_id::NUM_TYPE_IDS);
+  int resolved_fixed_point_inputs = 0;
+  int decimal_common_cases        = 0;
+  int decimal_output_cases        = 0;
+  for (int out = 1; out < num_types; ++out) {
+    auto const out_type = cudf::data_type{static_cast<cudf::type_id>(out)};
+    for (int lhs = 1; lhs < num_types; ++lhs) {
+      auto const lhs_type = cudf::data_type{static_cast<cudf::type_id>(lhs)};
+      for (int rhs = 1; rhs < num_types; ++rhs) {
+        auto const rhs_type = cudf::data_type{static_cast<cudf::type_id>(rhs)};
+        auto const common   = get_common_type(out_type, lhs_type, rhs_type);
+        bool const has_fixed_point_input =
+          cudf::is_fixed_point(lhs_type) || cudf::is_fixed_point(rhs_type);
+        if (common.has_value() && has_fixed_point_input) { ++resolved_fixed_point_inputs; }
+        EXPECT_FALSE(common.has_value() && cudf::is_floating_point(*common) &&
+                     has_fixed_point_input)
+          << "output=" << out << ", lhs=" << lhs << ", rhs=" << rhs;
+        // Logical operators require BOOL8 output; connect their decimal common-type
+        // specializations to the inputs rejected by host fixed-point validation.
+        if (out_type.id() == cudf::type_id::BOOL8 && common.has_value() &&
+            cudf::is_fixed_point(*common)) {
+          ++decimal_common_cases;
+          EXPECT_TRUE(has_fixed_point_input) << "lhs=" << lhs << ", rhs=" << rhs;
+        }
+        // Without a decimal operand, TRUE_DIV pruning instead relies on the
+        // support query rejecting the decimal output that selected this common type.
+        if (common.has_value() && cudf::is_fixed_point(*common) && not has_fixed_point_input) {
+          ++decimal_output_cases;
+          EXPECT_FALSE(cudf::binops::is_supported_operation(
+            out_type, lhs_type, rhs_type, cudf::binary_operator::TRUE_DIV))
+            << "output=" << out << ", lhs=" << lhs << ", rhs=" << rhs;
+        }
+      }
+    }
+  }
+  // A broken common-type table must not make the invariant pass vacuously.
+  EXPECT_GT(resolved_fixed_point_inputs, 0);
+  EXPECT_GT(decimal_common_cases, 0);
+  EXPECT_GT(decimal_output_cases, 0);
+  // An unrelated output type must not bypass the input-only fallback.
+  EXPECT_EQ(get_common_type(cudf::data_type{cudf::type_id::STRING},
+                            cudf::data_type{cudf::type_id::DECIMAL32},
+                            cudf::data_type{cudf::type_id::DECIMAL32}),
+            std::optional{cudf::data_type{cudf::type_id::DECIMAL32}});
+}
 
 TEST_F(BinopVerifyInputTest, Vector_Scalar_ErrorOutputVectorType)
 {

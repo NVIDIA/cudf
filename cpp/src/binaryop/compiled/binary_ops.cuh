@@ -10,6 +10,7 @@
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_view.hpp>
+#include <cudf/detail/utilities/assert.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/unary.hpp>
@@ -35,6 +36,8 @@ CUDF_HOST_DEVICE constexpr bool is_bool_result()
  * @brief Type casts each element of the column to `CastType`
  *
  */
+// get_common_type never selects a floating common type for fixed-point inputs,
+// so fixed-to-floating conversions cannot be reached by this input accessor.
 template <typename CastType>
 struct type_casted_accessor {
   template <typename Element>
@@ -46,8 +49,6 @@ struct type_casted_accessor {
       auto const element = col.element<Element>(is_scalar ? 0 : i);
       if constexpr (cuda::std::is_convertible_v<Element, CastType>) {
         return static_cast<CastType>(element);
-      } else if constexpr (is_fixed_point<Element>() && cuda::std::is_floating_point_v<CastType>) {
-        return convert_fixed_to_floating<CastType>(element);
       } else if constexpr (is_fixed_point<CastType>() && cuda::std::is_floating_point_v<Element>) {
         return convert_floating_to_fixed<CastType>(element, numeric::scale_type{0});
       }
@@ -88,6 +89,17 @@ struct typed_casted_writer {
 
 // Functors to launch only defined operations.
 
+// Host fixed-point validation rejects these operations before kernel launch,
+// even when conversion operators make the functor invocable.
+template <typename BinaryOperator, typename TypeLhs, typename TypeRhs>
+inline constexpr bool is_unsupported_fixed_point_op =
+  (is_fixed_point<TypeLhs>() or is_fixed_point<TypeRhs>()) and
+  (cuda::std::is_same_v<BinaryOperator, ops::LogicalAnd> or
+   cuda::std::is_same_v<BinaryOperator, ops::LogicalOr> or
+   cuda::std::is_same_v<BinaryOperator, ops::NullLogicalAnd> or
+   cuda::std::is_same_v<BinaryOperator, ops::NullLogicalOr> or
+   cuda::std::is_same_v<BinaryOperator, ops::TrueDiv>);
+
 /**
  * @brief Functor to launch only defined operations with common type.
  *
@@ -105,11 +117,11 @@ struct ops_wrapper {
   template <typename TypeCommon>
   __forceinline__ __device__ void operator()(size_type i)
   {
-    if constexpr (cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
-      TypeCommon x =
-        type_dispatcher(lhs.type(), type_casted_accessor<TypeCommon>{}, i, lhs, is_lhs_scalar);
-      TypeCommon y =
-        type_dispatcher(rhs.type(), type_casted_accessor<TypeCommon>{}, i, rhs, is_rhs_scalar);
+    if constexpr (not is_unsupported_fixed_point_op<BinaryOperator, TypeCommon, TypeCommon> and
+                  cuda::std::is_invocable_v<BinaryOperator, TypeCommon, TypeCommon>) {
+      using accessor = type_casted_accessor<TypeCommon>;
+      TypeCommon x   = type_dispatcher(lhs.type(), accessor{}, i, lhs, is_lhs_scalar);
+      TypeCommon y   = type_dispatcher(rhs.type(), accessor{}, i, rhs, is_rhs_scalar);
       if constexpr (cuda::std::is_same_v<BinaryOperator, ops::TrueDiv> and
                     cuda::std::is_same_v<TypeCommon, float>) {
         // TrueDiv divides in double. When the result is stored as float anyway, a float division
@@ -146,6 +158,8 @@ struct ops_wrapper {
         out.element<decltype(result)>(i) = result;
       else
         type_dispatcher(out.type(), typed_casted_writer<decltype(result)>{}, i, out, result);
+    } else if constexpr (is_unsupported_fixed_point_op<BinaryOperator, TypeCommon, TypeCommon>) {
+      cudf_assert(false && "Unsupported fixed-point operation passed host validation");
     }
     (void)i;
   }
@@ -166,7 +180,8 @@ struct ops2_wrapper {
   template <typename TypeLhs, typename TypeRhs>
   __device__ void operator()(size_type i)
   {
-    if constexpr (!has_common_type_v<TypeLhs, TypeRhs> and
+    if constexpr (not is_unsupported_fixed_point_op<BinaryOperator, TypeLhs, TypeRhs> and
+                  not has_common_type_v<TypeLhs, TypeRhs> and
                   cuda::std::is_invocable_v<BinaryOperator, TypeLhs, TypeRhs>) {
       TypeLhs x   = lhs.element<TypeLhs>(is_lhs_scalar ? 0 : i);
       TypeRhs y   = rhs.element<TypeRhs>(is_rhs_scalar ? 0 : i);
@@ -196,6 +211,8 @@ struct ops2_wrapper {
         out.element<decltype(result)>(i) = result;
       else
         type_dispatcher(out.type(), typed_casted_writer<decltype(result)>{}, i, out, result);
+    } else if constexpr (is_unsupported_fixed_point_op<BinaryOperator, TypeLhs, TypeRhs>) {
+      cudf_assert(false && "Unsupported fixed-point operation passed host validation");
     }
     (void)i;
   }
@@ -258,7 +275,7 @@ void apply_binary_op(mutable_column_view& out,
                      bool is_rhs_scalar,
                      cuda::stream_ref stream)
 {
-  auto common_dtype = get_common_type(out.type(), lhs.type(), rhs.type());
+  auto common_dtype = detail::get_common_type(out.type(), lhs.type(), rhs.type());
 
   auto lhsd = column_device_view::create(lhs, stream);
   auto rhsd = column_device_view::create(rhs, stream);

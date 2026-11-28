@@ -173,11 +173,22 @@ std::unique_ptr<column> make_dictionary_from_scalar(scalar const& s,
       0);
   }
   CUDF_EXPECTS(size >= 0, "Column size cannot be negative.");
-  CUDF_EXPECTS(s.is_valid(stream), "cannot create a dictionary with a null key");
   auto const temp_mr = mr.get_temporary_mr();
+  // indices are all zero; for a null scalar they are never dereferenced
+  // but are kept in-bounds of the parent size so all views remain valid
+  auto indices =
+    make_column_from_scalar(numeric_scalar<int32_t>(0, true, stream, temp_mr), size, stream, mr);
+  if (!s.is_valid(stream)) {
+    // all-null dictionary: empty keys and every row null
+    return make_dictionary_column(
+      empty_like(s),
+      std::move(indices),
+      cudf::create_null_mask(size, cudf::mask_state::ALL_NULL, stream, mr),
+      size);
+  }
   return make_dictionary_column(
     make_column_from_scalar(s, 1, stream, mr),
-    make_column_from_scalar(numeric_scalar<int32_t>(0, true, stream, temp_mr), size, stream, mr),
+    std::move(indices),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr),
     0);
 }

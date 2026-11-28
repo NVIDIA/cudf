@@ -611,7 +611,8 @@ std::unique_ptr<column> make_column_from_scalar(
  * The output column will have keys of type `s.type()`
  * The output column will be empty if `size==0`.
  *
- * @throw cudf::logic_error if `s.is_valid()==false`
+ * If `s` is null, the output column will have `size` null rows,
+ * an empty keys child of type `s.type()`, and an indices child of `size` rows.
  *
  * @param[in] s The scalar to use for values in the column.
  * @param[in] size The number of rows for the output column.

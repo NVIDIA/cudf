@@ -12,6 +12,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/copying.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -400,10 +401,32 @@ TEST_F(ColumnFactoryTest, EmptyDictionaryFromStringScalar)
   EXPECT_EQ(cudf::dictionary_column_view(column->view()).keys().type(), value.type());
 }
 
-TEST_F(ColumnFactoryTest, DictionaryFromStringScalarError)
+TEST_F(ColumnFactoryTest, DictionaryFromNullNumericScalar)
 {
-  cudf::string_scalar value("hello", false);
-  EXPECT_THROW(cudf::make_dictionary_from_scalar(value, 1), cudf::logic_error);
+  cudf::numeric_scalar<int64_t> value(0, false);
+  auto column = cudf::make_dictionary_from_scalar(value, 3);
+  EXPECT_EQ(3, column->size());
+  EXPECT_EQ(3, column->null_count());
+  auto const dview = cudf::dictionary_column_view(column->view());
+  EXPECT_EQ(0, dview.keys_size());
+  EXPECT_EQ(dview.keys().type(), value.type());
+
+  auto const expected = cudf::test::fixed_width_column_wrapper<int64_t>({0, 0, 0}, {0, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, cudf::dictionary::decode(dview)->view());
+}
+
+TEST_F(ColumnFactoryTest, DictionaryFromNullStringScalar)
+{
+  cudf::string_scalar value("", false);
+  auto column = cudf::make_dictionary_from_scalar(value, 3);
+  EXPECT_EQ(3, column->size());
+  EXPECT_EQ(3, column->null_count());
+  auto const dview = cudf::dictionary_column_view(column->view());
+  EXPECT_EQ(0, dview.keys_size());
+  EXPECT_EQ(dview.keys().type(), value.type());
+
+  auto const expected = cudf::test::strings_column_wrapper({"", "", ""}, {0, 0, 0});
+  CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, cudf::dictionary::decode(dview)->view());
 }
 
 template <typename T>

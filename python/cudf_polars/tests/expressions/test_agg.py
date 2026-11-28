@@ -180,6 +180,30 @@ def test_max_min_by_float_nan(engine: pl.GPUEngine, expr: str, by) -> None:
 @pytest.mark.parametrize(
     "by",
     [
+        [0.0, -0.0, -1.0],
+        [-0.0, 0.0, -1.0],
+        [0.0, -0.0, 1.0],
+        [-0.0, 0.0, 1.0],
+        [None, -0.0, 0.0],
+        [float("nan"), 0.0, -0.0],
+    ],
+)
+def test_max_min_by_signed_zero(engine: pl.GPUEngine, expr: str, by) -> None:
+    # Polars treats -0.0 and +0.0 as equal and selects the first of tied rows
+    df = pl.LazyFrame(
+        {
+            "a": pl.Series([10, 20, 30], dtype=pl.Int64),
+            "b": pl.Series(by, dtype=pl.Float64),
+        }
+    )
+    q = df.select(getattr(pl.col("a"), expr)("b"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("expr", ["max_by", "min_by"])
+@pytest.mark.parametrize(
+    "by",
+    [
         pl.col("b").filter(pl.col("b") > 20),
         pl.col("b").head(2),
     ],
@@ -422,6 +446,25 @@ def test_arg_max_min(engine: pl.GPUEngine, agg: str) -> None:
         }
     )
     q = df.select(getattr(pl.col("a"), agg)(), getattr(pl.col("b"), agg)())
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("agg", ["arg_max", "arg_min"])
+@pytest.mark.parametrize(
+    "data",
+    [
+        [1.0, float("nan"), 3.0, None],
+        [None, float("nan"), float("nan")],
+        [float("nan"), float("inf")],
+        [float("nan"), float("-inf")],
+        [None, 0.0, 1.0, -0.0],
+        [None, -0.0, -1.0, 0.0],
+    ],
+)
+def test_arg_max_min_nan(engine: pl.GPUEngine, agg: str, data: list) -> None:
+    # NaN is ignored unless every non-null value is NaN
+    df = pl.LazyFrame({"a": pl.Series(data, dtype=pl.Float64)})
+    q = df.select(getattr(pl.col("a"), agg)())
     assert_gpu_result_equal(q, engine=engine)
 
 

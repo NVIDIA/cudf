@@ -167,6 +167,7 @@ ConfigureTest(
   groupby/merge_lists_tests.cpp
   groupby/merge_sets_tests.cpp
   groupby/min_scan_tests.cpp
+  groupby/minmax_nan_tests.cpp
   groupby/nth_element_tests.cpp
   groupby/nunique_tests.cpp
   groupby/product_scan_tests.cpp
@@ -257,6 +258,7 @@ ConfigureTest(
   reductions/ewm_tests.cpp
   reductions/host_udf_example_tests.cu
   reductions/list_rank_test.cpp
+  reductions/minmax_nan_tests.cpp
   reductions/rank_tests.cpp
   reductions/reduction_tests.cpp
   reductions/scan_tests.cpp

@@ -52,7 +52,7 @@ def _run_chunk(source, consumer, br, mode):
     )
     # Keep producer-side deallocation after the final consumer access.
     plc.experimental.join_streams([consumer], producer)
-    assert wrapped.shape() == source.shape()
+    assert wrapped.shape == source.shape
     return wrapped
 
 

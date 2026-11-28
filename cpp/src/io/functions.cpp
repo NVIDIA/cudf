@@ -741,6 +741,7 @@ table_input_metadata::table_input_metadata(table_metadata const& metadata)
       auto col_meta = column_in_metadata{name.name};
       if (name.is_nullable.has_value()) { col_meta.set_nullability(name.is_nullable.value()); }
       if (name.is_binary.value_or(false)) { col_meta.set_output_as_binary(true); }
+      if (name.is_file.value_or(false)) { col_meta.set_struct_column_as_file(); }
       if (name.type_length.has_value()) { col_meta.set_type_length(name.type_length.value()); }
       std::ranges::transform(name.children, std::back_inserter(col_meta.children), process_node);
       return col_meta;

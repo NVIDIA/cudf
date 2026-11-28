@@ -608,10 +608,11 @@ class column_in_metadata {
   friend table_input_metadata;
   std::string _name = "";
   std::optional<bool> _nullable;
-  bool _list_column_is_map  = false;
-  bool _use_int96_timestamp = false;
-  bool _output_as_binary    = false;
-  bool _skip_compression    = false;
+  bool _list_column_is_map    = false;
+  bool _struct_column_is_file = false;
+  bool _use_int96_timestamp   = false;
+  bool _output_as_binary      = false;
+  bool _skip_compression      = false;
   std::optional<uint8_t> _decimal_precision;
   std::optional<int32_t> _parquet_field_id;
   std::optional<int32_t> _type_length;
@@ -672,6 +673,22 @@ class column_in_metadata {
   column_in_metadata& set_list_column_as_map() noexcept
   {
     _list_column_is_map = true;
+    return *this;
+  }
+
+  /**
+   * @brief Specify that this struct column should be encoded with the Parquet FILE logical type
+   *
+   * The struct children must be a subset of `uri` (string), `offset` (int64), `size` (int64),
+   * `content_type` (string), `checksum` (string) and `inline` (string or list<uint8>), in any
+   * order. All children are written as nullable and `inline` is written as binary. This option is
+   * invalid otherwise
+   *
+   * @return this for chaining
+   */
+  column_in_metadata& set_struct_column_as_file() noexcept
+  {
+    _struct_column_is_file = true;
     return *this;
   }
 
@@ -820,6 +837,14 @@ class column_in_metadata {
    * @return Boolean indicating whether this column is to be encoded as a map
    */
   [[nodiscard]] bool is_map() const noexcept { return _list_column_is_map; }
+
+  /**
+   * @brief If this is the metadata of a struct column, returns whether it is to be encoded with
+   * the Parquet FILE logical type.
+   *
+   * @return Boolean indicating whether this column is to be encoded as a FILE
+   */
+  [[nodiscard]] bool is_file() const noexcept { return _struct_column_is_file; }
 
   /**
    * @brief Get whether to encode this timestamp column using deprecated int96 physical type

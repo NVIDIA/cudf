@@ -47,6 +47,7 @@
 #include <thrust/fill.h>
 
 #include <algorithm>
+#include <array>
 #include <concepts>
 #include <cstring>
 #include <format>
@@ -615,6 +616,22 @@ struct leaf_schema_fn {
 };
 
 /**
+ * @brief Name and cudf type of a field allowed in a Parquet FILE logical type group
+ */
+struct file_field {
+  std::string_view name;
+  type_id type;
+};
+
+/// Fields allowed in a Parquet FILE logical type group. `inline` may also be a list<uint8>
+constexpr std::array<file_field, 6> file_fields{{{"uri", type_id::STRING},
+                                                 {"offset", type_id::INT64},
+                                                 {"size", type_id::INT64},
+                                                 {"content_type", type_id::STRING},
+                                                 {"checksum", type_id::STRING},
+                                                 {"inline", type_id::STRING}}};
+
+/**
  * @brief Construct schema from input columns and per-column input options
  *
  * Recursively traverses through linked_columns and corresponding metadata to construct schema tree.
@@ -738,6 +755,9 @@ std::vector<schema_tree_node> construct_parquet_schema_tree(
         }
       };
 
+      CUDF_EXPECTS(not col_meta.is_file() or col->type().id() == type_id::STRUCT,
+                   "Only struct columns can be encoded with the Parquet FILE logical type");
+
       // There is a special case for a list<int8> column with one byte column child. This column can
       // have a special flag that indicates we write this out as binary instead of a list. This is a
       // more efficient storage mechanism for a single-depth list of bytes, but is a departure from
@@ -790,6 +810,39 @@ std::vector<schema_tree_node> construct_parquet_schema_tree(
         // }
         CUDF_EXPECTS(col->children.size() == static_cast<size_t>(col_meta.num_children()),
                      "Mismatch in number of child columns between input table and metadata");
+        if (col_meta.is_file()) {
+          // FILE fields are matched by name and may be any subset in any order. All fields must
+          // be OPTIONAL and `inline` must be an unannotated BYTE_ARRAY
+          std::array<bool, file_fields.size()> seen{};
+          for (size_t i = 0; i < col->children.size(); ++i) {
+            auto const& child = col->children[i];
+            auto& child_meta  = col_meta.child(i);
+            auto const& name  = child_meta.get_name();
+            auto const field =
+              std::ranges::find(file_fields, std::string_view{name}, &file_field::name);
+            CUDF_EXPECTS(field != file_fields.end(), "Invalid FILE column field: " + name);
+            auto& is_seen = seen[std::ranges::distance(file_fields.begin(), field)];
+            CUDF_EXPECTS(not is_seen, "Duplicate FILE column field: " + name);
+            is_seen = true;
+
+            auto const is_inline = field->name == "inline";
+            CUDF_EXPECTS(
+              child->type().id() == field->type or (is_inline and is_last_list_child(child)),
+              "Invalid type for FILE column field: " + name);
+            if (is_inline) {
+              CUDF_EXPECTS(not child_meta.is_type_length_set(),
+                           "FILE column field `inline` cannot have a fixed type length");
+              child_meta.set_output_as_binary(true);
+            } else if (field->type == type_id::STRING) {
+              CUDF_EXPECTS(not child_meta.is_enabled_output_as_binary(),
+                           "FILE column field cannot be written as binary: " + name);
+            }
+            CUDF_EXPECTS(not child_meta.is_nullability_defined() or child_meta.nullable(),
+                         "FILE column field must be nullable: " + name);
+            child_meta.set_nullability(true);
+          }
+          schema[struct_node_index].logical_type = LogicalType{LogicalType::FILE};
+        }
         for (size_t i = 0; i < col->children.size(); ++i) {
           add_schema(col->children[i], col_meta.child(i), struct_node_index);
         }

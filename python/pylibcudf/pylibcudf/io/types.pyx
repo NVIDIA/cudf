@@ -166,6 +166,18 @@ cdef class ColumnInMetadata:
         dereference(self.c_obj).set_list_column_as_map()
         return self
 
+    cpdef ColumnInMetadata set_struct_column_as_file(self):
+        """
+        Specify that this struct column should be encoded with the Parquet
+        FILE logical type in the written file.
+
+        Returns
+        -------
+        ColumnInMetadata
+        """
+        dereference(self.c_obj).set_struct_column_as_file()
+        return self
+
     cpdef ColumnInMetadata set_int96_timestamps(self, bool req):
         """
         Specifies whether this timestamp column should be encoded using

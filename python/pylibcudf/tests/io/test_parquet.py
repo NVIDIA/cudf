@@ -1612,6 +1612,140 @@ def test_file_metadata_schema_element_arrow_type() -> None:
     assert [element.arrow_type for element in from_bytes.schema] == expected
 
 
+def _write_parquet_file_columns(
+    pa_table: pa.Table, non_nullable_child: bool = False
+) -> io.BytesIO:
+    """Write every column of ``pa_table`` with the Parquet FILE flag set."""
+    plc_table = plc.Table.from_arrow(pa_table)
+    metadata = plc.io.types.TableInputMetadata(plc_table)
+    for col_meta, field in zip(
+        metadata.column_metadata, pa_table.schema, strict=True
+    ):
+        col_meta.set_name(field.name).set_struct_column_as_file()
+        if pa.types.is_struct(field.type):
+            for i, child in enumerate(field.type):
+                col_meta.child(i).set_name(child.name)
+        if non_nullable_child:
+            col_meta.child(0).set_nullability(False)
+    sink = io.BytesIO()
+    plc.io.parquet.write_parquet(
+        plc.io.parquet.ParquetWriterOptions.builder(
+            plc.io.SinkInfo([sink]), plc_table
+        )
+        .metadata(metadata)
+        .build()
+    )
+    return sink
+
+
+def _assert_file_logical_type_groups(
+    sink: io.BytesIO, groups: dict[str, list[str]]
+) -> None:
+    """Assert each named group is a FILE group with the given children.
+
+    FILE children must be OPTIONAL, `inline` must be an unannotated
+    BYTE_ARRAY, `offset`/`size` INT64 and the rest STRING BYTE_ARRAYs.
+    """
+    pm = plc.io.parquet_metadata
+    sink.seek(0)
+    schema = pm.read_parquet_footers(plc.io.SourceInfo([sink]))[0].schema
+    for name, child_names in groups.items():
+        (group,) = [e for e in schema if e.name == name]
+        assert group.logical_type.type == pm.LogicalTypeId.FILE
+        children = [schema[i] for i in group.children_idx]
+        assert [child.name for child in children] == child_names
+        for child in children:
+            assert child.repetition_type == pm.FieldRepetitionType.OPTIONAL
+            if child.name in ("offset", "size"):
+                assert child.type == pm.PhysicalType.INT64
+            elif child.name == "inline":
+                assert child.type == pm.PhysicalType.BYTE_ARRAY
+                assert child.logical_type is None
+            else:
+                assert child.type == pm.PhysicalType.BYTE_ARRAY
+                assert child.logical_type.type == pm.LogicalTypeId.STRING
+
+
+def test_write_parquet_file_logical_type() -> None:
+    all_fields = [
+        ("checksum", pa.string()),
+        ("inline", pa.list_(pa.uint8())),
+        ("size", pa.int64()),
+        ("uri", pa.string()),
+        ("content_type", pa.string()),
+        ("offset", pa.int64()),
+    ]
+    pa_table = pa.table(
+        {
+            "inline_only": pa.array(
+                [{"inline": "a"}, {"inline": None}, None],
+                type=pa.struct([("inline", pa.string())]),
+            ),
+            "external_range": pa.array(
+                [
+                    {"uri": "s3://a", "offset": 0, "size": 3},
+                    {"uri": "s3://b", "offset": 16, "size": 4},
+                    {"uri": "s3://c", "offset": None, "size": None},
+                ],
+                type=pa.struct(
+                    [
+                        ("uri", pa.string()),
+                        ("offset", pa.int64()),
+                        ("size", pa.int64()),
+                    ]
+                ),
+            ),
+            "all_fields": pa.array(
+                [
+                    {"inline": [0xFF, 0x00], "uri": "s3://a"},
+                    {"uri": "s3://b", "offset": 1, "size": 2},
+                    {"content_type": "image/png", "checksum": "sha256:00"},
+                ],
+                type=pa.struct(all_fields),
+            ),
+        }
+    )
+    _assert_file_logical_type_groups(
+        _write_parquet_file_columns(pa_table),
+        {
+            "inline_only": ["inline"],
+            "external_range": ["uri", "offset", "size"],
+            "all_fields": [name for name, _ in all_fields],
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "column,non_nullable_child,match",
+    [
+        (pa.array([{"url": "s3://a"}]), False, "Invalid FILE column field"),
+        (
+            pa.StructArray.from_arrays(
+                [pa.array(["s3://a"]), pa.array(["s3://b"])],
+                names=["uri", "uri"],
+            ),
+            False,
+            "Duplicate FILE column field",
+        ),
+        (
+            pa.array([{"offset": 1}], pa.struct([("offset", pa.int32())])),
+            False,
+            "Invalid type for FILE column field",
+        ),
+        (pa.array([{"uri": "s3://a"}]), True, "must be nullable"),
+        (pa.array(["s3://a"]), False, "Only struct columns"),
+    ],
+    ids=["unknown", "duplicate", "wrong_type", "non_nullable", "non_struct"],
+)
+def test_write_parquet_file_logical_type_invalid(
+    column, non_nullable_child, match
+) -> None:
+    with pytest.raises(RuntimeError, match=match):
+        _write_parquet_file_columns(
+            pa.table({"file": column}), non_nullable_child
+        )
+
+
 def test_file_metadata_schema_without_field_ids() -> None:
     tables = [
         pa.table({"a": [1, 2, 3], "b": ["x", "y", "z"]}),

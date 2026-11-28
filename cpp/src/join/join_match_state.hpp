@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <cudf/hashing.hpp>
 #include <cudf/join/join.hpp>
 #include <cudf/utilities/error.hpp>
 
@@ -50,14 +51,16 @@ struct join_match_state {
 };
 
 /**
- * @brief Hash join state: the matching build-side group of each left row
+ * @brief Hash join state: the hash of each left row
  */
 struct hash_join_match_state final : join_match_state {
-  hash_join_match_state(void const* owner, join_kind kind, cuda::device_buffer<size_type> groups)
-    : join_match_state{owner, kind}, groups{std::move(groups)}
+  hash_join_match_state(void const* owner,
+                        join_kind kind,
+                        cuda::device_buffer<hash_value_type> hashes)
+    : join_match_state{owner, kind}, hashes{std::move(hashes)}
   {
   }
 
-  cuda::device_buffer<size_type> groups;  ///< Matching group of each left row
+  cuda::device_buffer<hash_value_type> hashes;  ///< Hash of each left row
 };
 }  // namespace cudf::detail

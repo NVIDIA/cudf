@@ -7,6 +7,7 @@
 
 #include <cudf/detail/device_scalar.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/row_operator/equality.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -37,7 +38,9 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
 
   auto total_matches =
     cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_temporary_mr());
-  probe(Join, left, {}, {}, total_matches.data(), {}, nullptr, stream);
+  auto const preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_temporary_mr());
+  probe(Join, left, preprocessed_left, {}, {}, total_matches.data(), {}, nullptr, stream);
   return static_cast<std::size_t>(total_matches.value(stream));
 }
 
@@ -55,16 +58,19 @@ std::size_t hash_join<Hasher>::join_size(cudf::table_view const& left,
 
   auto total_matches =
     cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_output_mr());
-  auto matched_groups = cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
+  auto matched_rows = cudf::detail::make_zeroed_device_buffer_async<cuda::std::uint32_t>(
     _right.num_rows(), stream, mr.get_output_mr());
   auto matched_build_rows =
     cudf::detail::device_scalar<cuda::std::uint64_t>(0, stream, mr.get_output_mr());
+  auto const preprocessed_left =
+    cudf::detail::row::equality::preprocessed_table::create(left, stream, mr.get_output_mr());
   probe(join_kind::FULL_JOIN,
         left,
+        preprocessed_left,
         {},
         {},
         total_matches.data(),
-        matched_groups,
+        matched_rows,
         matched_build_rows.data(),
         stream);
 

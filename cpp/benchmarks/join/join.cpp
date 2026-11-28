@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -102,6 +102,76 @@ void nvbench_inner_join_selectivity(
   BM_join<false, join_t::HASH, NullEquality>(state, dtypes, join, 1, selectivity);
 }
 
+// Times the phases of a hash join separately: building the hash table, counting the matches,
+// retrieving the matched row indices from a match context, and the whole inner join.
+template <bool Nullable, cudf::null_equality NullEquality, data_type DataType>
+void nvbench_hash_join_phase(nvbench::state& state,
+                             nvbench::type_list<nvbench::enum_type<Nullable>,
+                                                nvbench::enum_type<NullEquality>,
+                                                nvbench::enum_type<DataType>>)
+{
+  if (should_skip_large_sizes(state)) { return; }
+
+  auto const num_keys     = state.get_int64("num_keys");
+  auto const right_size   = static_cast<size_t>(state.get_int64("right_size"));
+  auto const left_size    = static_cast<size_t>(state.get_int64("left_size"));
+  auto const multiplicity = static_cast<int>(state.get_int64("multiplicity"));
+  auto const selectivity  = state.get_float64("selectivity");
+  auto const load_factor  = state.get_float64("load_factor");
+  auto const phase        = state.get_string("phase");
+  if (static_cast<size_t>(multiplicity) > right_size) {
+    state.skip("multiplicity exceeds right_size");
+    return;
+  }
+
+  auto dtypes = cycle_dtypes(get_type_or_group(static_cast<int32_t>(DataType)), num_keys);
+  auto [build_table, probe_table] =
+    generate_input_tables<Nullable>(dtypes, right_size, left_size, 0, multiplicity, selectivity);
+  auto const build_keys = build_table->view();
+  auto const probe_keys = probe_table->view();
+
+  state.set_cuda_stream(nvbench::make_cuda_stream_view(cudf::get_default_stream().get()));
+  auto const build = [&] {
+    return cudf::hash_join(build_keys, cudf::nullable_join::YES, NullEquality, load_factor);
+  };
+  if (phase == "build") {
+    auto const mem_stats_logger = cudf::memory_stats_logger();
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch&) { [[maybe_unused]] auto const hash_join = build(); });
+    state.add_buffer_size(
+      mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+    return;
+  }
+
+  auto const hash_join = build();
+  // Only the retrieve phase consumes a match context.
+  auto const context = cudf::join_partition_context{
+    phase == "retrieve"
+      ? std::make_unique<cudf::join_match_context>(hash_join.inner_join_match_context(probe_keys))
+      : nullptr,
+    0,
+    probe_keys.num_rows()};
+  // The peak of a probe phase excludes the hash table and the match context built above.
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  if (phase == "count") {
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+      [[maybe_unused]] auto const size = hash_join.inner_join_size(probe_keys);
+    });
+  } else if (phase == "retrieve") {
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+      [[maybe_unused]] auto const result = hash_join.partitioned_inner_join(context);
+    });
+  } else if (phase == "join") {
+    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) {
+      [[maybe_unused]] auto const result = hash_join.inner_join(probe_keys);
+    });
+  } else {
+    CUDF_FAIL("unrecognized phase: " + phase);
+  }
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
+}
+
 NVBENCH_BENCH_TYPES(nvbench_inner_join,
                     NVBENCH_TYPE_AXES(JOIN_NULLABLE_RANGE,
                                       DEFAULT_JOIN_NULL_EQUALITY,
@@ -144,4 +214,19 @@ NVBENCH_BENCH_TYPES(nvbench_inner_join_selectivity,
   .add_int64_axis("right_size", {100'000})
   .add_int64_axis("num_probes", {4})
   .add_float64_axis("selectivity", JOIN_SELECTIVITY_RANGE)
+  .add_int64_axis("skip_large_sizes", {1});
+
+NVBENCH_BENCH_TYPES(nvbench_hash_join_phase,
+                    NVBENCH_TYPE_AXES(JOIN_NULLABLE_RANGE,
+                                      DEFAULT_JOIN_NULL_EQUALITY,
+                                      JOIN_DATATYPES))
+  .set_name("hash_join_phase")
+  .set_type_axes_names({"Nullable", "NullEquality", "DataType"})
+  .add_string_axis("phase", {"build", "count", "retrieve", "join"})
+  .add_int64_axis("num_keys", {1})
+  .add_int64_axis("left_size", JOIN_SIZE_RANGE)
+  .add_int64_axis("right_size", JOIN_SIZE_RANGE)
+  .add_int64_axis("multiplicity", {1, 100})
+  .add_float64_axis("selectivity", {0.3})
+  .add_float64_axis("load_factor", {0.5})
   .add_int64_axis("skip_large_sizes", {1});

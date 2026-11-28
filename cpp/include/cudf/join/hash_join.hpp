@@ -102,8 +102,8 @@ class hash_join {
    * @param has_nulls Flag to indicate if there exists any nulls in the `right` table or
    *                  any `left` table that will be used later for join
    * @param compare_nulls Controls whether null join-key values should match or not
-   * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% desired
-   * occupancy.
+   * @param load_factor Scales the average number of build rows per hash bucket, which is 16
+   * times this value. Must be in (0,1].
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the internal hash table
    */
@@ -272,8 +272,9 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context holding the per-row match counts and caching the matching
-   *         groups that partitioned_inner_join() reuses
+   * @return A join_match_context holding the per-row match counts and caching the left row
+   *         hashes that partitioned_inner_join() reuses. `left` must stay valid until the last
+   *         partitioned join, which compares its rows again
    */
   [[nodiscard]] cudf::join_match_context inner_join_match_context(
     cudf::table_view const& left,
@@ -297,8 +298,9 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context holding the per-row match counts and caching the matching
-   *         groups that partitioned_left_join() reuses
+   * @return A join_match_context holding the per-row match counts and caching the left row
+   *         hashes that partitioned_left_join() reuses. `left` must stay valid until the last
+   *         partitioned join, which compares its rows again
    */
   [[nodiscard]] cudf::join_match_context left_join_match_context(
     cudf::table_view const& left,
@@ -322,8 +324,9 @@ class hash_join {
    * @param stream CUDA stream used for device memory operations and kernel launches
    * @param mr Device memory resource used to allocate the result device memory
    *
-   * @return A join_match_context holding the per-row match counts and caching the matching
-   *         groups that partitioned_full_join() reuses
+   * @return A join_match_context holding the per-row match counts and caching the left row
+   *         hashes that partitioned_full_join() reuses. `left` must stay valid until the last
+   *         partitioned join, which compares its rows again
    */
   [[nodiscard]] cudf::join_match_context full_join_match_context(
     cudf::table_view const& left,

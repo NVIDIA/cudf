@@ -911,13 +911,13 @@ def test_convert_arrow_dtype(unit, to_tz):
     ps = pd.Series(
         ["2023-01-01 03:00", None, "2023-06-15 12:00"],
         dtype=pd.ArrowDtype(pa.timestamp(unit)),
-    ).dt.tz_localize("US/Pacific")
+    ).dt.tz_localize("America/Los_Angeles")
     gs = cudf.from_pandas(
         pd.Series(
             ["2023-01-01 03:00", None, "2023-06-15 12:00"],
             dtype=pd.ArrowDtype(pa.timestamp(unit)),
         )
-    ).dt.tz_localize("US/Pacific")
+    ).dt.tz_localize("America/Los_Angeles")
 
     expect = ps.dt.tz_convert(to_tz)
     got = gs.dt.tz_convert(to_tz)
@@ -934,8 +934,8 @@ def test_localize_arrow_dtype(unit):
     )
     gs = cudf.from_pandas(ps)
 
-    expect = ps.dt.tz_localize("US/Pacific")
-    got = gs.dt.tz_localize("US/Pacific")
+    expect = ps.dt.tz_localize("America/Los_Angeles")
+    got = gs.dt.tz_localize("America/Los_Angeles")
     assert_eq(expect, got)
 
 

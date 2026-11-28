@@ -6,7 +6,6 @@
 #pragma once
 
 #include "groupby/hash/hash_csr_kernels.cuh"
-#include "warp_aggregate.hpp"
 
 #include <cudf/detail/cuco_helpers.hpp>
 #include <cudf/detail/row_operator/equality.cuh>
@@ -203,31 +202,25 @@ auto build_cross_comparators(
   return cudf::detail::make_device_buffer(h_eqs, stream, mr.get_output_mr());
 }
 
-/*
- * Maps slot bits to aggregate rows. With several partials, rows of the same thread block share
- * one partial so concurrent blocks spread their atomics over different copies of each group.
- */
-struct resolve_aggregate_targets {
+/// Maps slot bits to dense group IDs.
+struct resolve_group_ids {
   size_type const* slots;
-  size_type* targets;
-  size_type capacity;
-  size_type partials_per_group;
+  size_type* group_ids;
 
   __device__ void operator()(size_type row) const
   {
-    auto const slot = cuda::std::bit_cast<cuda::std::uint32_t>(targets[row]);
+    auto const slot = cuda::std::bit_cast<cuda::std::uint32_t>(group_ids[row]);
     if (slot == detail::hash::hash_csr_no_slot) { return; }
-    auto const partial = (row / partial_aggregation_block_size) % partials_per_group;
-    targets[row]       = partial * capacity + slots[slot];
+    group_ids[row] = slots[slot];
   }
 };
 
-/// The impl struct for streaming_groupby. Defined in impl.cu.
-struct streaming_groupby::impl {
-  std::vector<size_type> _key_indices;
+/*
+ * Aggregate state that does not depend on keys: the requests, the aggregate storage, and the
+ * events that order its uses across streams.
+ */
+struct aggregate_state {
   std::vector<streaming_aggregation_request> _requests_clone;
-  size_type _max_distinct_keys;
-  null_policy _null_handling;
   cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
 
   /*
@@ -236,7 +229,7 @@ struct streaming_groupby::impl {
    * result kernels on different streams may still overlap when no growth/read requires a wait.
    */
   mutable std::mutex _insert_mutex;
-  /// Orders the insertion phase across calls that supply different streams.
+  /// Orders key insertion and result-capacity changes across calls that supply different streams.
   insert_order_event _insert_done;
   // Fan-in of every queued result use. Bookkeeping is serialized by _insert_mutex.
   mutable insert_order_event _aggregate_done;
@@ -245,31 +238,10 @@ struct streaming_groupby::impl {
 
   bool _initialized{false};
   /// Set true once an `aggregate()` / `merge()` call has thrown after touching the
-  /// hash set.  Subsequent `aggregate()` / `merge()` calls fail fast; only
+  /// hash set or the aggregate storage.  Subsequent `aggregate()` / `merge()` calls fail fast; only
   /// `finalize()` may still be called to recover partial results.  Atomic so the
   /// fail-fast check in `do_aggregate` can run ahead of `_insert_mutex`.
   std::atomic<bool> _invalidated{false};
-  /*
-   * Number of distinct keys accumulated so far.  Also serves as the high-water
-   * mark of dense IDs in the persistent hash set: stored slot values are in
-   * [0, _distinct_keys).
-   */
-  std::atomic<size_type> _distinct_keys{0};
-  bool _has_nullable_keys{false};
-  bool _has_nested_keys{false};
-
-  // -- Compacted batch storage --
-  std::vector<std::unique_ptr<table>> _compacted_batches;
-  std::vector<std::shared_ptr<cudf::detail::row::equality::preprocessed_table>>
-    _preprocessed_batches;
-
-  /// Empty (0-row) table preserving the key schema, used by gather_distinct_keys when
-  /// no batches produced any groups (e.g. first batch empty or fully null-excluded).
-  std::unique_ptr<table> _empty_key_schema;
-
-  /// Companion vector indexed by dense ID, sized to max_distinct_keys.
-  /// Each entry identifies the compacted batch containing this dense ID.
-  std::unique_ptr<cuda::device_buffer<size_type>> _key_batch_ids;
 
   std::vector<size_type> _request_first_agg_offset;
   std::vector<aggregation::Kind> _agg_kinds;
@@ -292,25 +264,25 @@ struct streaming_groupby::impl {
   std::vector<size_type> _value_col_indices;
   std::unique_ptr<cuda::device_buffer<aggregation::Kind>> _d_agg_kinds;
 
-  std::unique_ptr<cuda::device_buffer<size_type>> _key_set;
-
-  [[nodiscard]] size_type num_keys() const { return static_cast<size_type>(_key_indices.size()); }
   void ensure_not_invalidated() const
   {
     CUDF_EXPECTS(!_invalidated.load(std::memory_order_relaxed),
-                 "streaming_groupby is in an invalidated state from a prior failure; "
+                 "The object is in an invalidated state from a prior failure; "
                  "no further aggregate()/merge() is allowed.  finalize() may still be called.");
   }
 
-  impl(host_span<size_type const> key_indices,
-       host_span<streaming_aggregation_request const> requests,
-       size_type max_distinct_keys,
-       null_policy null_handling,
-       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+  aggregate_state(host_span<streaming_aggregation_request const> requests,
+                  cuda::mr::any_resource<cuda::mr::device_accessible> mr);
 
-  void initialize(table_view const& data, cuda::stream_ref stream);
-  void create_key_set(cuda::stream_ref stream);
-  void ensure_aggregate_capacity(size_type required,
+  // `data` is the table that the requests' column indices refer to.
+  void initialize_aggregates(table_view const& data,
+                             cuda::stream_ref stream,
+                             cudf::memory_resources mr);
+  void update_partial_budget(size_type batch_size);
+  // Sizes the results for `next_capacity` groups and the partials the budget allows, keeping the
+  // state of groups [0, old_groups).
+  void reshape_aggregate_results(size_type old_groups,
+                                 size_type next_capacity,
                                  cuda::stream_ref stream,
                                  cudf::memory_resources mr);
   [[nodiscard]] std::unique_ptr<table> make_aggregate_results(size_type capacity,
@@ -329,15 +301,68 @@ struct streaming_groupby::impl {
     record_aggregate_completion(stream);
     _results_read_done.record(stream);
   }
+  void aggregate_values(table_view const& data,
+                        device_span<size_type const> group_ids,
+                        cuda::stream_ref stream,
+                        cudf::memory_resources mr);
+
+  [[nodiscard]] std::unique_ptr<table> gather_agg_results(size_type size,
+                                                          cuda::stream_ref stream,
+                                                          cudf::memory_resources mr) const;
+  [[nodiscard]] std::vector<aggregation_result> finalize_gathered(
+    std::unique_ptr<table> agg_gathered, cuda::stream_ref stream, cudf::memory_resources mr) const;
+};
+
+/// The impl struct for streaming_groupby. Defined in impl.cu.
+struct streaming_groupby::impl : aggregate_state {
+  std::vector<size_type> _key_indices;
+  size_type _max_distinct_keys;
+  null_policy _null_handling;
+
+  /*
+   * Number of distinct keys accumulated so far.  Also serves as the high-water
+   * mark of dense IDs in the persistent hash set: stored slot values are in
+   * [0, _distinct_keys).
+   */
+  std::atomic<size_type> _distinct_keys{0};
+  bool _has_nullable_keys{false};
+  bool _has_nested_keys{false};
+
+  // -- Compacted batch storage --
+  std::vector<std::unique_ptr<table>> _compacted_batches;
+  std::vector<std::shared_ptr<cudf::detail::row::equality::preprocessed_table>>
+    _preprocessed_batches;
+
+  /// Empty (0-row) table preserving the key schema, used by gather_distinct_keys when
+  /// no batches produced any groups (e.g. first batch empty or fully null-excluded).
+  std::unique_ptr<table> _empty_key_schema;
+
+  /// Companion vector indexed by dense ID, sized to max_distinct_keys.
+  /// Each entry identifies the compacted batch containing this dense ID.
+  std::unique_ptr<cuda::device_buffer<size_type>> _key_batch_ids;
+
+  std::unique_ptr<cuda::device_buffer<size_type>> _key_set;
+
+  [[nodiscard]] size_type num_keys() const { return static_cast<size_type>(_key_indices.size()); }
+
+  impl(host_span<size_type const> key_indices,
+       host_span<streaming_aggregation_request const> requests,
+       size_type max_distinct_keys,
+       null_policy null_handling,
+       cuda::mr::any_resource<cuda::mr::device_accessible> mr);
+
+  void initialize(table_view const& data, cuda::stream_ref stream);
+  void create_key_set(cuda::stream_ref stream);
+  void ensure_aggregate_capacity(size_type required,
+                                 cuda::stream_ref stream,
+                                 cudf::memory_resources mr);
   void update_nullable_state(table_view const& batch_keys);
 
   /*
-   * Inserts the batch keys and returns each row's aggregate row, or the no-slot sentinel for
-   * excluded rows. `use_partials` spreads rows over the per-group partials (aggregate);
-   * otherwise every row targets the group's first partial (merge).
+   * Inserts the batch keys and returns each row's dense group ID, or the no-slot sentinel for
+   * excluded rows. Without aggregations, the other rows keep their slot bits.
    */
   cuda::device_buffer<size_type> probe_and_insert(table_view const& batch_keys,
-                                                  bool use_partials,
                                                   cuda::stream_ref stream);
 
   /*
@@ -346,21 +371,13 @@ struct streaming_groupby::impl {
    */
   template <bool has_nested>
   cuda::device_buffer<size_type> probe_and_insert_impl(table_view const& batch_keys,
-                                                       bool use_partials,
                                                        cuda::stream_ref stream);
 
   void do_aggregate(table_view const& data, cuda::stream_ref stream);
 
-  [[nodiscard]] std::unique_ptr<table> gather_agg_results(cuda::stream_ref stream,
-                                                          cudf::memory_resources mr) const;
   [[nodiscard]] std::unique_ptr<table> gather_distinct_keys(cuda::stream_ref stream,
                                                             cudf::memory_resources mr) const;
 
-  [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>
-  finalize_gathered(std::unique_ptr<table> keys,
-                    std::unique_ptr<table> agg_gathered,
-                    cuda::stream_ref stream,
-                    cudf::memory_resources mr) const;
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> do_finalize(
     cuda::stream_ref stream, cudf::memory_resources mr) const;
   [[nodiscard]] std::pair<std::unique_ptr<table>, std::vector<aggregation_result>>

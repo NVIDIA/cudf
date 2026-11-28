@@ -8,6 +8,8 @@
 
 #include <cudf/table/table_view.hpp>
 #include <cudf/utilities/error.hpp>
+#include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/span.hpp>
 
 #include <cuda/stream>
 
@@ -18,6 +20,34 @@
 #include <string>
 
 namespace cudf::groupby {
+
+void aggregate_state::update_partial_budget(size_type batch_size)
+{
+  // An initial tiny batch must not permanently limit later batches to one partial. Increasing
+  // the budget only after doubling bounds how often stable groups require a reshape.
+  auto const batch_budget = std::max<size_type>(1, batch_size / partial_aggregation_block_size);
+  if (_partial_budget == 0 || static_cast<int64_t>(batch_budget) >= 2LL * _partial_budget) {
+    _partial_budget = batch_budget;
+  }
+}
+
+void aggregate_state::aggregate_values(table_view const& data,
+                                       device_span<size_type const> group_ids,
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
+{
+  _results_read_done.wait(stream);
+
+  compute_warp_aggregates(data.select(_value_col_indices),
+                          _agg_kinds,
+                          group_ids,
+                          _aggregate_capacity,
+                          _partials_per_group,
+                          _agg_results->mutable_view(),
+                          stream,
+                          mr);
+  record_aggregate_completion(stream);
+}
 
 void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_ref stream)
 {
@@ -42,28 +72,16 @@ void streaming_groupby::impl::do_aggregate(table_view const& data, cuda::stream_
   bool insertion_started = false;
   try {
     if (!_initialized) { initialize(data, stream); }
-    // An initial tiny batch must not permanently limit later batches to one partial. Increasing
-    // the budget only after doubling bounds how often stable groups require a reshape.
-    auto const batch_budget = std::max<size_type>(1, batch_size / partial_aggregation_block_size);
-    if (_partial_budget == 0 || static_cast<int64_t>(batch_budget) >= 2LL * _partial_budget) {
-      _partial_budget = batch_budget;
-    }
+    update_partial_budget(batch_size);
     auto const batch_keys = data.select(_key_indices);
     update_nullable_state(batch_keys);
     if (!_key_set) { create_key_set(stream); }
     _insert_done.wait(stream);
-    insertion_started  = true;
-    auto const targets = probe_and_insert(batch_keys, true, stream);
+    insertion_started    = true;
+    auto const group_ids = probe_and_insert(batch_keys, stream);
     _insert_done.record(stream);
-    _results_read_done.wait(stream);
-
-    compute_warp_aggregates(data.select(_value_col_indices),
-                            _agg_kinds,
-                            {targets.data(), targets.size()},
-                            _agg_results->mutable_view(),
-                            stream,
-                            cudf::get_current_device_resource_ref());
-    record_aggregate_completion(stream);
+    aggregate_values(
+      data, {group_ids.data(), group_ids.size()}, stream, cudf::get_current_device_resource_ref());
   } catch (...) {
     if (insertion_started) { _invalidated = true; }
     // Do not let partially enqueued writes escape tracking before a subsequent resize/read.

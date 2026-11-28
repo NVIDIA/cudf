@@ -72,6 +72,19 @@ TEST_F(GroupbyTest, StreamingFinalizeAndRelease)
   static_cast<void>(std::move(groupby).finalize_and_release(cudf::test::get_default_stream()));
 }
 
+TEST_F(GroupbyTest, DirectGroupby)
+{
+  cudf::test::fixed_width_column_wrapper<cudf::size_type> group_ids{0, 0, 1};
+  cudf::test::fixed_width_column_wrapper<int32_t> values{1, 2, 3};
+  std::vector<cudf::groupby::streaming_aggregation_request> requests;
+  requests.push_back({0, cudf::make_sum_aggregation<cudf::groupby_aggregation>()});
+
+  cudf::groupby::direct_groupby groupby{2, requests};
+  groupby.aggregate(
+    cudf::column_view{group_ids}, cudf::table_view{{values}}, cudf::test::get_default_stream());
+  static_cast<void>(groupby.finalize(cudf::test::get_default_stream()));
+}
+
 TEST_F(GroupbyTest, Scan)
 {
   using key_wrapper   = cudf::test::fixed_width_column_wrapper<int32_t>;

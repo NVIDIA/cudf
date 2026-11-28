@@ -20,7 +20,7 @@
 static void* (*allocate)(void*, CUstream, size_t, size_t);
 static CUmemoryPool (*pool_handle)(void const*);
 static void (*construct_view)(void*, CUmemoryPool);
-static __typeof__(&cuCtxGetDevice) get_device;
+static __typeof__(&cuStreamGetDevice) get_device;
 static __typeof__(&cuMemPoolCreate) pool_create;
 static __typeof__(&cuMemPoolGetAttribute) pool_get;
 static __typeof__(&cuMemPoolSetAttribute) pool_set;
@@ -62,17 +62,17 @@ static void initialize(void)
   if (!mode || (strcmp(mode, "shared") && strcmp(mode, "separate"))) {
     fail("invalid CUDF_POLARS_POOL_MODE", 0);
   }
-  separate  = strcmp(mode, "separate") == 0;
-  void* rmm = dlopen("librmm.so", RTLD_LAZY | RTLD_NOLOAD);
-  allocate  = symbol(rmm, ALLOCATE);
+  separate    = strcmp(mode, "separate") == 0;
+  void* rmm   = dlopen("librmm.so", RTLD_LAZY | RTLD_NOLOAD);
+  allocate    = symbol(rmm, ALLOCATE);
+  pool_handle = symbol(rmm, POOL_HANDLE);
+  void* cuda  = dlopen("libcuda.so.1", RTLD_LAZY | RTLD_NOLOAD);
+  pool_set    = symbol(cuda, "cuMemPoolSetAttribute");
   if (separate) {
-    pool_handle    = symbol(rmm, POOL_HANDLE);
     construct_view = symbol(rmm, VIEW_CONSTRUCTOR);
-    void* cuda     = dlopen("libcuda.so.1", RTLD_LAZY | RTLD_NOLOAD);
-    get_device     = symbol(cuda, "cuCtxGetDevice");
+    get_device     = symbol(cuda, "cuStreamGetDevice");
     pool_create    = symbol(cuda, "cuMemPoolCreate");
     pool_get       = symbol(cuda, "cuMemPoolGetAttribute");
-    pool_set       = symbol(cuda, "cuMemPoolSetAttribute");
   }
 
   char path[4096];
@@ -101,29 +101,32 @@ static struct partition* partition_for(CUmemoryPool original, CUstream stream)
     if (!entry) { fail("allocate pool mapping", 0); }
     entry->original = original;
     entry->stream   = stream;
-    CUdevice device;
-    check(get_device(&device), "cuCtxGetDevice");
-    CUmemPoolProps props = {.allocType = CU_MEM_ALLOCATION_TYPE_PINNED,
-                            .location  = {.type = CU_MEM_LOCATION_TYPE_DEVICE, .id = device}};
-    check(pool_create(&entry->selected, &props), "cuMemPoolCreate");
-    cuuint64_t threshold;
-    check(pool_get(original, CU_MEMPOOL_ATTR_RELEASE_THRESHOLD, &threshold),
-          "get release threshold");
+    entry->selected = original;
+    if (stream) {
+      CUdevice device;
+      check(get_device(stream, &device), "cuStreamGetDevice");
+      CUmemPoolProps props = {.allocType = CU_MEM_ALLOCATION_TYPE_PINNED,
+                              .location  = {.type = CU_MEM_LOCATION_TYPE_DEVICE, .id = device}};
+      check(pool_create(&entry->selected, &props), "cuMemPoolCreate");
+      CUmemPool_attribute const attrs[] = {CU_MEMPOOL_ATTR_REUSE_FOLLOW_EVENT_DEPENDENCIES,
+                                           CU_MEMPOOL_ATTR_REUSE_ALLOW_OPPORTUNISTIC,
+                                           CU_MEMPOOL_ATTR_REUSE_ALLOW_INTERNAL_DEPENDENCIES};
+      for (size_t i = 0; i < sizeof(attrs) / sizeof(*attrs); ++i) {
+        int value;
+        check(pool_get(original, attrs[i], &value), "get reuse policy");
+        check(pool_set(entry->selected, attrs[i], &value), "set reuse policy");
+      }
+      fprintf(journal, "%p\t%p\t%p\n", (void*)original, (void*)stream, (void*)entry->selected);
+    }
+    // Retaining unused pages in every pool exhausted the L4 in the first run.
+    // Use the same release threshold in both conditions.
+    cuuint64_t threshold = 0;
     check(pool_set(entry->selected, CU_MEMPOOL_ATTR_RELEASE_THRESHOLD, &threshold),
           "set release threshold");
-    CUmemPool_attribute const attrs[] = {CU_MEMPOOL_ATTR_REUSE_FOLLOW_EVENT_DEPENDENCIES,
-                                         CU_MEMPOOL_ATTR_REUSE_ALLOW_OPPORTUNISTIC,
-                                         CU_MEMPOOL_ATTR_REUSE_ALLOW_INTERNAL_DEPENDENCIES};
-    for (size_t i = 0; i < sizeof(attrs) / sizeof(*attrs); ++i) {
-      int value;
-      check(pool_get(original, attrs[i], &value), "get reuse policy");
-      check(pool_set(entry->selected, attrs[i], &value), "set reuse policy");
-    }
     // Keep replacement pools alive through outstanding frees on other streams.
     // Each replay worker exits with its CUDA context after one pytest round.
     entry->next = partitions;
     partitions  = entry;
-    fprintf(journal, "%p\t%p\t%p\n", (void*)original, (void*)stream, (void*)entry->selected);
   }
   pthread_mutex_unlock(&pools_lock);
   last = entry;
@@ -138,11 +141,11 @@ void* partitioned_allocate(void*, CUstream, size_t, size_t) __asm__(ALLOCATE);
 void* partitioned_allocate(void* resource, CUstream stream, size_t bytes, size_t alignment)
 {
   pthread_once(&init_once, initialize);
-  // Legacy and per-thread default stream sentinels are not explicit stream handles.
-  if (!separate || (uintptr_t)stream <= 2 || !bytes) {
-    return allocate(resource, stream, bytes, alignment);
-  }
-  struct partition* entry = partition_for(pool_handle(resource), stream);
+  if (!bytes) { return allocate(resource, stream, bytes, alignment); }
+  // Legacy and per-thread default stream sentinels stay on the original pool.
+  CUstream const partition = separate && (uintptr_t)stream > 2 ? stream : NULL;
+  struct partition* entry  = partition_for(pool_handle(resource), partition);
+  if (!partition) { return allocate(resource, stream, bytes, alignment); }
   CUmemoryPool view;
   construct_view(&view, entry->selected);
   return allocate(&view, stream, bytes, alignment);

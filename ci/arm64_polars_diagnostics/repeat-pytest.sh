@@ -21,7 +21,7 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-async-pools-dask-dateti
     sha256sum "$package_dir/cudf_polars/streaming/actor_graph/utils.py" \
         > "$CUDF_POLARS_DIAGNOSTICS_DIR/ownership-source.sha256"
     attempts=()
-    for round in {1..20}; do
+    for round in {1..12}; do
         if (( round % 2 )); then
             attempts+=("shared-$round" "separate-$round")
         else

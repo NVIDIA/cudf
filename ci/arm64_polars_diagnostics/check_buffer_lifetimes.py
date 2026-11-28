@@ -222,15 +222,25 @@ def analyze(trace, fault, journal):
         default=created,
     )
     aliases = []
+    on_stream = unreadable = 0
     for line in journal.read_text().splitlines():
-        ns, _tid, producer, consumer, test, ranges = json.loads(line)
-        if created <= ns <= sync.ns and sync.stream in (producer, consumer):
+        try:
+            ns, _tid, producer, consumer, test, ranges = json.loads(line)
+        except json.JSONDecodeError:
+            unreadable += 1
+            continue
+        if records[0].ns <= ns <= sync.ns:
             for source, output in ranges:
                 begin = max(source[2], output[2])
                 end = min(source[2] + source[3], output[2] + output[3])
                 aliases.append((ns, (begin, end - begin), test))
+                on_stream += created <= ns and sync.stream in (
+                    producer,
+                    consumer,
+                )
     print(
-        f"{len(aliases)} aliased buffer ranges recorded for this stream generation."
+        f"{len(aliases)} aliased ranges recorded in the window, "
+        f"{on_stream} tagged with this stream generation, {unreadable} unreadable journal records."
     )
     if not aliases:
         return
@@ -246,6 +256,14 @@ def analyze(trace, fault, journal):
             frees[start.address].append((start, end))
     edges = _stream_dependencies(generations)
     hits = pending_hits = proven = pending_proven = ambiguous = 0
+    launches = sum(
+        row.phase == 0
+        and row.stream == sync.stream
+        and row.context == sync.context
+        and last_sync <= row.ns <= sync.ns
+        and row.api.startswith("cuLaunchKernel")
+        for row in records
+    )
     for start, end in generations:
         if (
             end.stream != sync.stream
@@ -304,7 +322,10 @@ def analyze(trace, fault, journal):
     print(
         f"{proven} intersections with an ordered free ({pending_proven} after the last successful sync)."
     )
-    print("Kernel load/store addresses are outside this trace.")
+    print(
+        f"{launches} kernel launches on this stream after the last successful sync. "
+        "Kernel load/store addresses are outside this trace."
+    )
 
 
 def main():

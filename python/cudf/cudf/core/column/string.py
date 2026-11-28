@@ -441,6 +441,23 @@ class StringColumn(ColumnBase, Scannable):
             return cast("Self", ColumnBase.create(self.plc_column, dtype))
         return self
 
+    def fillna(
+        self,
+        fill_value: ScalarLike | ColumnLike,
+        method: plc.replace.ReplacePolicy | None = None,
+    ) -> Self:
+        if (
+            method is None
+            and fill_value is pd.NA
+            and self.dtype == np.dtype("object")
+            and self.has_nulls()
+            and cudf.get_option("mode.pandas_compatible")
+        ):
+            raise MixedTypeError(
+                "Object strings cannot represent an explicit pd.NA fill"
+            )
+        return super().fillna(fill_value, method)
+
     def _process_values_for_isin(
         self, values: Sequence | ColumnBase
     ) -> tuple[ColumnBase, ColumnBase]:

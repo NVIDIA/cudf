@@ -141,7 +141,7 @@ Remove each listed entry from the dictionary named first on its line. The one ex
 
 ### Run the tests
 
-1. Run the same `run-pandas-tests.sh` command that `ci/cudf_pandas_scripts/pandas-tests/run.sh` runs, from the fresh working directory, and pipe the output to a file. Omit `--junitxml` and the sharding arguments, so the full suite runs unsharded like the nightly job:
+1. Run the same `run-pandas-tests.sh` command that `ci/cudf_pandas_scripts/pandas-tests/run.sh` runs, from the fresh working directory, and pipe the output to a file. Omit `--junitxml` and the sharding arguments, to run the full suite unsharded:
     ```bash
     bash <cudf repo>/python/cudf/cudf/pandas/scripts/run-pandas-tests.sh \
       --numprocesses 8 \
@@ -167,7 +167,42 @@ Remove each listed entry from the dictionary named first on its line. The one ex
 
 ### Run the tests with sharding
 
-Pull request CI splits the suite across shards (see `NUM_SHARDS` in the `pandas-tests-shards` job in `.github/workflows/pr.yaml`). Sharding changes the order the tests run in, which exposes order-dependent behavior in cudf.pandas. After the unsharded run passes, run each shard by adding `--shard-id <i> --num-shards <NUM_SHARDS>` to the command above for every `i` from `0` to `NUM_SHARDS - 1`. Add tests that fail only in a sharded run to `NODEIDS_TO_SKIP_WHEN_SHARDED`, and repeat until every shard reports no failures.
+PR CI assigns most files to one shard and splits the heaviest files by node ID. When updating the pandas version, wait for the unsharded run to pass and use its complete report to refresh the PR weights. For marker-only updates, use the existing snapshot. Run the commands from the same working directory as the unsharded run, with `repo` set to the absolute path of the cuDF checkout.
+
+```bash
+timings="$repo/ci/cudf_pandas_scripts/pandas-tests/shard-file-timings.json"
+python "$repo/ci/cudf_pandas_scripts/pandas-tests/generate-shard-file-timings.py" \
+  --output "$timings" pandas-testing/pr.json
+```
+
+Use the shard count from `pandas-tests-shards` in `.github/workflows/pr.yaml` and the heavy-file split count from `ci/cudf_pandas_scripts/pandas-tests/run.sh` (currently three shards and six split files). Compare collection with node-ID sharding on the same pandas version. Both layouts must use sharding arguments so the same sharded-only skip rules apply.
+
+```bash
+set -e
+runner="$repo/python/cudf/cudf/pandas/scripts/run-pandas-tests.sh"
+scripts="$repo/.agents/skills/update-pandas-testing/scripts"
+num_shards=3
+split_count=6
+hybrid_args=(--shard-by-file "--shard-file-timings=$timings" "--shard-split-heavy-files=$split_count")
+for ((shard=0; shard<num_shards; shard++)); do
+  for layout in node hybrid; do
+    layout_args=()
+    if [[ $layout == hybrid ]]; then layout_args=("${hybrid_args[@]}"); fi
+    PYTHONPATH="$scripts${PYTHONPATH:+:$PYTHONPATH}" bash "$runner" \
+      --collect-only -q -p check_shard_coverage \
+      --shard-id "$shard" --num-shards "$num_shards" "${layout_args[@]}" \
+      --shard-coverage-output="$PWD/$layout-$shard.json" \
+      --report-log=coverage-session.json > "$layout-$shard-collection.txt" 2>&1
+  done
+done
+python "$scripts/check_shard_coverage.py" --node node-[0-9]*.json --hybrid hybrid-[0-9]*.json
+```
+
+Investigate any missing or extra node IDs, duplicates, or marker differences before committing the snapshot. File assignment can change which modules run their import-time registrations before another test parametrizes from the registry. Identical passing exit codes can conceal missing tests.
+
+Run all hybrid shards with the same eight-worker options as the unsharded run, adding `--shard-id "$shard" --num-shards "$num_shards" "${hybrid_args[@]}"` and using distinct report and output filenames. If a test fails only in a sharded run, investigate the ordering dependency before adding it to `NODEIDS_TO_SKIP_WHEN_SHARDED`. If markers change during a version upgrade, regenerate the snapshot from the final passing unsharded report and repeat the checks.
+
+Commit the snapshot with the pandas update. Record the pandas version, runner, and slowest hybrid shard time when reporting the update.
 
 Importantly when evaluating failing tests, do **not** attempt to fix cudf.pandas to solve the failures. This is out of scope.
 

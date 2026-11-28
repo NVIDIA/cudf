@@ -24,6 +24,11 @@ NUM_SHARDS=${3:-}
 SHARD_ARGS=()
 if [[ -n "${NUM_SHARDS}" ]]; then
     SHARD_ARGS=(--shard-id "${SHARD_ID}" --num-shards "${NUM_SHARDS}")
+    if [[ ${PANDAS_TESTS_BRANCH} == pr ]]; then
+        # Keep the timings path out of pytest's rootdir discovery.
+        shard_timings=$(realpath "$(dirname "$0")/shard-file-timings.json")
+        SHARD_ARGS+=(--shard-by-file "--shard-file-timings=${shard_timings}" --shard-split-heavy-files=6)
+    fi
 fi
 RAPIDS_FULL_VERSION=$(<./VERSION)
 rapids-logger "Running Pandas tests using $PANDAS_TESTS_BRANCH branch and rapids-version $RAPIDS_FULL_VERSION"

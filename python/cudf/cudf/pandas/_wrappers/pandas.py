@@ -134,7 +134,6 @@ def Timestamp_Timedelta__new__(cls, *args, **kwargs):
     # hence this method is needed.
     self, _ = _fast_slow_function_call(
         lambda cls, args, kwargs: cls(*args, **kwargs),
-        None,
         cls,
         args,
         kwargs,
@@ -248,7 +247,6 @@ def _DataFrame_dtypes_apply_func(value):
 def _DataFrame__dtypes(self):
     result = _fast_slow_function_call(
         lambda self: self.dtypes,
-        None,
         self,
     )[0]
     result = _maybe_wrap_result(
@@ -262,7 +260,6 @@ def _DataFrame__dtypes(self):
 def _DataFrame_columns(self):
     result = _fast_slow_function_call(
         lambda self: self.columns,
-        None,
         self,
     )[0]
     result.force_state(_State.SLOW)
@@ -345,7 +342,6 @@ def custom_repr_html(obj):
     # for ipython
     return _fast_slow_function_call(
         lambda obj: obj._repr_html_(),
-        None,
         obj,
     )[0]
 
@@ -443,7 +439,7 @@ def _Index_values(self):
     if is_pandas_nullable_extension_dtype(dtype):
         slow = self._fsproxy_fast_to_slow()
         return _maybe_wrap_result(slow.values, None)
-    return _fast_slow_function_call(getattr, None, self, "values")[0]
+    return _fast_slow_function_call(getattr, self, "values")[0]
 
 
 def Index__new__(cls, *args, **kwargs):
@@ -453,7 +449,6 @@ def Index__new__(cls, *args, **kwargs):
     # make_final_proxy_type provides.
     self, _ = _fast_slow_function_call(
         lambda cls, args, kwargs: cls(*args, **kwargs),
-        None,
         cls,
         args,
         kwargs,

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal, cast, overload
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from packaging.version import Version
 
 import pylibcudf as plc
 
@@ -24,10 +25,13 @@ from cudf.core.accessors.base_accessor import BaseAccessor
 from cudf.core.accessors.lists import ListMethods
 from cudf.core.column.column import ColumnBase, as_column, column_empty
 from cudf.core.dtypes import ListDtype
+from cudf.errors import MixedTypeError
 from cudf.utils.dtypes import (
     DEFAULT_STRING_DTYPE,
     can_convert_to_column,
 )
+
+_ARROW_HAS_UNICODE_DIGIT = Version(pa.__version__) >= Version("21")
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -142,6 +146,34 @@ class StringMethods(BaseAccessor):
                     np.dtype("float64" if new_col.has_nulls() else "int64")
                 )
         return self._return_or_inplace(new_col)
+
+    def _pandas_arrow_strings(self) -> bool:
+        dtype = self._column.dtype
+        return (
+            isinstance(dtype, pd.StringDtype)
+            and dtype.storage == "pyarrow"
+            and cudf.get_option("mode.pandas_compatible")
+        )
+
+    def _check_pandas_end_anchor(self, pat: str) -> None:
+        if (
+            "$" in pat
+            and self._pandas_arrow_strings()
+            and any(
+                match[1]
+                for match in re.finditer(r"\\.|\[(?:\\.|[^\\\]])*\]|(\$)", pat)
+            )
+        ):
+            raise NotImplementedError("Arrow regex end anchors require pandas")
+
+    def _check_pandas_list_result(self) -> None:
+        if isinstance(self._column.dtype, pd.StringDtype) and cudf.get_option(
+            "mode.pandas_compatible"
+        ):
+            # Keep Python lists and their original missing-value sentinel.
+            raise MixedTypeError(
+                "Pandas string operations return object lists"
+            )
 
     def htoi(self) -> Series | Index:
         """
@@ -890,6 +922,7 @@ class StringMethods(BaseAccessor):
 
         if is_scalar(pat):
             if regex:
+                self._check_pandas_end_anchor(cast("str", pat))
                 pat = self._remove_named_capture_groups(pat)  # type: ignore[arg-type]
                 result_col = self._column.contains_re(pat, flags)
             else:
@@ -1140,6 +1173,11 @@ class StringMethods(BaseAccessor):
 
         # Pandas forces non-regex replace when pat is a single-character
         if regex is True and len(pat) > 0:
+            self._check_pandas_end_anchor(cast("str", pat))
+            if self._pandas_arrow_strings() and re.search(r"\\[0-9]", repl):
+                raise NotImplementedError(
+                    "Arrow replacement backreferences require pandas"
+                )
             result = self._column.replace_re(
                 pat,  # type: ignore[arg-type]
                 repl,
@@ -1717,6 +1755,10 @@ class StringMethods(BaseAccessor):
         3    False
         dtype: bool
         """
+        if _ARROW_HAS_UNICODE_DIGIT and self._pandas_arrow_strings():
+            raise NotImplementedError(
+                "Arrow Unicode digit classification requires pandas"
+            )
         return self._return_boolean(
             self._column.all_characters_of_type(
                 plc.strings.char_types.StringCharacterTypes.DIGIT
@@ -2726,7 +2768,9 @@ class StringMethods(BaseAccessor):
 
         result_table: StringColumn | dict[int, StringColumn]
         if expand:
-            if self._column.is_all_null:
+            if isinstance(self._parent, cudf.Index) and not len(self._column):
+                result_table = {}
+            elif self._column.is_all_null:
                 result_table = {0: self._column.copy()}
             else:
                 if regex is True:
@@ -2743,6 +2787,7 @@ class StringMethods(BaseAccessor):
                 else:
                     result_table = data
         else:
+            self._check_pandas_list_result()
             if regex is True:
                 result_table = self._column.split_record_re(pat, n)
             else:
@@ -2922,6 +2967,7 @@ class StringMethods(BaseAccessor):
                 else:
                     result_table = data
         else:
+            self._check_pandas_list_result()
             if regex is True:
                 result_table = self._column.rsplit_record_re(pat, n)
             else:
@@ -3744,6 +3790,13 @@ class StringMethods(BaseAccessor):
             raise NotImplementedError(
                 "unsupported value for `flags` parameter"
             )
+        self._check_pandas_end_anchor(pat)
+        if self._column.dtype == np.dtype("object") and cudf.get_option(
+            "mode.pandas_compatible"
+        ):
+            raise NotImplementedError(
+                "Pandas object string counts require pandas"
+            )
         pat = self._remove_named_capture_groups(pat)
         return self._return_integer(self._column.count_re(pat, flags))
 
@@ -3832,6 +3885,7 @@ class StringMethods(BaseAccessor):
             The `flags` parameter currently only supports re.DOTALL,
             re.MULTILINE and re.IGNORECASE.
         """
+        self._check_pandas_list_result()
         return self._findall(plc.strings.findall.findall, pat, flags)
 
     def find_re(self, pat: str, flags: int = 0) -> Series | Index:
@@ -4499,6 +4553,16 @@ class StringMethods(BaseAccessor):
         if not _is_supported_regex_flags(flags):
             raise NotImplementedError(
                 "unsupported value for `flags` parameter"
+            )
+        self._check_pandas_end_anchor(pat)
+        if (
+            na is no_default
+            and self._column.dtype == np.dtype("object")
+            and self._column.has_nulls()
+            and cudf.get_option("mode.pandas_compatible")
+        ):
+            raise MixedTypeError(
+                "Pandas match can return booleans and nulls in object results"
             )
         pat = self._remove_named_capture_groups(pat)
         result = self._column.matches_re(pat, flags)

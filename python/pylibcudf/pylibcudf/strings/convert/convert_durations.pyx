@@ -9,7 +9,7 @@ from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport (
     convert_durations as cpp_convert_durations,
 )
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -67,7 +67,7 @@ cpdef Column to_durations(
             duration_type.c_obj,
             c_format,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -116,7 +116,7 @@ cpdef Column from_durations(
             c_durations,
             c_format,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

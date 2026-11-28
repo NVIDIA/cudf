@@ -17,7 +17,7 @@ from pylibcudf.libcudf.scalar.scalar_factories cimport (
 )
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.scalar cimport Scalar
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -66,7 +66,7 @@ cpdef Column replace_tokens(
     mr = _get_memory_resource(mr)
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
     cdef column_view c_input = input.view()
     cdef column_view c_targets = targets.view()
@@ -78,7 +78,7 @@ cpdef Column replace_tokens(
             c_replacements,
             dereference(<const string_scalar*>delimiter.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -122,11 +122,11 @@ cpdef Column filter_tokens(
     mr = _get_memory_resource(mr)
     if delimiter is None:
         delimiter = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
     if replacement is None:
         replacement = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef column_view c_input = input.view()
@@ -137,7 +137,7 @@ cpdef Column filter_tokens(
             dereference(<const string_scalar*>replacement.get()),
             dereference(<const string_scalar*>delimiter.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

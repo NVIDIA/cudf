@@ -9,7 +9,7 @@ from pylibcudf.libcudf.strings.convert cimport (
     convert_fixed_point as cpp_fixed_point,
 )
 from pylibcudf.types cimport DataType, type_id
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ cpdef Column to_fixed_point(
             c_input,
             output_type.c_obj,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -92,7 +92,7 @@ cpdef Column from_fixed_point(
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_fixed_point.from_fixed_point(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -140,7 +140,7 @@ cpdef Column is_fixed_point(
             c_input,
             decimal_type.c_obj,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

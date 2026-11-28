@@ -30,7 +30,7 @@ from rmm.pylibrmm.stream cimport Stream
 
 from .column cimport Column
 from .scalar cimport Scalar
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -86,7 +86,7 @@ cpdef Column extract_datetime_component(
     cdef column_view c_input = input.view()
     with nogil:
         result = cpp_extract_datetime_component(
-            c_input, component, _cs, mr.get_mr()
+            c_input, component, _cs, _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -123,7 +123,7 @@ cpdef Column ceil_datetimes(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_ceil_datetimes(c_input, freq, _cs, mr.get_mr())
+        result = cpp_ceil_datetimes(c_input, freq, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column floor_datetimes(
@@ -159,7 +159,7 @@ cpdef Column floor_datetimes(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_floor_datetimes(c_input, freq, _cs, mr.get_mr())
+        result = cpp_floor_datetimes(c_input, freq, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column round_datetimes(
@@ -195,7 +195,7 @@ cpdef Column round_datetimes(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_round_datetimes(c_input, freq, _cs, mr.get_mr())
+        result = cpp_round_datetimes(c_input, freq, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column add_calendrical_months(
@@ -246,7 +246,7 @@ cpdef Column add_calendrical_months(
             c_months_column if ColumnOrScalar is Column else
             dereference(months.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -280,7 +280,7 @@ cpdef Column day_of_year(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_day_of_year(c_input, _cs, mr.get_mr())
+        result = cpp_day_of_year(c_input, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column is_leap_year(
@@ -312,7 +312,7 @@ cpdef Column is_leap_year(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_is_leap_year(c_input, _cs, mr.get_mr())
+        result = cpp_is_leap_year(c_input, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column last_day_of_month(
@@ -344,7 +344,7 @@ cpdef Column last_day_of_month(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_last_day_of_month(c_input, _cs, mr.get_mr())
+        result = cpp_last_day_of_month(c_input, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column extract_quarter(
@@ -376,7 +376,7 @@ cpdef Column extract_quarter(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_extract_quarter(c_input, _cs, mr.get_mr())
+        result = cpp_extract_quarter(c_input, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 cpdef Column days_in_month(
@@ -407,7 +407,7 @@ cpdef Column days_in_month(
 
     cdef column_view c_input = input.view()
     with nogil:
-        result = cpp_days_in_month(c_input, _cs, mr.get_mr())
+        result = cpp_days_in_month(c_input, _cs, _get_memory_resources(mr))
     return Column.from_libcudf(move(result), _stream, mr)
 
 DatetimeComponent.__str__ = DatetimeComponent.__repr__

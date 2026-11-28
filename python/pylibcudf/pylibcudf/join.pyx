@@ -24,7 +24,7 @@ from pylibcudf.libcudf.types cimport mask_state, null_equality
 from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
 from pylibcudf.experimental._join_streams cimport join_streams
 from rmm.librmm.cuda_stream_ref cimport stream_ref
-from rmm.librmm.memory_resource cimport device_async_resource_ref
+from pylibcudf.libcudf.utilities.memory_resource cimport memory_resources
 
 from pylibcudf.libcudf.asof_join import (
     asof_join_exact_matches as AsofJoinExactMatches,  # no-cython-lint
@@ -39,7 +39,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .expressions cimport Expression
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -87,7 +87,7 @@ cdef extern from * nogil:
       cudf::table_view const& left_by, cudf::column_view const& left_on,
       cudf::experimental::asof_join_strategy strategy,
       cudf::experimental::asof_join_exact_matches exact_matches,
-      cuda::stream_ref stream, rmm::device_async_resource_ref mr)
+      cuda::stream_ref stream, cudf::memory_resources mr)
     {
       auto indices = joiner.join(
         left_by, left_on, strategy, exact_matches, stream, mr);
@@ -105,7 +105,7 @@ cdef extern from * nogil:
         asof_join_strategy strategy,
         asof_join_exact_matches exact_matches,
         stream_ref stream,
-        device_async_resource_ref mr,
+        memory_resources mr,
     ) except +libcudf_exception_handler
 
 
@@ -149,7 +149,7 @@ cdef class AsofJoin:
         with nogil:
             self.c_obj.reset(
                 new cpp_asof_join.asof_join(
-                    c_right_by, c_right_on, _cs, self._mr.get_mr()
+                    c_right_by, c_right_on, _cs, _get_memory_resources(self._mr)
                 )
             )
 
@@ -204,7 +204,7 @@ cdef class AsofJoin:
             with nogil:
                 result = asof_join_indices(
                     dereference(self.c_obj), c_left_by, c_left_on,
-                    strategy, exact_matches, _cs, mr.get_mr()
+                    strategy, exact_matches, _cs, _get_memory_resources(mr)
                 )
         finally:
             if _stream is not self._stream:
@@ -222,7 +222,7 @@ cdef Column _column_from_gather_map(
             0,
             mask_state.UNALLOCATED,
             _stream.view().get(),
-            mr.get_mr(),
+            _get_memory_resources(mr),
         )
     )
     return Column.from_libcudf(
@@ -276,7 +276,7 @@ cpdef tuple[Column, Column] inner_join(
             c_right_keys,
             nulls_equal,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -324,7 +324,7 @@ cpdef tuple[Column, Column] left_join(
             c_right_keys,
             nulls_equal,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -372,7 +372,7 @@ cpdef tuple[Column, Column] full_join(
             c_right_keys,
             nulls_equal,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -427,7 +427,7 @@ cpdef Column left_semi_join(
         c_result = join_obj.get()[0].semi_join(
             c_left_keys,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -479,7 +479,7 @@ cpdef Column left_anti_join(
         c_result = join_obj.get()[0].anti_join(
             c_left_keys,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -517,7 +517,7 @@ cpdef Table cross_join(
     cdef table_view c_right = right.view()
     with nogil:
         result = cpp_join.cross_join(
-            c_left, c_right, _cs, mr.get_mr()
+            c_left, c_right, _cs, _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(result), _stream, mr)
 
@@ -564,7 +564,7 @@ cpdef tuple[Column, Column] conditional_inner_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -614,7 +614,7 @@ cpdef tuple[Column, Column] conditional_left_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -662,7 +662,7 @@ cpdef tuple[Column, Column] conditional_full_join(
             c_right,
             dereference(binary_predicate.c_obj.get()),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -711,7 +711,7 @@ cpdef Column conditional_left_semi_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -757,7 +757,7 @@ cpdef Column conditional_left_anti_join(
             dereference(binary_predicate.c_obj.get()),
             output_size,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -818,7 +818,7 @@ cpdef tuple[Column, Column] mixed_inner_join(
             nulls_equal,
             empty_optional,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -882,7 +882,7 @@ cpdef tuple[Column, Column] mixed_left_join(
             nulls_equal,
             empty_optional,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -946,7 +946,7 @@ cpdef tuple[Column, Column] mixed_full_join(
             nulls_equal,
             empty_optional,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return (
         _column_from_gather_map(move(c_result.first), _stream, mr),
@@ -1007,7 +1007,7 @@ cpdef Column mixed_left_semi_join(
             dereference(binary_predicate.c_obj.get()),
             nulls_equal,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -1065,7 +1065,7 @@ cpdef Column mixed_left_anti_join(
             dereference(binary_predicate.c_obj.get()),
             nulls_equal,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -1168,7 +1168,7 @@ cdef class FilteredJoin:
             c_result = self.c_obj.get()[0].semi_join(
                 c_left,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -1209,7 +1209,7 @@ cdef class FilteredJoin:
             c_result = self.c_obj.get()[0].anti_join(
                 c_left,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return _column_from_gather_map(move(c_result), _stream, mr)
 
@@ -1308,7 +1308,7 @@ cdef class HashJoin:
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = dereference(self.c_obj).inner_join(
-                c_left, c_size, cstream.view().get(), mr.get_mr()
+                c_left, c_size, cstream.view().get(), _get_memory_resources(mr)
             )
         return (
             _column_from_gather_map(move(c_result.first), cstream, mr),
@@ -1346,7 +1346,7 @@ cdef class HashJoin:
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = dereference(self.c_obj).left_join(
-                c_left, c_size, cstream.view().get(), mr.get_mr()
+                c_left, c_size, cstream.view().get(), _get_memory_resources(mr)
             )
         return (
             _column_from_gather_map(move(c_result.first), cstream, mr),
@@ -1384,7 +1384,7 @@ cdef class HashJoin:
         mr = _get_memory_resource(mr)
         with nogil:
             c_result = dereference(self.c_obj).full_join(
-                c_left, c_size, cstream.view().get(), mr.get_mr()
+                c_left, c_size, cstream.view().get(), _get_memory_resources(mr)
             )
         return (
             _column_from_gather_map(move(c_result.first), cstream, mr),

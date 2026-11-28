@@ -9,7 +9,7 @@ from pylibcudf.libcudf.column.column_view cimport column_view
 from pylibcudf.libcudf.strings cimport find_multiple as cpp_find_multiple
 from pylibcudf.libcudf.table.table cimport table
 from pylibcudf.table cimport Table
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -57,7 +57,7 @@ cpdef Column find_multiple(
             c_input,
             c_targets,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -100,7 +100,7 @@ cpdef Table contains_multiple(
             c_input,
             c_targets,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

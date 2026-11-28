@@ -16,7 +16,7 @@ from rmm.pylibrmm.stream cimport Stream
 
 from .column cimport Column
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from cuda.bindings.cyruntime cimport cudaStream_t
 
 from typing import TYPE_CHECKING
@@ -80,7 +80,7 @@ cpdef Column sorted_order(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -126,7 +126,7 @@ cpdef Column stable_sorted_order(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -181,7 +181,7 @@ cpdef Column rank(
             null_precedence,
             percentage,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -278,7 +278,7 @@ cpdef Table segmented_sort_by_key(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -334,7 +334,7 @@ cpdef Table stable_segmented_sort_by_key(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -384,7 +384,7 @@ cpdef Table sort_by_key(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -434,7 +434,7 @@ cpdef Table stable_sort_by_key(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -479,7 +479,7 @@ cpdef Table sort(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -524,7 +524,7 @@ cpdef Table stable_sort(
             c_orders,
             c_null_precedence,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Table.from_libcudf(move(c_result), _stream, mr)
 
@@ -569,7 +569,7 @@ cpdef Column top_k(
             k,
             sort_order,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -617,6 +617,6 @@ cpdef Column top_k_order(
             k,
             sort_order,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)

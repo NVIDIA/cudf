@@ -15,7 +15,7 @@ from pylibcudf.scalar cimport Scalar
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from rmm.pylibrmm.stream cimport Stream
 
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -174,7 +174,7 @@ cpdef Column get_json_object(
             dereference(c_json_path),
             c_options,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

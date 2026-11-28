@@ -6,7 +6,7 @@ from libcpp.utility cimport move
 from pylibcudf.column cimport Column
 from pylibcudf.libcudf.column.column cimport column, column_view
 from pylibcudf.libcudf.strings.convert cimport convert_urls as cpp_convert_urls
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -45,7 +45,7 @@ cpdef Column url_encode(Column input, object stream: CudaStreamLike | None = Non
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_urls.url_encode(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)
@@ -78,7 +78,7 @@ cpdef Column url_decode(Column input, object stream: CudaStreamLike | None = Non
     cdef column_view c_input = input.view()
     with nogil:
         c_result = cpp_convert_urls.url_decode(
-            c_input, _cs, mr.get_mr()
+            c_input, _cs, _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

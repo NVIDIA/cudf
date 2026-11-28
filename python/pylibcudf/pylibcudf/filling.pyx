@@ -25,7 +25,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 from .column cimport Column
 from .scalar cimport Scalar
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -89,7 +89,7 @@ cpdef Column fill(
             end,
             dereference((<Scalar> value).c_obj),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -179,7 +179,7 @@ cpdef Column sequence(
             dereference(init.c_obj),
             dereference(step.c_obj),
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(result), _stream, mr)
 
@@ -231,7 +231,7 @@ cpdef Table repeat(
                 c_input_table,
                 c_count_column,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     if ColumnOrSize is size_type:
         c_input_table = input_table.view()
@@ -240,7 +240,7 @@ cpdef Table repeat(
                 c_input_table,
                 count,
                 _cs,
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
     return Table.from_libcudf(move(result), _stream, mr)
 
@@ -286,6 +286,6 @@ cpdef Column calendrical_month_sequence(
             dereference(init.c_obj),
             months,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
     return Column.from_libcudf(move(c_result), _stream, mr)

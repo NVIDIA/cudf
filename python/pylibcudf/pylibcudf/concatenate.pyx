@@ -16,7 +16,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ cpdef concatenate(
 
         with nogil:
             c_tbl_result = cpp_concatenate.concatenate(
-                c_tables, _cs, mr.get_mr()
+                c_tables, _cs, _get_memory_resources(mr)
             )
         return Table.from_libcudf(move(c_tbl_result), _stream, mr)
     elif isinstance(objects[0], Column):
@@ -73,7 +73,7 @@ cpdef concatenate(
 
         with nogil:
             c_col_result = cpp_concatenate.concatenate(
-                c_columns, _cs, mr.get_mr()
+                c_columns, _cs, _get_memory_resources(mr)
             )
         return Column.from_libcudf(move(c_col_result), _stream, mr)
     else:

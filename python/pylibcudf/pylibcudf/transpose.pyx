@@ -12,7 +12,7 @@ from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
 from .column cimport Column
 from .table cimport Table
-from .utils cimport _get_stream, _get_memory_resource
+from .utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -51,7 +51,7 @@ cpdef Table transpose(
     cdef table_view c_input_table = input_table.view()
     with nogil:
         c_result = cpp_transpose.transpose(
-            c_input_table, _cs, mr.get_mr()
+            c_input_table, _cs, _get_memory_resources(mr)
         )
 
     owner_table = Table(

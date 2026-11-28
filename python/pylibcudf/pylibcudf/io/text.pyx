@@ -8,7 +8,7 @@ from libcpp.string cimport string
 from libcpp.utility cimport move
 
 from pylibcudf.column cimport Column
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -244,7 +244,7 @@ cpdef Column multibyte_split(
             c_delimiter,
             c_options,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

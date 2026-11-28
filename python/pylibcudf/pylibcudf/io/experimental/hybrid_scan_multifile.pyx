@@ -38,7 +38,7 @@ from pylibcudf.libcudf.io.text cimport byte_range_info
 from pylibcudf.libcudf.io.types cimport table_with_metadata
 from pylibcudf.libcudf.types cimport size_type
 from pylibcudf.libcudf.utilities.span cimport device_span, host_span
-from pylibcudf.utils cimport _get_memory_resource, _get_stream
+from pylibcudf.utils cimport _get_memory_resource, _get_memory_resources, _get_stream
 
 from typing import TYPE_CHECKING
 
@@ -431,7 +431,7 @@ cdef class HybridScanMultiFile:
                     row_group_indices.c_obj.size()
                 ),
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -471,7 +471,7 @@ cdef class HybridScanMultiFile:
                 ),
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return Column.from_libcudf(move(c_result), _stream, mr)
 
@@ -556,7 +556,7 @@ cdef class HybridScanMultiFile:
                 ),
                 options.c_obj,
                 _stream.view().get(),
-                mr.get_mr()
+                _get_memory_resources(mr)
             )
         return TableWithMetadata.from_libcudf(c_result, _stream, mr)
 
@@ -675,7 +675,7 @@ cdef class HybridScanMultiFile:
                 ),
                 options.c_obj,
                 self._stream.view().get(),
-                self.mr.get_mr()
+                _get_memory_resources(self.mr)
             )
 
     def materialize_payload_columns_chunk(

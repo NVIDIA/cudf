@@ -26,6 +26,7 @@ This page provides API documentation for pylibcudf.
     json
     labeling
     lists
+    memory_resources
     merge
     null_mask
     partitioning

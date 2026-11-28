@@ -15,7 +15,7 @@ from pylibcudf.libcudf.strings.convert cimport (
 )
 from pylibcudf.scalar cimport Scalar
 from pylibcudf.types cimport type_id
-from pylibcudf.utils cimport _get_stream, _get_memory_resource
+from pylibcudf.utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ cpdef Column format_list_column(
 
     if na_rep is None:
         na_rep = Scalar.from_libcudf(
-            cpp_make_string_scalar("".encode(), _stream.view().get(), mr.get_mr())
+            cpp_make_string_scalar("".encode(), _stream.view().get(), _get_memory_resources(mr))
         )
 
     cdef const string_scalar* c_na_rep = <const string_scalar*>(
@@ -87,7 +87,7 @@ cpdef Column format_list_column(
             dereference(c_na_rep),
             c_separators,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Column.from_libcudf(move(c_result), _stream, mr)

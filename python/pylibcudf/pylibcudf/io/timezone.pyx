@@ -10,7 +10,7 @@ from pylibcudf.libcudf.io.timezone cimport (
 )
 from pylibcudf.libcudf.table.table cimport table
 
-from ..utils cimport _get_stream, _get_memory_resource
+from ..utils cimport _get_stream, _get_memory_resource, _get_memory_resources
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -56,7 +56,7 @@ cpdef Table make_timezone_transition_table(
             make_optional[string](c_tzdir),
             c_tzname,
             _cs,
-            mr.get_mr()
+            _get_memory_resources(mr)
         )
 
     return Table.from_libcudf(move(c_result), _stream, mr)

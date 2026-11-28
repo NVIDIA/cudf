@@ -85,6 +85,11 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> partition(
  * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
  * number of rows in the output table.
  *
+ * Multiplying `num_partitions` by a positive integer `k`, with the same `hash_function` and `seed`,
+ * splits each partition `p` into the partitions `p + j * num_partitions` for `j` in `[0, k)`. For
+ * example, doubling `num_partitions` splits each partition `p` into partitions `p` and
+ * `p + num_partitions`.
+ *
  * An empty `columns_to_hash` is treated as empty, producing an empty result even when `input` has a
  * non-zero row count.
  *
@@ -118,6 +123,11 @@ std::pair<std::unique_ptr<table>, std::vector<size_type>> hash_partition(
  * of `num_partitions + 1` offsets, where partition `i` contains rows in the range
  * `[offsets[i], offsets[i+1])`. The last offset is always equal to the total
  * number of rows in the output table.
+ *
+ * Multiplying `num_partitions` by a positive integer `k`, with the same `hash_function` and `seed`,
+ * splits each partition `p` into the partitions `p + j * num_partitions` for `j` in `[0, k)`. For
+ * example, doubling `num_partitions` splits each partition `p` into partitions `p` and
+ * `p + num_partitions`.
  *
  * A zero-column `keys` table is treated as empty, producing an empty result even when `input` has a
  * non-zero row count.

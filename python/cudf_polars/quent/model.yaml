@@ -275,6 +275,31 @@ entities:
         attributes:
           limits: { sets-resource-bounds: true }
 
+  SampledMemoryResource:
+    doc: >-
+      Occupancy of one of the worker's memory resources, as periodically
+      sampled from the memory resource itself.
+
+      This can differ from actual memory usage when allocations are made
+      outside of the memory resource. In general, allocations made by
+      cudf-polars, libcudf, and rapidsmpf will be on the corresponding memory
+      resource. But other libraries, like UCX (used for transferring data
+      between ranks), may manage their own memory.
+
+      Because this is *sampled* and worker-global, this metric cannot be
+      associated with specific operators. In general, sampled device-memory
+      usage ought to equal the sum of the memory usage reported by
+      `DeviceMemory`, but differences will occur due to timing and areas not
+      (yet) explicitly instrumented.
+    resource:
+      bytes: { kind: occupancy }
+    events:
+      declared:
+        attributes:
+          instance_name: string
+          memory_type: string
+          worker: { scope-ref: Worker }
+
   Storage:
     doc: A worker-local storage resource whose capacity may be unknown.
     resource:
@@ -365,6 +390,21 @@ fsms:
       failed:
         attributes:
           error: string
+
+  MemoryResourceSampler:
+    doc: >-
+      Sampling of the memory resource's occupancy on one worker for the
+      duration of one query. Each `sampling` transition is one reading, held until the
+      next transition replaces it, so consecutive readings form a step
+      function over the SampledMemoryResource resource.
+    states:
+      sampling:
+        initial: true
+        attributes:
+          query: { scope-ref: Query }
+          memory: { uses: SampledMemoryResource }
+        to: [sampling, stopped]
+      stopped: {}
 
   Actor:
     doc: Lifetime of one rapidsmpf streaming actor for an operator.

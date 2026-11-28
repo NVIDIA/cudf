@@ -29,10 +29,12 @@ from cudf_polars.quent._context import (
 from cudf_polars.quent._runtime import QuentWorkerRuntime
 
 
-def test_context_serialization_roundtrip(tmp_path) -> None:
+@pytest.mark.parametrize("interval_s", [None, 0.25])
+def test_context_serialization_roundtrip(tmp_path, interval_s: float | None) -> None:
     context = QuentConfig(
         engine_id=uuid.uuid4(),
         output_root=str(tmp_path),
+        device_memory_poll_interval_s=interval_s,
         query=QuentQueryConfig(
             query_group_id=uuid.uuid4(),
             query_group_name="group",
@@ -114,6 +116,28 @@ def test_worker_resources_declares_inter_rank_channel() -> None:
     session = MagicMock()
     resources.declare(session)
 
+    sampled_memory_observer = (
+        session.binding_context.sampled_memory_resource_observer.return_value
+    )
+    assert sampled_memory_observer.handle.call_args_list == [
+        call(resources.sampled_device_memory_resource_id),
+        call(resources.sampled_host_memory_resource_id),
+    ]
+    sampled_memory_observer.handle.return_value.declared.assert_has_calls(
+        [
+            call(
+                instance_name="rank-0 sampled device memory",
+                memory_type="device",
+                worker=worker_id,
+            ),
+            call(
+                instance_name="rank-0 sampled host memory",
+                memory_type="host",
+                worker=worker_id,
+            ),
+        ]
+    )
+
     data_channel_observer = session.binding_context.data_channel_observer.return_value
     link_channel_id = resources.link_channel_ids[1]
     assert data_channel_observer.handle.call_args_list == [
@@ -151,6 +175,7 @@ def test_emit_evaluate_failure() -> None:
         session=MagicMock(),
         worker_resources=MagicMock(),
         _worker_handle=MagicMock(),
+        br=MagicMock(),
     )
     runtime.session._evaluations = {
         evaluate_id: running_evaluation,

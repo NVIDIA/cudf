@@ -190,25 +190,26 @@ def _worker_evaluate_persisted(
         raise RuntimeError(
             "_setup_worker must be called before _worker_evaluate_persisted"
         )
-    quent_query_worker_state = None
+    query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+        contextlib.nullcontext()
+    )
     if config_options.executor.quent_context is not None:
         assert mp_ctx.quent_worker_runtime is not None
-        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
-            query_id
+        query_scope = mp_ctx.quent_worker_runtime.query(query_id)
+    with query_scope as quent_query_worker_state:
+        return persisted_result.evaluate_and_persist(
+            uid,
+            mp_ctx.ctx,
+            mp_ctx.comm,
+            mp_ctx.py_executor,
+            ir,
+            config_options,
+            query_id,
+            # Partitions are gathered to the client and concatenated, so a duplicated
+            # output is deduplicated to a single copy.
+            deduplicate_replicated=True,
+            quent_query_worker_state=quent_query_worker_state,
         )
-    return persisted_result.evaluate_and_persist(
-        uid,
-        mp_ctx.ctx,
-        mp_ctx.comm,
-        mp_ctx.py_executor,
-        ir,
-        config_options,
-        query_id,
-        # Partitions are gathered to the client and concatenated, so a duplicated
-        # output is deduplicated to a single copy.
-        deduplicate_replicated=True,
-        quent_query_worker_state=quent_query_worker_state,
-    )
 
 
 class DaskPersistedBackend(PersistedBackend):
@@ -227,14 +228,26 @@ class DaskPersistedBackend(PersistedBackend):
     ) -> list[int]:
         """Run the query on every worker (see :class:`PersistedBackend`)."""
         worker_config = config_options.drop_unserializable()
+        quent_context = config_options.executor.quent_context
+        dask_context = config_options.executor.dask_context
+        assert dask_context is not None
+        quent_runtime = dask_context.quent_controller_runtime
+        if quent_context is not None:
+            assert quent_runtime is not None
+            query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+                query_id, query_config=quent_context.query
+            )
+        else:
+            query_scope = contextlib.nullcontext()
         # {worker_address: rank}; the partition for that rank stays there.
         try:
-            rank_map = self._client.run(
-                functools.partial(_worker_evaluate_persisted, uid=self._uid),
-                ir,
-                worker_config,
-                query_id=query_id,
-            )
+            with query_scope:
+                rank_map = self._client.run(
+                    functools.partial(_worker_evaluate_persisted, uid=self._uid),
+                    ir,
+                    worker_config,
+                    query_id=query_id,
+                )
         except Exception:
             # A worker may have failed after others already stored their
             # partition. _addresses is still empty (client.run raised before
@@ -471,6 +484,8 @@ def _update_quent_on_worker(
             mp_ctx.quent_worker_runtime = None
     if quent_context is not None and collector_address is not None:
         assert mp_ctx.comm is not None
+        assert mp_ctx.ctx is not None
+        assert mp_ctx.mr is not None
         worker_id = uuid.uuid4()
         mp_ctx.quent_worker_runtime = QuentWorkerRuntime.create(
             quent_context,
@@ -479,6 +494,7 @@ def _update_quent_on_worker(
             rank=mp_ctx.comm.rank,
             nranks=mp_ctx.comm.nranks,
             instance_name=f"DaskWorker-rank{mp_ctx.comm.rank}",
+            br=mp_ctx.ctx.br(),
         )
 
 
@@ -626,6 +642,8 @@ def _reset_worker(
     )
     mp_ctx.mr = mp_ctx.ctx.br().device_mr_adaptor()
     rmm.mr.set_current_device_resource(mp_ctx.mr)
+    if mp_ctx.quent_worker_runtime is not None:
+        mp_ctx.quent_worker_runtime.update_buffer_resource(mp_ctx.ctx.br())
 
 
 def _get_cluster_info(
@@ -795,12 +813,12 @@ def _worker_evaluate(
     mp_ctx: _WorkerContext = getattr(dask_worker, f"_cudf_polars_mp_context_{uid}")
     if mp_ctx.ctx is None or mp_ctx.comm is None or mp_ctx.py_executor is None:
         raise RuntimeError("_setup_worker must be called before _worker_evaluate")
-    quent_query_worker_state: QuentQueryWorkerState | None = None
+    query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+        contextlib.nullcontext()
+    )
     if quent_context is not None:
         assert mp_ctx.quent_worker_runtime is not None
-        quent_query_worker_state = mp_ctx.quent_worker_runtime.query_worker_state(
-            query_id
-        )
+        query_scope = mp_ctx.quent_worker_runtime.query(query_id)
     # evaluate_on_rank always collects metadata internally so we can read
     # metadata[-1].duplicated to decide whether to suppress this rank's output.
     # The client concatenates each rank's result, so without this dedup an
@@ -808,15 +826,16 @@ def _worker_evaluate(
     # collect_metadata parameter still controls whether the collected list is
     # returned to the client (see the return statement), which is the cost we
     # care about saving when the caller doesn't need the metadata.
-    gpu_df, metadata = evaluate_on_rank(
-        mp_ctx.ctx,
-        mp_ctx.comm,
-        mp_ctx.py_executor,
-        ir,
-        config_options,
-        quent_query_worker_state=quent_query_worker_state,
-        query_id=query_id,
-    )
+    with query_scope as quent_query_worker_state:
+        gpu_df, metadata = evaluate_on_rank(
+            mp_ctx.ctx,
+            mp_ctx.comm,
+            mp_ctx.py_executor,
+            ir,
+            config_options,
+            quent_query_worker_state=quent_query_worker_state,
+            query_id=query_id,
+        )
     gpu_df = drop_if_replicated(gpu_df, mp_ctx.comm.rank, metadata)
     return mp_ctx.comm.rank, gpu_df.to_polars(), metadata if collect_metadata else None
 

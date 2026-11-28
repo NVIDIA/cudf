@@ -102,16 +102,28 @@ class RayPersistedBackend(PersistedBackend):
     ) -> list[int]:
         """Run the query on every actor (see :class:`PersistedBackend`)."""
         actor_config_options = config_options.drop_unserializable()
+        quent_context = config_options.executor.quent_context
+        ray_context = config_options.executor.ray_context
+        assert ray_context is not None
+        quent_runtime = ray_context.quent_controller_runtime
+        if quent_context is not None:
+            assert quent_runtime is not None
+            query_scope: contextlib.AbstractContextManager = quent_runtime.query(
+                query_id, query_config=quent_context.query
+            )
+        else:
+            query_scope = contextlib.nullcontext()
         ir_ref = ray.put(ir)
         try:
-            return ray.get(
-                [
-                    actor.execute_persisted.remote(
-                        self._uid, ir_ref, actor_config_options, query_id=query_id
-                    )
-                    for actor in self._rank_actors
-                ]
-            )
+            with query_scope:
+                return ray.get(
+                    [
+                        actor.execute_persisted.remote(
+                            self._uid, ir_ref, actor_config_options, query_id=query_id
+                        )
+                        for actor in self._rank_actors
+                    ]
+                )
         except Exception:
             # An actor may have failed after others already stored their
             # partition. Drop the query on every actor (idempotent) to avoid
@@ -389,6 +401,8 @@ class RankActor:
                 self._quent_worker_runtime = None
         if quent_context is not None and collector_address is not None:
             assert self._comm is not None
+            assert self._ctx is not None
+            assert self._mr is not None
             self._quent_worker_runtime = QuentWorkerRuntime.create(
                 quent_context,
                 collector_address,
@@ -396,6 +410,7 @@ class RankActor:
                 rank=self._comm.rank,
                 nranks=self._nranks,
                 instance_name=f"RankActor-{self._worker_id.hex[:8]}",
+                br=self._ctx.br(),
             )
 
     def reset(
@@ -474,6 +489,8 @@ class RankActor:
         # to the now-shutdown Context.
         self._mr = self._ctx.br().device_mr_adaptor()
         rmm.mr.set_current_device_resource(self._mr)
+        if self._quent_worker_runtime is not None:
+            self._quent_worker_runtime.update_buffer_resource(self._ctx.br())
 
     def shutdown(self) -> None:
         """
@@ -610,12 +627,12 @@ class RankActor:
         # object store (pickle / Arrow IPC). The DataFrame is already on CPU at
         # this point (to_polars() copies the result off-GPU), so no GPU memory
         # crosses process boundaries.
-        quent_query_worker_state: QuentQueryWorkerState | None = None
+        query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+            contextlib.nullcontext()
+        )
         if quent_context is not None:
             assert self._quent_worker_runtime is not None
-            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
-                query_id
-            )
+            query_scope = self._quent_worker_runtime.query(query_id)
         # evaluate_on_rank always collects metadata internally so we can read
         # metadata[-1].duplicated to decide whether to suppress this rank's
         # output. The client concatenates each rank's result, so without this
@@ -624,15 +641,16 @@ class RankActor:
         # collected list is returned to the client (see the return statement),
         # which is the cost we care about saving when the caller doesn't need
         # the metadata.
-        gpu_df, metadata = evaluate_on_rank(
-            self._ctx,
-            self._comm,
-            self._py_executor,
-            ir,
-            config_options,
-            quent_query_worker_state=quent_query_worker_state,
-            query_id=query_id,
-        )
+        with query_scope as quent_query_worker_state:
+            gpu_df, metadata = evaluate_on_rank(
+                self._ctx,
+                self._comm,
+                self._py_executor,
+                ir,
+                config_options,
+                quent_query_worker_state=quent_query_worker_state,
+                query_id=query_id,
+            )
         gpu_df = drop_if_replicated(gpu_df, self._comm.rank, metadata)
         return (
             self._comm.rank,
@@ -673,25 +691,26 @@ class RankActor:
         """
         if self._ctx is None or self._comm is None:
             raise RuntimeError("setup_worker must be called before execute_persisted")
-        quent_query_worker_state = None
+        query_scope: contextlib.AbstractContextManager[QuentQueryWorkerState | None] = (
+            contextlib.nullcontext()
+        )
         if config_options.executor.quent_context is not None:
             assert self._quent_worker_runtime is not None
-            quent_query_worker_state = self._quent_worker_runtime.query_worker_state(
-                query_id
+            query_scope = self._quent_worker_runtime.query(query_id)
+        with query_scope as quent_query_worker_state:
+            return persisted_result.evaluate_and_persist(
+                uid,
+                self._ctx,
+                self._comm,
+                self._py_executor,
+                ir,
+                config_options,
+                query_id,
+                # Partitions are gathered to the client and concatenated, so a
+                # duplicated output is deduplicated to a single copy.
+                deduplicate_replicated=True,
+                quent_query_worker_state=quent_query_worker_state,
             )
-        return persisted_result.evaluate_and_persist(
-            uid,
-            self._ctx,
-            self._comm,
-            self._py_executor,
-            ir,
-            config_options,
-            query_id,
-            # Partitions are gathered to the client and concatenated, so a
-            # duplicated output is deduplicated to a single copy.
-            deduplicate_replicated=True,
-            quent_query_worker_state=quent_query_worker_state,
-        )
 
     def drop_persisted(self, uid: str, query_id: uuid.UUID) -> None:
         """Drop this query's partitions from this engine's store (idempotent)."""

@@ -555,7 +555,19 @@ def _quent_context_converter(v: str) -> QuentConfig | None:
         raise ValueError(f"Invalid value for quent_context: '{v}'") from e
     else:
         if enabled:
-            return QuentConfig()
+            interval = os.environ.get(
+                "CUDF_POLARS__EXECUTOR__QUENT_CONTEXT__DEVICE_MEMORY_POLL_INTERVAL_S"
+            )
+            if interval is None:
+                return QuentConfig()
+            try:
+                return QuentConfig(device_memory_poll_interval_s=float(interval))
+            except ValueError as e:
+                raise ValueError(
+                    "Invalid value for "
+                    "quent_context.device_memory_poll_interval_s: "
+                    f"'{interval}'"
+                ) from e
         else:
             return None
 
@@ -1241,7 +1253,8 @@ class StreamingExecutor:
         variable (``true`` enables tracing with a default context, ``false``
         disables it). The controller-local Collector staging path can be set
         with ``CUDF_POLARS__EXECUTOR__QUENT_OUTPUT_ROOT``; workers do not access
-        this path.
+        this path. The device-memory sampling interval can be set with
+        ``CUDF_POLARS__EXECUTOR__QUENT_CONTEXT__DEVICE_MEMORY_POLL_INTERVAL_S``.
 
     Notes
     -----

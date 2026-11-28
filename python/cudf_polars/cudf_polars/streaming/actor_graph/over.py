@@ -98,6 +98,7 @@ from cudf_polars.streaming.utils import _contains_input_order_window_without_ord
 from cudf_polars.utils.cuda_stream import stream_ordered_after
 
 if TYPE_CHECKING:
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -167,12 +168,12 @@ def _broadcast_gw_sync(
 
 
 def _evaluate_ir_broadcast_sync(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     ir: Over,
     global_agg_df: DataFrame,
     key_names: tuple[str, ...],
     br: BufferResource,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """Map the per-group aggregate onto a chunk's rows to produce its Over output."""
     chunk_df = chunk_to_frame(chunk, ir.children[0])
     # global_agg_df and chunk_df may live on different streams. Since we do
@@ -265,12 +266,12 @@ _ORIGIN_STAMP_BYTES_PER_ROW = 3 * 4
 
 
 def _append_origin_stamps(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     chunk_index: int,
     origin_rank: int,
     stream: Stream,
     br: Any,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """Append (chunk_index, position, rank) stamp columns to *chunk*."""
     table = chunk.table_view()
     n_rows = table.num_rows()
@@ -296,7 +297,7 @@ def _append_origin_stamps(
 
 
 def _evaluate_window_with_stamps(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     ir: Over,
     ir_context: IRExecutionContext,
     stamps: OriginStamps,
@@ -342,7 +343,7 @@ def _evaluate_window_with_stamps(
 def _split_off_origin_rank(
     result: DataFrame,
     br: Any,
-) -> tuple[TableChunk, TableChunk] | None:
+) -> tuple[AvailableTableChunk, AvailableTableChunk] | None:
     """
     Split the origin-rank stamp off the evaluated result.
 
@@ -709,7 +710,7 @@ async def _shuffle_and_reassemble(
         sample_byte_count,
     )
 
-    ch_replay = context.create_channel()
+    ch_replay: Channel[TableChunk] = context.create_channel()
     sort_by_input_order = _contains_input_order_window_without_order_by(
         [ne.value for ne in ir.exprs]
     )

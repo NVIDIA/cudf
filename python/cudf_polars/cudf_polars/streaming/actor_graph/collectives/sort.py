@@ -498,8 +498,8 @@ async def sort_actor(
     collective_ids: list[int],
 ) -> None:
     """Streaming sort actor."""
-    ch_sample_replay = context.create_channel()
-    ch_chunk_store = context.create_channel()
+    ch_sample_replay: Channel[TableChunk] = context.create_channel()
+    ch_chunk_store: Channel[TableChunk] = context.create_channel()
     async with shutdown_on_error(
         context,
         chs_in=(ch_in,),

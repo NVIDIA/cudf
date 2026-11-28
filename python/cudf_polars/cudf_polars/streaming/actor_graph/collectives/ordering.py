@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from cudf_streaming.channel_metadata import OrderKey
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.memory.packed_data import PackedData
@@ -456,7 +457,7 @@ class _RoutingPlan:
         ir_context: IRExecutionContext,
         input_ordering: Ordering,
         output_ordering: Ordering,
-        output_boundaries: TableChunk,
+        output_boundaries: AvailableTableChunk,
     ) -> _RoutingPlan:
         """Compute local ownership and sparse-exchange obligations."""
         npartitions = output_ordering.num_boundaries + 1
@@ -694,7 +695,7 @@ async def _unpack_remote_partition(
     context: Context,
     packed: PackedData,
     stream: Stream,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """Unpack one remote output-partition payload."""
     br = context.br()
     partitions = [packed]
@@ -743,7 +744,7 @@ class _OutputPartitionBuffer:
         context: Context,
         ir_context: IRExecutionContext,
         ch_in: Channel[TableChunk],
-        boundary_chunk: TableChunk,
+        boundary_chunk: AvailableTableChunk,
         input_ordering: Ordering,
         output_ordering: Ordering,
         *,
@@ -1062,13 +1063,13 @@ async def _adjust_ordering_impl(
             chunks.extend(
                 TableChunk.from_message(msg, br=context.br()) for msg in pid_store
             )
-        chunk = await _assemble_partition(
+        partition = await _assemble_partition(
             context,
             schema_ir,
             ir_context,
             chunks,
         )
-        await ch_out.send(context, Message(pid, chunk))
+        await ch_out.send(context, Message(pid, partition))
     await buffer.assert_input_drained()
     await ch_out.drain(context)
 

@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
+    from rapidsmpf.streaming.core.message import Message
 
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.streaming.actor_graph.dispatch import SubNetGenerator
@@ -140,7 +141,7 @@ async def concatenate_node(
         )
 
         chunks: list[TableChunk]
-        msg: TableChunk | None
+        msg: Message[TableChunk] | None
         if need_global_repartition:
             # Global repartitioning via AllGather to single duplicated chunk.
 
@@ -209,11 +210,12 @@ async def concatenate_node(
                     chunks.append(TableChunk.from_message(msg, br=context.br()))
 
                 if chunks:
+                    merged_chunk: TableChunk
                     if len(chunks) == 1:
-                        (output_chunk,) = chunks
+                        (merged_chunk,) = chunks
                         del chunks
                     else:
-                        chunks, extra = await make_table_chunks_available_or_wait(
+                        available, extra = await make_table_chunks_available_or_wait(
                             context,
                             chunks,
                             reserve_extra=sum(
@@ -231,19 +233,19 @@ async def concatenate_node(
                                         list(ir.schema.values()),
                                         chunk.stream,
                                     )
-                                    for chunk in chunks
+                                    for chunk in available
                                 ),
                                 context=ir_context,
                             )
-                            output_chunk = TableChunk.from_pylibcudf_table(
+                            merged_chunk = TableChunk.from_pylibcudf_table(
                                 df.table,
                                 df.stream,
                                 exclusive_view=True,
                                 br=context.br(),
                             )
-                            del df, chunks
+                            del df, chunks, available
                     await send_chunk(
-                        context, ch_out, output_chunk, seq_num, tracer=tracer
+                        context, ch_out, merged_chunk, seq_num, tracer=tracer
                     )
                     seq_num += 1
 

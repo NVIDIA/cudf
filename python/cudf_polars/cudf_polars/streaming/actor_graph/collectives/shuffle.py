@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from types import TracebackType
 
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.packed_data import PackedData
     from rapidsmpf.streaming.core.channel import Channel
@@ -106,7 +107,7 @@ class ShuffleManager:
             self._manager = manager
 
         async def insert_hash(
-            self, chunk: TableChunk, columns_to_hash: tuple[int, ...]
+            self, chunk: AvailableTableChunk, columns_to_hash: tuple[int, ...]
         ) -> None:
             """Partition chunk by hash and insert into the shuffler."""
             br = self._manager.context.br()
@@ -129,7 +130,10 @@ class ShuffleManager:
             )
 
         async def insert_hash_keys(
-            self, chunk: TableChunk, keys: tuple[NamedExpr, ...], schema: Schema
+            self,
+            chunk: AvailableTableChunk,
+            keys: tuple[NamedExpr, ...],
+            schema: Schema,
         ) -> None:
             """Partition chunk by hash of ``keys`` evaluated over it, and insert."""
             br = self._manager.context.br()
@@ -167,7 +171,9 @@ class ShuffleManager:
                 )
             )
 
-        async def insert_split(self, chunk: TableChunk, splits: list[int]) -> None:
+        async def insert_split(
+            self, chunk: AvailableTableChunk, splits: list[int]
+        ) -> None:
             """Split chunk at the given indices and insert into the shuffler."""
             br = self._manager.context.br()
             reservation = await reserve_memory(
@@ -189,8 +195,8 @@ class ShuffleManager:
 
         async def insert_index(
             self,
-            chunk: TableChunk,
-            partition_map: TableChunk,
+            chunk: AvailableTableChunk,
+            partition_map: AvailableTableChunk,
             *,
             ir_context: IRExecutionContext,
         ) -> None:
@@ -519,7 +525,7 @@ def _ensure_pointwise_keys(keys: tuple[NamedExpr, ...]) -> None:
 
 
 def _evaluate_key_table(
-    chunk: TableChunk, keys: tuple[NamedExpr, ...], schema: Schema
+    chunk: AvailableTableChunk, keys: tuple[NamedExpr, ...], schema: Schema
 ) -> plc.Table:
     df = DataFrame.from_table(
         chunk.table_view(),

@@ -35,7 +35,9 @@ from cudf_polars.utils.cuda_stream import join_cuda_streams
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Iterable, Sequence
+    from contextlib import AbstractContextManager
 
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from pylibcudf.utils import CudaStreamLike
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
@@ -77,7 +79,7 @@ class RangeValidation(IntEnum):
 class BufferedChunk:
     """An available chunk with its span in the prepared input stream."""
 
-    chunk: TableChunk
+    chunk: AvailableTableChunk
     row_start: int
     num_rows: int
 
@@ -344,7 +346,7 @@ class RangeOverlapPolicy(_OverlapPolicy[RangeBufferedChunk]):
     ) -> int:
         """Find a needle's insertion point in one available index column."""
         needs_cast = index_column.type() != dtype
-        memory_scope = nullcontext()
+        memory_scope: AbstractContextManager[object] = nullcontext()
         if needs_cast:
             memory_scope = opaque_memory_usage(
                 await reserve_memory(
@@ -1250,7 +1252,7 @@ class OverlapInput[BufferedChunkT: BufferedChunk]:
     async def _range_pieces(
         self,
         policy: RangeOverlapPolicy,
-        chunk: TableChunk,
+        chunk: AvailableTableChunk,
         size: int,
         chunk_values: RangeValues,
         requests: Sequence[RangeRequest],

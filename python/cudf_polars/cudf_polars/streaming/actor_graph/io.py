@@ -85,7 +85,7 @@ def resolve_max_concurrent_io_tasks(
     return max_concurrent_io_tasks.local
 
 
-class Lineariser:
+class Lineariser[PayloadT]:
     """
     Linearizer that ensures ordered delivery from multiple concurrent producers.
 
@@ -95,16 +95,16 @@ class Lineariser:
     numbers should be assigned round-robin to producers.
     """
 
-    def __init__(
-        self, context: Context, ch_out: Channel[TableChunk], num_producers: int
-    ):
+    def __init__(self, context: Context, ch_out: Channel[PayloadT], num_producers: int):
         self.context = context
         self.ch_out = ch_out
         self.num_producers = num_producers
-        self.input_channels = [context.create_channel() for _ in range(num_producers)]
+        self.input_channels: list[Channel[PayloadT]] = [
+            context.create_channel() for _ in range(num_producers)
+        ]
         self._producer_slots = [asyncio.Semaphore(1) for _ in range(num_producers)]
 
-    async def acquire(self, producer_id: int) -> Channel[TableChunk]:
+    async def acquire(self, producer_id: int) -> Channel[PayloadT]:
         """
         Wait for capacity to produce, then return the producer's channel.
 

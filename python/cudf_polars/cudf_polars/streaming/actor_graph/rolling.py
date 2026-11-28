@@ -43,6 +43,7 @@ from cudf_polars.utils.cuda_stream import stream_ordered_after
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
@@ -116,7 +117,7 @@ class RollingManager[BufferedChunkT: BufferedChunk]:
         self,
         cursor: BufferedChunkT,
         chunks: Sequence[BufferedChunkT],
-    ) -> TableChunk:
+    ) -> AvailableTableChunk:
         """
         Evaluate one owned cursor with its required overlap.
 

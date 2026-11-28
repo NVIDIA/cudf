@@ -62,6 +62,7 @@ if TYPE_CHECKING:
     import cudf_polars_quent as _quent
 
     from cudf_streaming import CardinalityEstimator
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
     from rapidsmpf.streaming.core.channel import Channel
@@ -435,13 +436,13 @@ def _make_hash_shuffle_metadata(
 
 
 def _evaluate_chunk_sync(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     ir: IR,
     ir_context: IRExecutionContext,
     br: BufferResource,
     *,
     ordering_metadata: OrderingMetadata | None = None,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Apply an IR node's do_evaluate to a table chunk (synchronous).
 
@@ -480,7 +481,7 @@ async def evaluate_chunk(
     ir_context: IRExecutionContext,
     ordering_metadata: OrderingMetadata | None = None,
     already_available: bool = False,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Make chunk available, reserve memory, and evaluate.
 
@@ -526,23 +527,26 @@ async def evaluate_chunk(
     assert len(irs) > 0, "Expected at least one IR node"
     on_oom = ir_context.rank_local_cpu_compute == RankLocalCPUComputeMode.ON_OOM
     overbooked = 0
-    if already_available and not chunk.is_available():
-        raise ValueError("already_available=True requires an available TableChunk")
+    available: AvailableTableChunk | None = None
+    if already_available:
+        if not TableChunk.is_available(chunk):
+            raise ValueError("already_available=True requires an available TableChunk")
+        available = chunk
     if on_oom:
         size = chunk.data_alloc_size()
-        if not already_available:
+        if available is None:
             size += chunk.make_available_cost()
         reservation, overbooked = await context.memory(
             MemoryType.DEVICE
         ).reserve_or_wait_or_overbook(size, net_memory_delta=0)
-        if not already_available:
-            chunk = chunk.make_available(reservation)
-    elif already_available:
+        if available is None:
+            available = chunk.make_available(reservation)
+    elif available is not None:
         reservation = await reserve_memory(
-            context, size=chunk.data_alloc_size(), net_memory_delta=0
+            context, size=available.data_alloc_size(), net_memory_delta=0
         )
     else:
-        chunk, reservation = await make_table_chunks_available_or_wait(
+        available, reservation = await make_table_chunks_available_or_wait(
             context,
             chunk,
             reserve_extra=chunk.data_alloc_size(),
@@ -557,16 +561,16 @@ async def evaluate_chunk(
         )
     with opaque_memory_usage(reservation):
         for single_ir in irs:
-            chunk = await ir_context.to_thread(
+            available = await ir_context.to_thread(
                 _evaluate_chunk_sync,
-                chunk,
+                available,
                 single_ir,
                 ir_context,
                 context.br(),
                 ordering_metadata=ordering_metadata,
             )
             ordering_metadata = None
-        return chunk
+        return available
 
 
 async def allgather_and_reduce(
@@ -576,7 +580,7 @@ async def allgather_and_reduce(
     local_chunk: TableChunk,
     reduce_ir: IR,
     ir_context: IRExecutionContext,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     AllGather ``local_chunk`` across ranks and apply ``reduce_ir`` to the result.
 
@@ -616,11 +620,11 @@ async def allgather_and_reduce(
 
 
 async def concat_batch(
-    batch: list[TableChunk],
+    batch: Sequence[TableChunk],
     context: Context,
     schema: Schema,
     ir_context: IRExecutionContext,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Concatenate a list of table chunks.
 
@@ -641,11 +645,11 @@ async def concat_batch(
     """
     if len(batch) == 1:
         (chunk,) = batch
-        chunk, _ = await make_table_chunks_available_or_wait(
+        available, _ = await make_table_chunks_available_or_wait(
             context, chunk, reserve_extra=0, net_memory_delta=0
         )
-        return chunk
-    batch, extra = await make_table_chunks_available_or_wait(
+        return available
+    available_batch, extra = await make_table_chunks_available_or_wait(
         context,
         batch,
         reserve_extra=sum(c.data_alloc_size() for c in batch),
@@ -661,7 +665,7 @@ async def concat_batch(
                     list(schema.values()),
                     c.stream,
                 )
-                for c in batch
+                for c in available_batch
             ],
             context=ir_context,
         )
@@ -671,11 +675,11 @@ async def concat_batch(
 
 
 async def evaluate_batch(
-    batch: list[TableChunk],
+    batch: Sequence[TableChunk],
     context: Context,
     *irs: IR,
     ir_context: IRExecutionContext,
-) -> TableChunk:
+) -> AvailableTableChunk:
     """
     Concatenate a list of table chunks and evaluate the result.
 
@@ -945,14 +949,14 @@ class ChunkSampler:
 
     async def sample(self) -> TableSizeStats:
         """Sample the configured channel and return extrapolated statistics."""
-        ch_sampled = self.context.create_channel()
-        temporary_channels = [ch_sampled]
+        ch_sampled: Channel[TableChunk] = self.context.create_channel()
+        temporary_channels: list[Channel[Any]] = [ch_sampled]
         tasks: list[Coroutine[Any, Any, Any]]
         if self.cardinality_estimator is None:
             tasks = [self.sample_channel(ch_sampled), self.store_sample(ch_sampled)]
         else:
-            ch_cardinality_input = self.context.create_channel()
-            ch_cardinality = self.context.create_channel()
+            ch_cardinality_input: Channel[TableChunk] = self.context.create_channel()
+            ch_cardinality: Channel[CardinalityEstimate] = self.context.create_channel()
             temporary_channels.extend((ch_cardinality_input, ch_cardinality))
             # The sampled output must be consumed concurrently with estimation:
             # backpressure there can prevent the cardinality result from being
@@ -1105,8 +1109,8 @@ async def replay_buffered_channel(
             trace_ir=trace_ir,
         ):
             await send_metadata(ch_out, context, metadata)
-            for msg in buffered_chunks:
-                await ch_out.send(context, msg)
+            for buffered in buffered_chunks:
+                await ch_out.send(context, buffered)
             while (msg := await ch_in.recv(context)) is not None:
                 await ch_out.send(context, msg)
             await ch_out.drain(context)
@@ -1194,7 +1198,7 @@ def process_children(
     return nodes, channels
 
 
-def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> TableChunk:
+def empty_table_chunk(ir: IR, context: Context, stream: Stream) -> AvailableTableChunk:
     """
     Make an empty table chunk.
 
@@ -1253,7 +1257,7 @@ def _apply_ordering_metadata(
 
 
 def chunk_to_frame(
-    chunk: TableChunk,
+    chunk: AvailableTableChunk,
     ir: IR,
     *,
     ordering_metadata: OrderingMetadata | None = None,

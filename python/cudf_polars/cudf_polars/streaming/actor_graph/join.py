@@ -91,6 +91,7 @@ if TYPE_CHECKING:
     from collections.abc import MutableMapping, Sequence
 
     from cudf_streaming.channel_metadata import Ordering
+    from cudf_streaming.table_chunk import AvailableTableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
@@ -384,7 +385,7 @@ async def _collect_small_side_for_broadcast(
                 "Broadcast join selected but broadcast side cannot be constructed"
             )
         if can_concatenate:
-            chunks, extra = await make_table_chunks_available_or_wait(
+            available, extra = await make_table_chunks_available_or_wait(
                 context,
                 chunks,
                 reserve_extra=0 if len(chunks) == 1 else size,
@@ -393,7 +394,7 @@ async def _collect_small_side_for_broadcast(
             with opaque_memory_usage(extra):
                 dfs = [
                     _concat(
-                        *[chunk_to_frame(chunk, ir) for chunk in chunks],
+                        *[chunk_to_frame(chunk, ir) for chunk in available],
                         context=ir_context,
                     )
                 ]
@@ -415,7 +416,7 @@ async def _collect_small_side_for_broadcast(
                 groups.append(group)
             for group in groups:
                 group_size = sum(chunk.data_alloc_size() for chunk in group)
-                group, extra = await make_table_chunks_available_or_wait(  # noqa: PLW2901
+                available, extra = await make_table_chunks_available_or_wait(
                     context,
                     group,
                     reserve_extra=0 if len(group) == 1 else group_size,
@@ -424,11 +425,11 @@ async def _collect_small_side_for_broadcast(
                 with opaque_memory_usage(extra):
                     dfs.append(
                         _concat(
-                            *[chunk_to_frame(chunk, ir) for chunk in group],
+                            *[chunk_to_frame(chunk, ir) for chunk in available],
                             context=ir_context,
                         )
                     )
-                del group
+                del group, available
 
     return dfs, size
 
@@ -439,7 +440,7 @@ async def _broadcast_join_large_chunk(
     ir_context: IRExecutionContext,
     small_dfs: list[DataFrame],
     small_child: IR,
-    large_chunk: TableChunk,
+    large_chunk: AvailableTableChunk,
     large_child: IR,
     small_size: int,
     broadcast_side: Literal["left", "right"],
@@ -988,8 +989,8 @@ async def _shuffle_join(
     # Construct a shuffle-shuffle-join pipeline.
     # The shuffle operations will pass chunks through unchanged
     # if the data is already partitioned correctly.
-    ch_left_shuffle = context.create_channel()
-    ch_right_shuffle = context.create_channel()
+    ch_left_shuffle: Channel[TableChunk] = context.create_channel()
+    ch_right_shuffle: Channel[TableChunk] = context.create_channel()
     # note: this is an actor inside of an actor. How should we log that in our traces?
     async with shutdown_on_error(
         context,
@@ -1153,8 +1154,8 @@ async def _ordered_join(
         tracer.decision = _ordered_join_decision(
             left_aligned=left_aligned, right_aligned=right_aligned
         )
-    ch_left_adjusted = context.create_channel()
-    ch_right_adjusted = context.create_channel()
+    ch_left_adjusted: Channel[TableChunk] = context.create_channel()
+    ch_right_adjusted: Channel[TableChunk] = context.create_channel()
     async with shutdown_on_error(
         context,
         chs_aux=(ch_left_adjusted, ch_right_adjusted),
@@ -1977,8 +1978,8 @@ async def join_actor(
         right_sample = join_state.right.sample
         if left_sample is None or right_sample is None:
             raise ValueError("Join inputs have not been sampled")
-        ch_left_replay = context.create_channel()
-        ch_right_replay = context.create_channel()
+        ch_left_replay: Channel[TableChunk] = context.create_channel()
+        ch_right_replay: Channel[TableChunk] = context.create_channel()
         prefilter_execution = make_prefilter_execution(
             context,
             comm,

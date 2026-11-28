@@ -33,6 +33,7 @@ from cudf_polars.streaming.actor_graph.utils import ChunkStore, gather_in_task_g
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.packed_data import PackedData
+    from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
 
@@ -107,12 +108,13 @@ def _frame(values: list[int]) -> pl.DataFrame:
     )
 
 
-def _chunk_to_polars(chunk: TableChunk) -> pl.DataFrame:
+def _chunk_to_polars(context: Context, chunk: TableChunk) -> pl.DataFrame:
+    available = chunk.make_available_and_spill(context.br(), allow_overbooking=True)
     return DataFrame.from_table(
-        chunk.table_view(),
+        available.table_view(),
         _NAMES,
         _DTYPES,
-        chunk.stream,
+        available.stream,
     ).to_polars()
 
 
@@ -127,8 +129,8 @@ async def _adjust_and_collect(
     collective_id: int,
 ) -> dict[int, pl.DataFrame]:
     """Run adjustment and collect output chunks by partition ID."""
-    ch_in = context.create_channel()
-    ch_out = context.create_channel()
+    ch_in: Channel[TableChunk] = context.create_channel()
+    ch_out: Channel[TableChunk] = context.create_channel()
     stream = context.br().stream_pool.get_stream()
     output: dict[int, pl.DataFrame] = {}
 
@@ -153,7 +155,7 @@ async def _adjust_and_collect(
     async def _consume() -> None:
         while (msg := await ch_out.recv(context)) is not None:
             output[msg.sequence_number] = _chunk_to_polars(
-                TableChunk.from_message(msg, br=context.br())
+                context, TableChunk.from_message(msg, br=context.br())
             )
 
     with ThreadPoolExecutor(max_workers=1) as executor:
@@ -199,8 +201,8 @@ async def _adjust_direct(
     input_rows_ordered: bool = True,
     collective_id: int,
 ) -> None:
-    ch_in = context.create_channel()
-    ch_out = context.create_channel()
+    ch_in: Channel[TableChunk] = context.create_channel()
+    ch_out: Channel[TableChunk] = context.create_channel()
     with ThreadPoolExecutor(max_workers=1) as executor:
         ir_context = IRExecutionContext(
             executor, get_cuda_stream=context.br().stream_pool.get_stream
@@ -754,7 +756,7 @@ def test_send_remote_partition_spilled_single_piece(
     )
     spilled = chunk.copy(reservation)
     del df, chunk
-    assert not spilled.is_available()
+    assert not TableChunk.is_available(spilled)
     store = ChunkStore(context)
     store.insert(Message(0, spilled))
     exchange = _RecordingExchange()
@@ -769,7 +771,7 @@ def test_send_remote_partition_spilled_single_piece(
                 spmd_engine.comm,
                 Empty(_SCHEMA),
                 ir_context,
-                exchange,
+                exchange,  # type: ignore[arg-type]  # test double for SparseAlltoall
                 2,
                 1,
                 store,

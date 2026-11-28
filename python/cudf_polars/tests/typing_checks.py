@@ -28,13 +28,25 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, assert_type
 
 import pylibcudf as plc
+from cudf_streaming.table_chunk import TableChunk
 
 if TYPE_CHECKING:
-    from cudf_streaming.table_chunk import TableChunk
+    from cudf_streaming.table_chunk import AvailableTableChunk
+    from rapidsmpf.streaming.core.message import Message
 
 
-def _check_table_chunk(chunk: TableChunk) -> None:
-    assert_type(chunk.table_view(), plc.Table)
-    assert_type(chunk.is_available(), bool)
+def _check_table_chunk(chunk: TableChunk, available: AvailableTableChunk) -> None:
+    assert_type(TableChunk.is_available(chunk), bool)
     assert_type(chunk.shape, tuple[int, int])
     chunk.no_such_method()  # type: ignore[attr-defined]
+    assert_type(available.table_view(), plc.Table)
+    # A chunk that may be spilled has no ``table_view``.
+    chunk.table_view()  # type: ignore[attr-defined]
+    if TableChunk.is_available(chunk):
+        assert_type(chunk.table_view(), plc.Table)
+
+
+def _check_message(msg: Message[TableChunk]) -> None:
+    assert_type(msg.sequence_number, int)
+    assert_type(msg.empty(), bool)
+    msg.no_such_method()  # type: ignore[attr-defined]

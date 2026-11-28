@@ -334,16 +334,25 @@ cdef class TableChunk:
             return sum(self.data_alloc_size(m) for m in py_MemoryType)
         return deref(self.handle_ptr()).data_alloc_size(mem_type)
 
-    def is_available(self):
+    @staticmethod
+    def is_available(TableChunk chunk not None):
         """
-        Indicates whether the underlying table data is fully available in
+        Indicates whether the table data of a chunk is fully available in
         device memory.
+
+        Type checkers narrow ``chunk`` to ``AvailableTableChunk`` when this
+        returns true.
+
+        Parameters
+        ----------
+        chunk
+            The table chunk to check.
 
         Returns
         -------
         True if the table is already available; otherwise, False.
         """
-        return deref(self.handle_ptr()).is_available()
+        return deref(chunk.handle_ptr()).is_available()
 
     def make_available_cost(self):
         """
@@ -484,7 +493,7 @@ cdef class TableChunk:
         Raises
         ------
         ValueError
-            If ``self.is_available() is False``.
+            If ``TableChunk.is_available(self) is False``.
         """
         cdef const cpp_TableChunk* handle = self.handle_ptr()
         cdef cpp_table_view ret
@@ -573,7 +582,7 @@ cdef class TableChunk:
         ------
         ValueError
             If the data is not already packed and the table is not available
-            (i.e., ``is_available() == False``).
+            (i.e., ``TableChunk.is_available(self) == False``).
         ReservationError
             If ``reservation`` is smaller than :meth:`into_packed_data_cost`.
 

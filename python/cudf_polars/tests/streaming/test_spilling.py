@@ -150,18 +150,18 @@ def test_make_spill_function(
 
         # Verify we can extract and make available a spilled message
         spilled_mid = message_ids[1][4]  # Newest message from longest queue
-        spilled_msg = buffers[1].extract(mid=spilled_mid)
+        spilled_msg: Message[TableChunk] = buffers[1].extract(mid=spilled_mid)
 
-        chunk = TableChunk.from_message(spilled_msg, br=context.br())
-        assert not chunk.is_available()  # Should be on host
+        spilled_chunk = TableChunk.from_message(spilled_msg, br=context.br())
+        assert not TableChunk.is_available(spilled_chunk)  # Should be on host
 
         # Make it available should bring it back to device
-        cost = chunk.make_available_cost()
+        cost = spilled_chunk.make_available_cost()
         assert cost > 0
         res, _ = context.br().reserve(MemoryType.DEVICE, cost, allow_overbooking=True)
-        chunk_available = chunk.make_available(res)
+        chunk_available = spilled_chunk.make_available(res)
 
-        assert chunk_available.is_available()
+        assert TableChunk.is_available(chunk_available)
         # Verify we got a valid table back
         assert chunk_available.table_view().num_rows() > 0
 

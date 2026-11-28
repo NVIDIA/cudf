@@ -29,6 +29,8 @@ from cudf_polars.streaming.actor_graph.tracing import (
 if TYPE_CHECKING:
     import pathlib
 
+    from rapidsmpf.streaming.core.channel import Channel
+
     from cudf_polars.engine.spmd import SPMDEngine
 
 
@@ -74,7 +76,7 @@ def test_send_chunk_traces_and_sends_message(
     spmd_engine: SPMDEngine, chunk: TableChunk
 ) -> None:
     context = spmd_engine.context
-    ch_out = context.create_channel()
+    ch_out: Channel[TableChunk] = context.create_channel()
     tracer = ActorTracer()
 
     async def send_and_recv():
@@ -95,7 +97,7 @@ def test_send_chunk_traces_and_sends_message(
 @pytest.mark.spmd
 def test_lineariser_backpressures_each_producer(spmd_engine: SPMDEngine) -> None:
     context = spmd_engine.context
-    ch_out = context.create_channel()
+    ch_out: Channel[ArbitraryChunk[int]] = context.create_channel()
     lineariser = Lineariser(context, ch_out, num_producers=2)
     produced: list[list[int]] = [[], []]
     output: list[int] = []

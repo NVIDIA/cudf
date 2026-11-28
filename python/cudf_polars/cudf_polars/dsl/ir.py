@@ -267,6 +267,9 @@ def concatenate_chunks(
         )
 
 
+# The largest row count libcudf accepts (cudf::size_type is an int32).
+_MAX_LIBCUDF_ROWS = 2**31 - 1
+
 _BINOPS = {
     plc.binaryop.BinaryOperator.EQUAL,
     plc.binaryop.BinaryOperator.NOT_EQUAL,
@@ -1270,9 +1273,16 @@ class Scan(IR):
             decimal = "," if parse_options["decimal_comma"] else "."
 
             # polars skips blank lines at the beginning of the file
-            pieces = []
             seen_paths = []
+            # libcudf can only skip rows within one file, so for several files
+            # the scan-level offset is consumed across the per-file results.
+            csv_skip_rows = skip_rows if len(paths) == 1 else 0
+            skip_left = skip_rows - csv_skip_rows
             read_partial = n_rows != -1
+            csv_rows_per_path = []
+            tables = []
+            colnames = []
+            empty = None
             for p in paths:
                 # skip_lines skips raw lines (ignoring quoting) before anything else
                 skiprows = reader_options["skip_rows"] + reader_options["skip_lines"]
@@ -1284,8 +1294,12 @@ class Scan(IR):
                         skiprows += 1
                 csv_builder = (
                     plc.io.csv.CsvReaderOptions.builder(plc.io.SourceInfo([path]))
-                    .nrows(n_rows)
-                    .skiprows(skiprows + skip_rows)
+                    .nrows(
+                        min(n_rows + skip_left, _MAX_LIBCUDF_ROWS)
+                        if read_partial
+                        else n_rows
+                    )
+                    .skiprows(skiprows + csv_skip_rows)
                     .skip_blank_lines(skip_blank_lines=False)
                     .lineterminator(str(eol))
                     .decimal(decimal)
@@ -1301,7 +1315,7 @@ class Scan(IR):
                 if column_names is not None:
                     options.set_names([str(name) for name in column_names])
                 else:
-                    if header > -1 and skip_rows > header:  # pragma: no cover
+                    if header > -1 and csv_skip_rows > header:  # pragma: no cover
                         # We need to read the header otherwise we would skip it
                         column_names = read_csv_header(path, str(sep))
                         options.set_names(column_names)
@@ -1320,26 +1334,40 @@ class Scan(IR):
                 if comment is not None:
                     options.set_comment(comment)
                 tbl_w_meta = plc.io.csv.read_csv(options, stream=stream)
-                pieces.append(tbl_w_meta)
+                table = tbl_w_meta.tbl
+                num_rows = table.num_rows()
+                capped = read_partial and n_rows + skip_left > _MAX_LIBCUDF_ROWS
+                if capped and num_rows == _MAX_LIBCUDF_ROWS:
+                    raise NotImplementedError(
+                        "CSV file has at least as many rows as libcudf can read at once"
+                    )
+                if empty is None:
+                    colnames = tbl_w_meta.column_names(include_children=False)
+                    empty = plc.copying.empty_like(table, stream=stream)
+                dropped = min(skip_left, num_rows)
+                skip_left -= dropped
+                if dropped < num_rows:
+                    if dropped and table.num_columns() > 0:
+                        table = plc.copying.slice(
+                            table, [dropped, num_rows], stream=stream
+                        )[0]
+                    tables.append(table)
+                csv_rows_per_path.append(num_rows - dropped)
                 if include_file_paths is not None:
                     seen_paths.append(p)
                 if read_partial:
-                    n_rows -= tbl_w_meta.tbl.num_rows()
+                    n_rows -= num_rows - dropped
                     if n_rows <= 0:
                         break
-            tables, (colnames, *_) = zip(
-                *(
-                    (piece.tbl, piece.column_names(include_children=False))
-                    for piece in pieces
-                ),
-                strict=True,
-            )
             if usecols == []:
                 # Only the number of rows is needed.
-                table = plc.Table([], num_rows=sum(t.num_rows() for t in tables))
+                table = plc.Table([], num_rows=sum(csv_rows_per_path))
                 colnames = []
             else:
-                table = plc.concatenate.concatenate(list(tables), stream=stream)
+                if not tables:
+                    assert empty is not None
+                    tables = [empty]
+                table = plc.concatenate.concatenate(tables, stream=stream)
             df = DataFrame.from_table(
                 table,
                 colnames,
@@ -1351,7 +1379,7 @@ class Scan(IR):
                     include_file_paths,
                     seen_paths,
                     df,
-                    rows_per_path=[t.num_rows() for t in tables],
+                    rows_per_path=csv_rows_per_path,
                 )
         elif typ == "parquet" and lake_options is not None:
             hive_names = (

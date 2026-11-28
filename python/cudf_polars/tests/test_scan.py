@@ -18,6 +18,7 @@ from werkzeug import Response
 import polars as pl
 
 from cudf_polars.containers import DataType
+from cudf_polars.dsl import ir
 from cudf_polars.dsl.ir import IRExecutionContext, Scan
 from cudf_polars.dsl.translate import Translator
 from cudf_polars.testing.asserts import (
@@ -390,6 +391,80 @@ def test_scan_csv_multi(engine: pl.GPUEngine, tmp_path, filename, glob, nrows_sk
         source = tmp_path / filename
     q = pl.scan_csv(source, glob=glob, n_rows=n_rows, skip_rows=skiprows)
 
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.fixture
+def csv_files(tmp_path):
+    paths = []
+    for name, start in (("a.csv", 0), ("b.csv", 100), ("c.csv", 200)):
+        path = tmp_path / name
+        path.write_text("x\n" + "".join(f"{start + i}\n" for i in range(8)))
+        paths.append(path)
+    return paths
+
+
+@pytest.mark.parametrize(
+    "zlice",
+    [
+        (5, 6),
+        (0, 3),
+        (8, 4),
+        (9, 10),
+        (16, 8),
+        (3, None),
+        (13, None),
+        (23, 5),
+        (24, 5),
+        (30, 5),
+        (4, 0),
+    ],
+)
+def test_scan_csv_multi_slice(engine: pl.GPUEngine, csv_files, zlice):
+    q = pl.scan_csv(csv_files).slice(*zlice)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_multi_slice_concatenates_only_retained_rows(
+    engine: pl.GPUEngine, csv_files, monkeypatch
+):
+    concatenated = []
+    concatenate = plc.concatenate.concatenate
+
+    def record(tables, *args, **kwargs):
+        concatenated.append(sum(t.num_rows() for t in tables))
+        return concatenate(tables, *args, **kwargs)
+
+    monkeypatch.setattr(plc.concatenate, "concatenate", record)
+    q = pl.scan_csv(csv_files).slice(11, 3)
+    assert_gpu_result_equal(q, engine=engine)
+    assert max(concatenated, default=0) < 11
+
+
+def test_scan_csv_multi_slice_file_above_read_limit(
+    in_memory_engine: pl.GPUEngine, csv_files, monkeypatch
+):
+    monkeypatch.setattr(ir, "_MAX_LIBCUDF_ROWS", 5)
+    q = pl.scan_csv(csv_files).slice(4, 2)
+    with pytest.raises(NotImplementedError, match="as many rows as libcudf"):
+        q.collect(engine=in_memory_engine)
+
+
+def test_scan_csv_multi_slice_large_length(engine: pl.GPUEngine, csv_files):
+    q = pl.scan_csv(csv_files).slice(1, np.iinfo(np.int32).max)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_scan_csv_multi_slice_no_columns(engine: pl.GPUEngine, csv_files):
+    q = pl.scan_csv(csv_files).slice(5, 14).select(pl.lit(1))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize("zlice", [(5, 6), (10, None)])
+def test_scan_csv_multi_slice_include_file_paths(
+    engine: pl.GPUEngine, csv_files, zlice
+):
+    q = pl.scan_csv(csv_files, include_file_paths="path").slice(*zlice)
     assert_gpu_result_equal(q, engine=engine)
 
 

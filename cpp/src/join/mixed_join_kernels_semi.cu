@@ -9,9 +9,12 @@
 #include <cudf/ast/detail/expression_evaluator.cuh>
 #include <cudf/ast/detail/expression_parser.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/table/table_device_view.cuh>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/span.hpp>
+
+#include <algorithm>
 
 namespace cudf {
 namespace detail {
@@ -62,6 +65,33 @@ CUDF_KERNEL void __launch_bounds__(block_size)
   }
 }
 
+namespace {
+
+/**
+ * @brief Returns the number of blocks to launch for the `mixed_join_semi` kernel
+ *
+ * The kernel uses a grid-stride loop, so launching more blocks than can be resident at once only
+ * adds work: each thread copies its large kernel arguments to local memory on entry, and with one
+ * thread per row this becomes gigabytes of local memory writes for large inputs.
+ *
+ * @param kernel The kernel instance to be launched
+ * @param config The grid configuration with one thread per row
+ * @param shmem_size_per_block Dynamic shared memory per block in bytes
+ * @return The number of blocks to launch
+ */
+template <typename Kernel>
+int resident_grid_size(Kernel kernel, detail::grid_1d const& config, int64_t shmem_size_per_block)
+{
+  int max_blocks_per_sm = 0;
+  CUDF_CUDA_TRY(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+    &max_blocks_per_sm, kernel, config.num_threads_per_block, shmem_size_per_block));
+  auto const max_resident_blocks =
+    static_cast<thread_index_type>(std::max(1, max_blocks_per_sm)) * num_multiprocessors();
+  return static_cast<int>(std::min(config.num_blocks, max_resident_blocks));
+}
+
+}  // namespace
+
 void launch_mixed_join_semi(bool has_nulls,
                             table_device_view left_table,
                             table_device_view right_table,
@@ -76,28 +106,32 @@ void launch_mixed_join_semi(bool has_nulls,
                             cuda::stream_ref stream)
 {
   if (has_nulls) {
-    mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, true>
-      <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.get()>>>(
-        left_table,
-        right_table,
-        probe,
-        build,
-        equality_probe,
-        set_ref,
-        left_table_keep_mask,
-        device_expression_data);
+    auto const kernel = mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, true>;
+    kernel<<<resident_grid_size(kernel, config, shmem_size_per_block),
+             config.num_threads_per_block,
+             shmem_size_per_block,
+             stream.get()>>>(left_table,
+                             right_table,
+                             probe,
+                             build,
+                             equality_probe,
+                             set_ref,
+                             left_table_keep_mask,
+                             device_expression_data);
     CUDF_CUDA_TRY(cudaGetLastError());
   } else {
-    mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, false>
-      <<<config.num_blocks, config.num_threads_per_block, shmem_size_per_block, stream.get()>>>(
-        left_table,
-        right_table,
-        probe,
-        build,
-        equality_probe,
-        set_ref,
-        left_table_keep_mask,
-        device_expression_data);
+    auto const kernel = mixed_join_semi<DEFAULT_JOIN_BLOCK_SIZE, false>;
+    kernel<<<resident_grid_size(kernel, config, shmem_size_per_block),
+             config.num_threads_per_block,
+             shmem_size_per_block,
+             stream.get()>>>(left_table,
+                             right_table,
+                             probe,
+                             build,
+                             equality_probe,
+                             set_ref,
+                             left_table_keep_mask,
+                             device_expression_data);
     CUDF_CUDA_TRY(cudaGetLastError());
   }
 }

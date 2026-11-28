@@ -38,6 +38,15 @@ elif [[ "$trial" == order-alternate-reference ]]; then
     trial=signal-order-alternate-dask-datetime
 elif [[ "$trial" == sanitizer-order || "$trial" == sanitizer-order-alternate ]]; then
     trial="${trial/sanitizer/memcheck}-dask-datetime"
+elif [[ "$trial" == order-lifetime-reference ]]; then
+    trial=signal-order-focused-lifetime-dask-datetime
+elif [[ "$trial" == order-lifetime-probe-* ]]; then
+    for gpu in "${driver_gpus[@]}"; do
+        if [[ "$gpu_inventory" == *"$gpu,"* ]]; then
+            trial=signal-order-focused-lifetime-dask-datetime
+            break
+        fi
+    done
 elif [[ "$trial" == order-focused-reference ]]; then
     trial=signal-order-focused-dask-datetime
 elif [[ "$trial" == order-handoff-*-reference ]]; then
@@ -125,6 +134,7 @@ if [[ "$repeat" == false &&
         "$trial" == order-probe-* ||
         "$trial" == order-alternate-probe-* ||
         "$trial" == order-focused-probe-* ||
+        "$trial" == order-lifetime-probe-* ||
         "$trial" == order-datetime-probe-* ||
         "$trial" == order-reduction-probe-* ||
         "$trial" == order-handoff-* ||

@@ -242,11 +242,13 @@ def pytest_runtest_call(item):
         from handoff_diagnostics import install
 
         session = item.session
-        finish = getattr(session, "_cudf_finish_handoff", None)
-        if finish is None:
+        if not hasattr(session, "_cudf_finish_handoff"):
             worker = os.environ["PYTEST_XDIST_WORKER"]
-            finish = install(_output / f"{worker}.handoff.jsonl", mode)
-            session._cudf_finish_handoff = finish
+            journal = "lifetime" if mode == "lifetime" else "handoff"
+            session._cudf_finish_handoff = install(
+                _output / f"{worker}.{journal}.jsonl", mode
+            )
+        finish = session._cudf_finish_handoff
     try:
         yield
     finally:

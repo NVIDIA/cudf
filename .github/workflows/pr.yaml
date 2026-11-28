@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-ownership-fix
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-buffer-lifetime
   cancel-in-progress: true
 
 jobs:
@@ -20,8 +20,15 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - order-ownership-fix-01
-          - order-ownership-fix-02
+          - order-lifetime-reference
+          - order-lifetime-probe-01
+          - order-lifetime-probe-02
+          - order-lifetime-probe-03
+          - order-lifetime-probe-04
+          - order-lifetime-probe-05
+          - order-lifetime-probe-06
+          - order-lifetime-probe-07
+          - order-lifetime-probe-08
     permissions:
       actions: read
       contents: read

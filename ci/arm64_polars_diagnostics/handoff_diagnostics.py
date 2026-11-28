@@ -47,7 +47,54 @@ def _handle(stream):
     return int(stream.__cuda_stream__()[1])
 
 
+def _install_lifetime(path):
+    from cudf_polars.streaming.actor_graph import utils
+
+    original = utils._evaluate_chunk_sync
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND, 0o600
+    )
+
+    @wraps(original)
+    def evaluate(chunk, ir, ir_context, br, *, ordering_metadata=None):
+        test = os.environ.get("PYTEST_CURRENT_TEST", "")
+        if not any(case in test for case in _CASES):
+            return original(
+                chunk, ir, ir_context, br, ordering_metadata=ordering_metadata
+            )
+
+        frame = utils.chunk_to_frame(
+            chunk, ir.children[0], ordering_metadata=ordering_metadata
+        )
+        result = utils.evaluate_ir(ir, frame, context=ir_context)
+        aliases = _aliases(_buffers(frame.table), _buffers(result.table))
+        if aliases:
+            # One write per aliased handoff. Avoid weakrefs, extra CUDA calls,
+            # and retaining owners, which can each change the failure timing.
+            row = (
+                time.monotonic_ns(),
+                threading.get_native_id(),
+                _handle(frame.stream),
+                _handle(result.stream),
+                test,
+                aliases,
+            )
+            os.write(
+                fd, (json.dumps(row, separators=(",", ":")) + "\n").encode()
+            )
+
+        return utils.TableChunk.from_pylibcudf_table(
+            result.table, result.stream, exclusive_view=True, br=br
+        )
+
+    utils._evaluate_chunk_sync = evaluate
+
+
 def install(path, mode):
+    if mode == "lifetime":
+        _install_lifetime(path)
+        return None
+
     from cuda.bindings import driver
     from cudf_polars.streaming.actor_graph import utils
     from cudf_polars.utils import cuda_stream

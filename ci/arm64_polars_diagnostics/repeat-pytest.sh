@@ -13,7 +13,7 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
     attempts=(baseline alternate)
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-alternate-dask-datetime ]]; then
     attempts=(alternate alternate-repeat)
-elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused-dask-datetime ]]; then
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused*-dask-datetime ]]; then
     attempts=({1..20})
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-handoff-* ]]; then
     handoff_mode=${CUDF_POLARS_DIAGNOSTICS_TRIAL#signal-order-handoff-}
@@ -78,7 +78,10 @@ if driver.cuInit(0) != 0 or driver.cuDriverGetVersion(ctypes.byref(version)) != 
 print("CUDA driver API version:", version.value)
 PY
         cat "$output/driver.txt"
-    elif [[ "$trial" == signal-order-focused-dask-datetime ]]; then
+    elif [[ "$trial" == signal-order-focused*-dask-datetime ]]; then
+        if [[ "$trial" == signal-order-focused-lifetime-dask-datetime ]]; then
+            environment+=("CUDF_POLARS_HANDOFF_MODE=lifetime")
+        fi
         echo "Datetime GPU replay $attempt of ${#attempts[@]}"
     else
         echo "Full-suite GPU replay $attempt of ${#attempts[@]}"

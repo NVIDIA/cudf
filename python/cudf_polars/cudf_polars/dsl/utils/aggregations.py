@@ -50,6 +50,78 @@ def _contains_window_only_unary(value: expr.Expr) -> bool:
     )
 
 
+def _is_literal_column_expr(value: expr.Expr) -> bool:
+    leaves = tuple(node for node in traversal([value]) if not node.children)
+    return all(
+        isinstance(node, (expr.Literal, expr.LiteralColumn)) for node in leaves
+    ) and any(isinstance(node, expr.LiteralColumn) for node in leaves)
+
+
+def _is_single_value_literal_agg(agg: expr.Expr, context: ExecutionContext) -> bool:
+    # A one-element literal is broadcast to every row of the group, which
+    # these aggregations reduce to the literal's value.
+    return (
+        context == ExecutionContext.GROUPBY
+        and isinstance(agg, expr.Agg)
+        and agg.name in {"first", "last", "max", "min"}
+        and all(
+            len(node.value) == 1
+            and not (
+                agg.name in {"max", "min"}
+                and node.value.dtype.is_float()
+                and node.value.is_nan().any()
+            )
+            for node in traversal(list(agg.children))
+            if isinstance(node, expr.LiteralColumn)
+        )
+    )
+
+
+def _is_list_elements_literal(node: expr.LiteralColumn) -> bool:
+    # Literals of list elements (e.g. the values of ``is_in``) are not
+    # evaluated row by row.
+    return isinstance(node.dtype.polars_type, pl.List) and not isinstance(
+        node.value.dtype, pl.List
+    )
+
+
+def _pointwise_traversal(value: expr.Expr) -> Generator[expr.Expr, None, None]:
+    yield value
+    if value.is_pointwise:
+        for child in value.children:
+            yield from _pointwise_traversal(child)
+
+
+def _combines_aggregation_with_literal_column(value: expr.Expr) -> bool:
+    nodes = tuple(_pointwise_traversal(value))
+    return any(not node.is_pointwise for node in nodes) and any(
+        isinstance(node, expr.LiteralColumn) and not _is_list_elements_literal(node)
+        for node in nodes
+    )
+
+
+def _combines_columns_with_multi_element_literal(value: expr.Expr) -> bool:
+    nodes = tuple(traversal([value]))
+    has_multi_element_literal = any(
+        isinstance(node, expr.LiteralColumn)
+        and len(node.value) != 1
+        and not _is_list_elements_literal(node)
+        for node in nodes
+    )
+    return has_multi_element_literal and any(
+        not node.children and not isinstance(node, (expr.Literal, expr.LiteralColumn))
+        for node in nodes
+    )
+
+
+def _has_literal_column_ternary_branch(value: expr.Expr) -> bool:
+    return any(
+        isinstance(node, expr.Ternary)
+        and any(map(_is_literal_column_expr, node.children[1:]))
+        for node in traversal([value])
+    )
+
+
 def replace_nulls(col: expr.Expr, value: Any, *, is_top: bool) -> expr.Expr:
     """
     Replace nulls with the given scalar if at top level.
@@ -140,6 +212,30 @@ def decompose_single_agg(
     """
     agg = named_expr.value
     name = named_expr.name
+    if (
+        not agg.is_pointwise
+        and any(map(_is_literal_column_expr, agg.children))
+        and not _is_single_value_literal_agg(agg, context)
+    ):
+        raise NotImplementedError(
+            "Aggregating a list or Series literal in groupby/rolling"
+        )
+    if is_top and _combines_columns_with_multi_element_literal(agg):
+        raise NotImplementedError(
+            "Combining columns with a multi-element list or Series literal in groupby/rolling"
+        )
+    if (
+        is_top
+        and context in {ExecutionContext.ROLLING, ExecutionContext.WINDOW}
+        and _combines_aggregation_with_literal_column(agg)
+    ):
+        raise NotImplementedError(
+            "Combining aggregations with a list or Series literal in rolling or over"
+        )
+    if is_top and _has_literal_column_ternary_branch(agg):
+        raise NotImplementedError(
+            "A list or Series literal as a when/then/otherwise branch in groupby/rolling/over"
+        )
     if isinstance(agg, expr.UnaryFunction) and agg.name in {"max_by", "min_by"}:
         if context != ExecutionContext.GROUPBY:
             raise NotImplementedError(
@@ -680,6 +776,10 @@ def decompose_single_agg(
             # An expression built only from scalar literals is itself a
             # scalar: it yields one value per group rather than a list.
             return [], named_expr
+        elif is_top and _is_literal_column_expr(agg):
+            raise NotImplementedError(
+                "Expressions of only list or Series literals in groupby/rolling"
+            )
         else:
             # Or pre-evaluation if inside an aggregation.
             return (
@@ -789,6 +889,19 @@ def apply_pre_evaluation(
     NotImplementedError
         If the aggregations are somehow unsupported.
     """
+    for named_agg in original_aggs:
+        nodes = tuple(traversal([named_agg.value]))
+        # Polars collects an aggregation combined with a Series literal into
+        # a list per group, which the aggregation does not produce.
+        if (
+            output_schema[named_agg.name].id() == plc.TypeId.LIST
+            and named_agg.value.dtype.id() != plc.TypeId.LIST
+            and any(not node.is_pointwise for node in nodes)
+            and any(isinstance(node, expr.LiteralColumn) for node in nodes)
+        ):
+            raise NotImplementedError(
+                "Combining aggregations with a list or Series literal in groupby/rolling"
+            )
     aggs, post = decompose_aggs(original_aggs, name_generator, context=context)
     assert len(post) == len(original_aggs), (
         f"Unexpected number of post-aggs {len(post)=} {len(original_aggs)=}"

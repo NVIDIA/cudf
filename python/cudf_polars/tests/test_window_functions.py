@@ -180,3 +180,43 @@ def test_rolling_closed(engine: pl.GPUEngine, request, df: pl.LazyFrame, closed:
         ]
     )
     assert_gpu_result_equal(query, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("j").sum() + pl.lit(pl.Series([7])),
+        pl.when(pl.col("j") > 1)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("j"))
+        .sum(),
+        pl.when(pl.col("j") > 1)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("j"))
+        .cum_sum(),
+    ],
+)
+def test_over_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.select(expr.over("g"))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        (pl.col("j") + pl.lit(pl.Series([7]))).sum(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).sum() + pl.col("j").max(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).count(),
+        pl.col("j").fill_null(pl.lit(pl.Series([7]))).sum(),
+        (pl.col("j") + pl.lit(pl.Series([7]))).cum_sum(),
+    ],
+)
+def test_over_series_literal_in_aggregation(
+    engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, None, 3]})
+    q = df.select(expr.over("g"))
+    assert_gpu_result_equal(q, engine=engine)

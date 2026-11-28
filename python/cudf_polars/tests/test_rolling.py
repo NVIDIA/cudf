@@ -202,6 +202,90 @@ def test_unsupported_agg(in_memory_engine):
     assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
 
 
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("values").sum() + pl.lit(pl.Series([7])),
+        pl.lit(pl.Series([1, 2])).sum(),
+        pl.col("values").sum().is_in(pl.Series([1, 7])),
+        (pl.col("values") + pl.lit(pl.Series([1, 2, 3, 4, 5]))).sum(),
+        pl.lit(pl.Series([5])).max(),
+        pl.when(pl.col("values") > 7)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("values"))
+        .sum(),
+        pl.when(pl.col("values") > 7)
+        .then(pl.col("values"))
+        .otherwise(pl.lit(pl.Series([7])) + 1)
+        .max(),
+    ],
+)
+def test_rolling_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
+    q = df.rolling("orderby", period="3i").agg(expr)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("values").sum() + pl.lit(pl.Series([7])),
+        pl.when(pl.col("values") > 1)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("values"))
+        .sum(),
+    ],
+)
+def test_rolling_expr_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, 2, 3]})
+    q = df.select(expr.rolling("orderby", period="2i"))
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        (pl.col("values") + pl.lit(pl.Series([7]))).sum(),
+        (pl.col("values") + pl.lit(pl.Series([7]))).sum() + pl.col("values").max(),
+        (pl.col("values") + pl.lit(pl.Series([7]))).count(),
+        pl.col("values").fill_null(pl.lit(pl.Series([7]))).sum(),
+    ],
+)
+@pytest.mark.parametrize("form", ["agg", "expr"])
+def test_rolling_series_literal_in_aggregation(
+    engine: pl.GPUEngine, form: str, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3], "values": [1, None, 3]})
+    if form == "agg":
+        q = df.rolling("orderby", period="2i").agg(expr)
+    else:
+        q = df.select(expr.rolling("orderby", period="2i"))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+def test_rolling_aggregation_is_in_list(engine: pl.GPUEngine) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
+    q = df.rolling("orderby", period="3i").agg(pl.col("values").sum().is_in([13, 24]))
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[7, 8], pl.Series("s", [7, 8]), pl.Series("s", [], dtype=pl.Int64)],
+    ids=["list", "series", "empty_series"],
+)
+def test_rolling_bare_list_or_series_literal(
+    engine: pl.GPUEngine, value: list[int] | pl.Series
+) -> None:
+    df = pl.LazyFrame({"orderby": [1, 2, 3, 4, 10], "values": [6, 7, 8, 9, 10]})
+    q = df.rolling("orderby", period="3i").agg(pl.lit(value))
+    assert_gpu_result_equal(q, engine=engine)
+
+
 def test_rolling_sum_all_null_window_returns_null(engine: pl.GPUEngine):
     df = pl.LazyFrame(
         {

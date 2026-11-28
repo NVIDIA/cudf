@@ -1135,3 +1135,79 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
     lit = pl.lit(-1.5).abs()
     q = df.group_by("g", maintain_order=True).agg(a=lit, b=lit, c=pl.col("j").sum())
     assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.lit([1, 2]).is_null(),
+        pl.col("j").sum() + pl.lit(pl.Series([7])),
+        pl.lit(pl.Series([1, 2])).sum(),
+        pl.lit(pl.Series([None], dtype=pl.Int64)).null_count(),
+        (pl.col("j") + pl.lit(pl.Series([7, 8, 9]))).sum(),
+        (pl.col("j") * pl.lit(pl.Series([7, 8]))).max(),
+        pl.lit(pl.Series([7, 8])).first(),
+        pl.lit(pl.Series([float("nan")])).max(),
+        pl.lit(pl.Series([float("nan")])).min(),
+        pl.when(pl.col("j") > 1)
+        .then(pl.lit(pl.Series([7])))
+        .otherwise(pl.col("j"))
+        .sum(),
+        pl.when(pl.col("j") > 1)
+        .then(pl.col("j"))
+        .otherwise(pl.lit(pl.Series([7])).cast(pl.Int64))
+        .first(),
+    ],
+)
+def test_groupby_list_or_series_literal_raises(
+    in_memory_engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.group_by("g").agg(expr)
+    assert_ir_translation_raises(q, in_memory_engine, NotImplementedError)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.col("j").is_in([1, 3]).sum(),
+        pl.col("j").sum().is_in([3, 7]),
+        (pl.col("j") + pl.lit(pl.Series([7]))).sum(),
+        (pl.lit(pl.Series([7])) + 1 + pl.col("j")).sum(),
+    ],
+)
+def test_groupby_column_with_list_or_series_literal(
+    engine: pl.GPUEngine, expr: pl.Expr
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.group_by("g", maintain_order=True).agg(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        pl.lit([7, 8]).first(),
+        pl.lit([7, 8]).last(),
+        pl.lit(pl.Series([5])).max(),
+        pl.lit(pl.Series([None], dtype=pl.Int64)).min(),
+        pl.lit(pl.Series([1.5])).max(),
+    ],
+)
+def test_groupby_single_value_literal_agg(engine: pl.GPUEngine, expr: pl.Expr) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.group_by("g", maintain_order=True).agg(expr)
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [[7, 8], pl.Series("s", [7, 8]), pl.Series("s", [], dtype=pl.Int64)],
+    ids=["list", "series", "empty_series"],
+)
+def test_groupby_bare_list_or_series_literal(
+    engine: pl.GPUEngine, value: list[int] | pl.Series
+) -> None:
+    df = pl.LazyFrame({"g": [1, 1, 2], "j": [1, 2, 3]})
+    q = df.group_by("g", maintain_order=True).agg(pl.lit(value))
+    assert_gpu_result_equal(q, engine=engine)

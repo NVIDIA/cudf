@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-cuda-pool-sync
+  group: ${{ github.workflow }}-${{ github.ref }}-cuda-pool-handoff
   cancel-in-progress: true
 
 jobs:
@@ -20,12 +20,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {trial: shared-alloc-1, pool: shared, work: alloc}
-          - {trial: shared-alloc-2, pool: shared, work: alloc}
-          - {trial: shared-events-1, pool: shared, work: events}
-          - {trial: shared-events-2, pool: shared, work: events}
-          - {trial: separate-events, pool: separate, work: events}
-          - {trial: pinned-host-alloc, pool: host, work: alloc}
+          - {trial: handoff-shared-1, pool: shared, work: handoff}
+          - {trial: handoff-shared-2, pool: shared, work: handoff}
+          - {trial: handoff-shared-3, pool: shared, work: handoff}
+          - {trial: handoff-shared-4, pool: shared, work: handoff}
+          - {trial: handoff-shared-5, pool: shared, work: handoff}
+          - {trial: handoff-separate, pool: separate, work: handoff}
     permissions:
       contents: read
     container:
@@ -67,7 +67,7 @@ jobs:
           uname -m | tee architecture.txt
           ldd ./cuda-pool-sync | tee dependencies.txt
           ulimit -c 0
-          timeout --kill-after=10s 6m ./cuda-pool-sync "$POOL" "$WORK" 120000 2>&1 | tee replay.log
+          timeout --kill-after=10s 6m ./cuda-pool-sync "$POOL" "$WORK" 300000 2>&1 | tee replay.log
       - name: Upload reproduction evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

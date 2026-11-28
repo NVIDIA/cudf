@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +33,8 @@
   X(cuEventCreate)             \
   X(cuEventRecord)             \
   X(cuEventDestroy)            \
-  X(cuMemsetD8Async)
+  X(cuMemsetD8Async)           \
+  X(cuMemcpyDtoDAsync)
 
 #define DECLARE(api) static __typeof__(&api) driver_##api;
 DRIVER_APIS(DECLARE)
@@ -57,44 +60,21 @@ struct worker {
   size_t rounds;
   unsigned id;
   int event_work;
+  int handoff;
+  atomic_bool* allocating;
 };
 
-static void* replay(void* argument)
+static CUdeviceptr allocate(struct worker const* worker, size_t bytes, CUstream stream)
 {
-  struct worker const* worker = argument;
-  CUstream stream, producer = NULL;
-  CUevent ready = NULL;
-  CHECK(cuCtxSetCurrent, worker->context);
-  CHECK(cuStreamCreate, &stream, CU_STREAM_NON_BLOCKING);
-  if (worker->event_work) {
-    CHECK(cuStreamCreate, &producer, CU_STREAM_NON_BLOCKING);
-    CHECK(cuEventCreate, &ready, CU_EVENT_DISABLE_TIMING);
-  }
-  pthread_barrier_wait(worker->start);
-  for (size_t round = 0; round < worker->rounds; ++round) {
-    CUdeviceptr blocks[7], reused;
-    for (size_t i = 0; i < sizeof(blocks) / sizeof(*blocks); ++i) {
-      CHECK(cuMemAllocFromPoolAsync, &blocks[i], 512 * (1 + (i + round) % 4), worker->pool, stream);
-    }
-    if (ready) {
-      CUdeviceptr produced;
-      CHECK(cuMemAllocFromPoolAsync, &produced, 512, worker->pool, producer);
-      CHECK(cuMemsetD8Async, produced, 0x7f, 512, producer);
-      CHECK(cuMemFreeAsync, produced, producer);
-      CHECK(cuEventRecord, ready, producer);
-      CHECK(cuStreamWaitEvent, stream, ready, 0);
-      CHECK(cuMemsetD8Async, blocks[0], 0x5a, 512, stream);
-    }
-    for (size_t i = 0; i < sizeof(blocks) / sizeof(*blocks); ++i) {
-      CHECK(cuMemFreeAsync, blocks[i], stream);
-    }
-    // The captured stream completed one sync after freeing scratch allocations.
-    // Its next allocation succeeded, and the following sync faulted.
-    CHECK(cuStreamSynchronize, stream);
-    CHECK(cuMemAllocFromPoolAsync, &reused, 512, worker->pool, stream);
-    CHECK(cuStreamSynchronize, stream);
-    CHECK(cuMemFreeAsync, reused, stream);
-  }
+  CUdeviceptr pointer;
+  atomic_store_explicit(&worker->allocating[worker->id], true, memory_order_relaxed);
+  CHECK(cuMemAllocFromPoolAsync, &pointer, bytes, worker->pool, stream);
+  atomic_store_explicit(&worker->allocating[worker->id], false, memory_order_relaxed);
+  return pointer;
+}
+
+static void finish_streams(CUstream stream, CUstream producer, CUevent ready)
+{
   CHECK(cuStreamSynchronize, stream);
   if (ready) {
     CHECK(cuStreamSynchronize, producer);
@@ -102,8 +82,62 @@ static void* replay(void* argument)
     CHECK(cuStreamDestroy, producer);
   }
   CHECK(cuStreamDestroy, stream);
+}
+
+static void* replay(void* argument)
+{
+  struct worker const* worker = argument;
+  CUstream stream, producer = NULL;
+  CUevent ready   = NULL;
+  size_t overlaps = 0;
+  CHECK(cuCtxSetCurrent, worker->context);
+  pthread_barrier_wait(worker->start);
+  for (size_t round = 0; round < worker->rounds; ++round) {
+    // The original stream was 37 ms old. Rotate only the handoff variant
+    // so the simpler cases also exercise long-lived streams.
+    if (round == 0 || (worker->handoff && round % 256 == 0)) {
+      if (round) { finish_streams(stream, producer, ready); }
+      CHECK(cuStreamCreate, &stream, CU_STREAM_NON_BLOCKING);
+      if (worker->event_work) {
+        CHECK(cuStreamCreate, &producer, CU_STREAM_NON_BLOCKING);
+        CHECK(cuEventCreate, &ready, CU_EVENT_DISABLE_TIMING);
+      }
+    }
+
+    CUdeviceptr blocks[7];
+    for (size_t i = 0; i < sizeof(blocks) / sizeof(*blocks); ++i) {
+      blocks[i] = allocate(worker, 512 * (1 + (i + round) % 4), stream);
+    }
+    if (ready) {
+      CUdeviceptr const produced = allocate(worker, 512, producer);
+      CHECK(cuMemsetD8Async, produced, 0x7f, 512, producer);
+      if (!worker->handoff) { CHECK(cuMemFreeAsync, produced, producer); }
+      CHECK(cuEventRecord, ready, producer);
+      CHECK(cuStreamWaitEvent, stream, ready, 0);
+      if (worker->handoff) {
+        CHECK(cuMemcpyDtoDAsync, blocks[0], produced, 512, stream);
+        CHECK(cuMemFreeAsync, produced, stream);
+      } else {
+        CHECK(cuMemsetD8Async, blocks[0], 0x5a, 512, stream);
+      }
+    }
+    for (size_t i = 0; i < sizeof(blocks) / sizeof(*blocks); ++i) {
+      CHECK(cuMemFreeAsync, blocks[i], stream);
+    }
+    // The captured stream completed one sync after freeing scratch allocations.
+    // Its next allocation succeeded, and the following sync faulted.
+    CHECK(cuStreamSynchronize, stream);
+    CUdeviceptr const reused = allocate(worker, 512, stream);
+    overlaps += atomic_load_explicit(&worker->allocating[1 - worker->id], memory_order_relaxed);
+    CHECK(cuStreamSynchronize, stream);
+    CHECK(cuMemFreeAsync, reused, stream);
+  }
+  finish_streams(stream, producer, ready);
   CHECK(cuCtxSetCurrent, NULL);
-  printf("worker %u completed %zu rounds\n", worker->id, worker->rounds);
+  printf("worker %u completed %zu rounds; observed %zu peer allocations before final sync\n",
+         worker->id,
+         worker->rounds,
+         overlaps);
   return NULL;
 }
 
@@ -111,8 +145,8 @@ int main(int argc, char** argv)
 {
   if (argc != 4 ||
       (strcmp(argv[1], "shared") && strcmp(argv[1], "separate") && strcmp(argv[1], "host")) ||
-      (strcmp(argv[2], "alloc") && strcmp(argv[2], "events"))) {
-    fprintf(stderr, "Usage: %s {shared|separate|host} {alloc|events} ROUNDS\n", argv[0]);
+      (strcmp(argv[2], "alloc") && strcmp(argv[2], "events") && strcmp(argv[2], "handoff"))) {
+    fprintf(stderr, "Usage: %s {shared|separate|host} {alloc|events|handoff} ROUNDS\n", argv[0]);
     return EXIT_FAILURE;
   }
   char* end;
@@ -171,9 +205,16 @@ int main(int argc, char** argv)
   if (pthread_barrier_init(&start, NULL, 2) != 0) { return EXIT_FAILURE; }
   pthread_t threads[2];
   struct worker workers[2];
+  atomic_bool allocating[2] = {false, false};
   for (unsigned i = 0; i < 2; ++i) {
-    workers[i] = (struct worker){
-      context, pools[i % pool_count], &start, rounds, i, !strcmp(argv[2], "events")};
+    workers[i] = (struct worker){context,
+                                 pools[i % pool_count],
+                                 &start,
+                                 rounds,
+                                 i,
+                                 strcmp(argv[2], "alloc") != 0,
+                                 !strcmp(argv[2], "handoff"),
+                                 allocating};
     if (pthread_create(&threads[i], NULL, replay, &workers[i]) != 0) { _Exit(EXIT_FAILURE); }
   }
   for (unsigned i = 0; i < 2; ++i) {

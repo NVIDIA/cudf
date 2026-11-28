@@ -14,6 +14,7 @@ from polars.testing import assert_frame_equal
 
 from cudf_polars.containers import DataFrame
 from cudf_polars.engine.options import StreamingOptions
+from cudf_polars.streaming.actor_graph.io import _find_rank_aware_source
 from cudf_polars.streaming.rank_aware_source import RankAwareSource, SizedChunks
 from cudf_polars.utils.cuda_stream import get_cuda_stream
 
@@ -46,6 +47,48 @@ class Source(RankAwareSource):
         if n_rows is not None:
             out = out.head(n_rows)
         yield out
+
+
+def _registered_scan_fn(monkeypatch, source):
+    """Return the scan function Polars builds for ``source``."""
+    captured = []
+    original = pl.LazyFrame._scan_python_function
+
+    def spy(*args, **kwargs):
+        captured.append(kwargs["scan_fn"])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(pl.LazyFrame, "_scan_python_function", spy)
+    register_io_source(source, schema={"a": pl.Int64})
+    return captured[0]
+
+
+def test_find_rank_aware_source(monkeypatch):
+    source = Source(pl.DataFrame({"a": [1]}))
+    scan_fn = _registered_scan_fn(monkeypatch, source)
+    assert _find_rank_aware_source(scan_fn) is source
+
+
+def test_find_rank_aware_source_plain_function(monkeypatch):
+    def plain(with_columns, predicate, n_rows, batch_size):
+        yield pl.DataFrame({"a": [1]})
+
+    scan_fn = _registered_scan_fn(monkeypatch, plain)
+    assert _find_rank_aware_source(scan_fn) is None
+
+
+def test_find_rank_aware_source_wrapped_source(monkeypatch):
+    source = Source(pl.DataFrame({"a": [1]}))
+
+    def wrapped(with_columns, predicate, n_rows, batch_size):
+        return source(with_columns, predicate, n_rows, batch_size)
+
+    scan_fn = _registered_scan_fn(monkeypatch, wrapped)
+    assert _find_rank_aware_source(scan_fn) is None
+
+
+def test_find_rank_aware_source_not_a_registered_source():
+    assert _find_rank_aware_source(lambda: None) is None
 
 
 def test_rank_aware_source(engine: pl.GPUEngine):

@@ -104,13 +104,12 @@ class RankAwareSource(abc.ABC):
     different threads thus do not hold thread-affine state across chunks (see the
     Threading section of the IO-plugins guide).
 
-    Pass the `RankAwareSource` instance directly to `register_io_source`; do not
-    wrap it in another callable. To inject rank information, cudf-polars must
-    locate the `RankAwareSource` instance inside the registered callable. Only an
-    unwrapped instance is recognized; wrapping it in anything else (a
+    Pass the `RankAwareSource` instance directly to `register_io_source`. Do not
+    wrap it in another callable. cudf-polars reads the registered source from
+    `polars.io.plugins.IOSourceScanFunction.io_source`, so only the object
+    passed to `register_io_source` is recognized. Wrapping it in anything else (a
     `functools.partial`, closure, lambda, or decorator) hides it, in which case
-    the source is treated as rank-unaware and runs on rank 0 only. This
-    limitation is tracked in https://github.com/NVIDIA/cudf/issues/22917.
+    the source is treated as rank-unaware and runs on rank 0 only.
 
     Examples
     --------

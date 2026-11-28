@@ -8,27 +8,33 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-cuda-pool-retained
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-baseline
   cancel-in-progress: true
 
 jobs:
-  cuda-pool-sync:
-    name: Arm64 CUDA pool sync (${{ matrix.trial }})
+  arm64-polars-repro:
+    name: Arm64 Polars (${{ matrix.trial }})
     runs-on: linux-arm64-gpu-l4-latest-1
-    timeout-minutes: 12
+    timeout-minutes: 55
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - {trial: retained-alloc, pool: retained, work: alloc}
-          - {trial: retained-handoff-1, pool: retained, work: handoff}
-          - {trial: retained-handoff-2, pool: retained, work: handoff}
-          - {trial: retained-handoff-3, pool: retained, work: handoff}
-          - {trial: retained-handoff-4, pool: retained, work: handoff}
+        trial:
+          - order-focused-reference
+          - order-focused-probe-01
+          - order-focused-probe-02
+          - order-focused-probe-03
+          - order-focused-probe-04
+          - order-focused-probe-05
+          - order-focused-probe-06
+          - order-focused-probe-07
+          - order-focused-probe-08
     permissions:
+      actions: read
       contents: read
     container:
       image: rapidsai/ci-conda@sha256:89e59c0ea91697825220c2d07b57e8960a98f6c0d72c3bff3c23a19594204451
+      options: --cap-add=SYS_PTRACE --shm-size=8g --ulimit=nofile=1000000:1000000
       env:
         NVIDIA_VISIBLE_DEVICES: ${{ env.NVIDIA_VISIBLE_DEVICES }}
     defaults:
@@ -39,38 +45,66 @@ jobs:
         with:
           persist-credentials: false
       - name: Identify the physical GPU
-        run: |
-          mkdir -p artifacts/cuda-pool-sync
-          nvidia-smi --query-gpu=uuid,driver_version,pci.bus_id --format=csv |
-              tee artifacts/cuda-pool-sync/gpus.csv
-      - name: Build the standalone CUDA reproducer
-        run: |
-          conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge \
-              'gcc_linux-aarch64=14.*' 'cuda-cudart-dev=13.4.92=hae6cbe8_1' \
-              'cuda-driver-dev=13.4.92=hae6cbe8_1' \
-              'cuda-crt-dev_linux-aarch64=13.4.92=h579c4fd_0'
-          conda run --no-capture-output -n fault-compiler bash -c \
-              'exec aarch64-conda-linux-gnu-gcc -I"$CONDA_PREFIX/targets/sbsa-linux/include" "$@"' gcc \
-              -std=c11 -Wall -Wextra -Werror -O2 -g -fno-omit-frame-pointer -pthread \
-              ci/arm64_polars_diagnostics/{cuda-pool-sync,fault_address}.c -ldl \
-              -o artifacts/cuda-pool-sync/cuda-pool-sync
-      - name: Run the CUDA-only reproducer on R615
+        id: gpu
         env:
-          POOL: ${{ matrix.pool }}
-          WORK: ${{ matrix.work }}
+          CUDF_POLARS_DIAGNOSTICS_TRIAL: ${{ matrix.trial }}
+        run: bash ci/arm64_polars_diagnostics/identify-gpu.sh
+      - name: Publish the replay GPU and initial health counters
+        if: steps.gpu.outputs.replay == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arm64-polars-preflight-${{ matrix.trial }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/arm64-polars/gpus.csv
+            artifacts/arm64-polars/trial.txt
+            artifacts/arm64-polars/gpu-health-before.txt
+          if-no-files-found: error
+      - name: Check out the reproducing source
+        if: steps.gpu.outputs.replay == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ endsWith(steps.gpu.outputs.trial, '-dask-datetime') && 'b67a6d83fad084fc600354b0787f1b4b35f9c5d2' || 'ed03e588cefe03804174c2141f4893d2f4f01833' }}
+          path: replay-source
+          persist-credentials: false
+      - name: Install the fault reporter compiler
+        if: steps.gpu.outputs.replay == 'true' && startsWith(steps.gpu.outputs.trial, 'signal-')
+        env:
+          TRIAL: ${{ steps.gpu.outputs.trial }}
         run: |
-          cd artifacts/cuda-pool-sync
-          compat=/usr/local/cuda-13.4/compat
-          test -r "$compat/libcuda.so.615.71.10"
-          export LD_LIBRARY_PATH="$compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          uname -m | tee architecture.txt
-          ldd ./cuda-pool-sync | tee dependencies.txt
-          ulimit -c 0
-          timeout --kill-after=10s 6m ./cuda-pool-sync "$POOL" "$WORK" 300000 2>&1 | tee replay.log
+          packages=('gcc_linux-aarch64=14.*')
+          if [[ "$TRIAL" == signal-order-* ]]; then
+              packages+=(
+                  'cuda-cupti-dev=13.4.92=hc1d3098_0'
+                  'cuda-cudart-dev=13.4.92=hae6cbe8_1'
+                  'cuda-crt-dev_linux-aarch64=13.4.92=h579c4fd_0'
+              )
+          fi
+          conda create --yes --no-default-packages --name fault-compiler --override-channels -c conda-forge "${packages[@]}"
+      - name: Replay the Conda Polars job
+        if: steps.gpu.outputs.replay == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUDF_POLARS_DIAGNOSTICS_TRIAL: ${{ steps.gpu.outputs.trial }}
+          CUDF_POLARS_REPEAT_REPLAY: ${{ steps.gpu.outputs.repeat }}
+          RAPIDS_BUILD_TYPE: pull-request
+          RAPIDS_CUDA_VERSION: '13.4.3'
+          RAPIDS_DEPENDENCIES: latest
+          RAPIDS_PY_VERSION: '3.13'
+          CONDA_PLUGINS_USE_SHARDED_REPODATA: 'false'
+          MAMBA_USE_SHARDED_REPODATA: 'false'
+          RATTLER_SHARDED: 'false'
+        run: bash ci/arm64_polars_diagnostics/replay.sh
+      - name: Record final GPU health counters
+        if: always()
+        run: |
+          evidence=artifacts/arm64-polars
+          if [[ -f "$evidence/gpu-health-before.txt" ]]; then
+            bash ci/arm64_polars_diagnostics/gpu-health.sh > "$evidence/gpu-health-after.txt" 2>&1
+          fi
       - name: Upload reproduction evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: cuda-pool-sync-${{ matrix.trial }}-attempt-${{ github.run_attempt }}
-          path: artifacts/cuda-pool-sync/
+          name: arm64-polars-${{ matrix.trial }}-attempt-${{ github.run_attempt }}
+          path: artifacts/arm64-polars/
           if-no-files-found: warn

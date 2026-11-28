@@ -13,7 +13,7 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-driver-dask-datetime ]]; then
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-alternate-dask-datetime ]]; then
     attempts=(alternate alternate-repeat)
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-focused-dask-datetime ]]; then
-    attempts=({1..10})
+    attempts=({1..20})
 fi
 status=0
 for attempt in "${attempts[@]}"; do

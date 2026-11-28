@@ -11,6 +11,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 
 #include <cuda/iterator>
 
@@ -18,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <format>
 #include <random>
 
 template <typename key_type>
@@ -64,29 +66,31 @@ static void BM_transform_polynomials(nvbench::state& state)
 
     std::string type = cudf::type_to_name(cudf::data_type{cudf::type_to_id<key_type>()});
 
-    std::string params_decl = type + " c0";
+    std::string params_decl = std::format("{} c0", type);
     std::string expr        = "c0";
 
     for (cudf::size_type i = 1; i < order + 1; i++) {
-      expr = "( " + expr + " ) * x +  c" + std::to_string(i);
-      params_decl += ", " + type + " c" + std::to_string(i);
+      expr = std::format("({}) * x + c{}", expr, i);
+      params_decl += std::format(", {} c{}", type, i);
     }
 
     static_assert(std::is_same_v<key_type, float> || std::is_same_v<key_type, double>);
 
-    // clang-format off
-    std::string udf =
-    "__device__ inline void compute_polynomial(" + type + "* out, " + type + " x, " + params_decl + ")" +
-"{ "
-" *out = " + expr + ";"
-"}";
+    auto const udf = std::format(R"CUDA(
+#include <cudf/udf_includes.hpp>
+extern "C" __device__ cudf::errc compute_polynomial({0}* out, {0} x, {1})
+{{
+  *out = {2};
+  return cudf::errc::SUCCESS;
+}}
+)CUDA",
+                                 type,
+                                 params_decl,
+                                 expr);
 
-    // clang-format on
-
-    cudf::transform(udf,
-                    cudf::udf_source_type::CUDA,
-                    cudf::null_aware::NO,
-                    std::nullopt,
+    auto compiled = cudf::compile_cuda_to_lto_ir(udf.c_str());
+    auto module   = compiled.view();
+    cudf::transform(cudf::transform_udf{"compute_polynomial", {&module, 1}},
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_to_id<key_type>()},
                                                       cudf::output_nullability::PRESERVE}},

@@ -183,24 +183,6 @@ set(CUDF_CUDA_FLAGS "")
 set(CUDF_CXX_DEFINITIONS "")
 set(CUDF_CUDA_DEFINITIONS "")
 
-if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0.0)
-  set(DEFAULT_CUDF_LTO_ARCHITECTURE 75)
-else()
-  set(DEFAULT_CUDF_LTO_ARCHITECTURE 70)
-endif()
-
-# LTO IR can only be linked for targets greater than or equal to its architecture. An explicit
-# override must therefore not exceed the architecture of any target GPU on which it will be linked.
-set(CUDF_LTO_ARCHITECTURE
-    "${DEFAULT_CUDF_LTO_ARCHITECTURE}"
-    CACHE STRING "LTO fragment architecture"
-)
-
-if(NOT CUDF_LTO_ARCHITECTURE MATCHES "^[0-9]+$")
-  message(FATAL_ERROR "CUDF_LTO_ARCHITECTURE must be a numeric architecture")
-endif()
-message(VERBOSE "CUDF: Using ${CUDF_LTO_ARCHITECTURE} as the common LTO architecture")
-
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the
 # version RAPIDS uses in CI that causes it to handle the resulting -M* flags incorrectly with
 # gcc>=14. We can remove this once we upgrade to a newer sccache version.
@@ -508,20 +490,18 @@ function(precompile_fixed_width_kernel_fragments)
     )
     set(VARIANT_NAME transform_kernel_${FILE_INDEX})
     set(INSTANCE
-        "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
+        "cudf::detail::transform_kernel<false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
     )
     add_fragment(
       cudf_fragments
       FRAGMENT
       ${VARIANT_NAME}
       SOURCE
-      src/transform/jit/kernel.cu
+      src/transform/jit/transform_kernel.cu
       KERNEL_INSTANCE
       ${INSTANCE}
       UDF_TYPE
-      "int(${TYPE} *, ${TYPE})"
-      DEFINITIONS
-      CUDF_LTO_MODE
+      "cudf::errc(${TYPE} *, ${TYPE})"
       ARRAY_IDS
       ${FRAGMENT_NAME}_FILE_INDEX
       ${FRAGMENT_NAME}_INSTANCE
@@ -543,20 +523,18 @@ function(precompile_fixed_width_kernel_fragments)
       )
       set(VARIANT_NAME transform_kernel_${FILE_INDEX})
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
+          "cudf::detail::transform_kernel<false, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>, cudf::jit::column_accessor<1, ${TYPE}, ${RHS_IS_SCALAR}, 0>>, cudf::jit::type_list<cudf::jit::column_accessor<0, ${TYPE}, false, 0>>>"
       )
       add_fragment(
         cudf_fragments
         FRAGMENT
         ${VARIANT_NAME}
         SOURCE
-        src/transform/jit/kernel.cu
+        src/transform/jit/transform_kernel.cu
         KERNEL_INSTANCE
         ${INSTANCE}
         UDF_TYPE
-        "int(${TYPE} *, ${TYPE}, ${TYPE})"
-        DEFINITIONS
-        CUDF_LTO_MODE
+        "cudf::errc(${TYPE} *, ${TYPE}, ${TYPE})"
         ARRAY_IDS
         ${FRAGMENT_NAME}_FILE_INDEX
         ${FRAGMENT_NAME}_INSTANCE
@@ -598,20 +576,18 @@ function(precompile_string_kernel_fragments)
       list(JOIN OUTPUT_ACCESSORS " ," OUTPUT_ACCESSORS_STR)
       list(JOIN OUTPUT_POINTERS " ," OUTPUT_POINTERS_STR)
       set(INSTANCE
-          "cudf::jit::transform_kernel<false, false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
+          "cudf::detail::transform_kernel<false, cudf::jit::type_list<cudf::jit::column_accessor<0, cudf::string_view, false, 0>>, cudf::jit::type_list<${OUTPUT_ACCESSORS_STR}>>"
       )
       add_fragment(
         cudf_fragments
         FRAGMENT
         ${VARIANT_NAME}
         SOURCE
-        src/transform/jit/kernel.cu
+        src/transform/jit/transform_kernel.cu
         KERNEL_INSTANCE
         ${INSTANCE}
         UDF_TYPE
-        "int(${OUTPUT_POINTERS_STR}, cudf::string_view)"
-        DEFINITIONS
-        CUDF_LTO_MODE
+        "cudf::errc(${OUTPUT_POINTERS_STR}, cudf::string_view)"
         ARRAY_IDS
         ${FRAGMENT_NAME}_FILE_INDEX
         ${FRAGMENT_NAME}_INSTANCE
@@ -892,7 +868,6 @@ add_library(
   src/io/utilities/trie.cu
   src/jit/cache.cpp
   src/jit/helpers.cpp
-  src/jit/parser.cpp
   src/jit/reflect.cpp
   src/jit/row_ir.cpp
   src/jit/util.cpp

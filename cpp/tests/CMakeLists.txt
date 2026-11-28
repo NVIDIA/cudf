@@ -300,7 +300,6 @@ ConfigureTest(
   binaryop/binop-null-test.cpp
   binaryop/binop-compiled-test.cpp
   binaryop/binop-compiled-fixed_point-test.cpp
-  binaryop/binop-generic-ptx-test.cpp
   binaryop/operator_parity_test.cpp
 )
 
@@ -718,49 +717,18 @@ ConfigureTest(ENCODE_TEST encode/encode_tests.cpp)
 ConfigureTest(AST_TEST ast/transform_tests.cpp ast/ast_tree_tests.cpp ast/jit_expressions_tests.cpp)
 
 # ##################################################################################################
-# * transform LTO tests
+# * shared test UDF fragments and transform LTO tests
 # -------------------------------------------------------------------------------------
 rtcx_add_embed(cudf_test_fragments)
 
-add_fragment(
-  cudf_test_fragments FRAGMENT bankers_rounding SOURCE transform/fragments/bankers_rounding.cu
-)
-
-add_fragment(cudf_test_fragments FRAGMENT distance SOURCE transform/fragments/distance.cu)
-
-add_fragment(cudf_test_fragments FRAGMENT invsqrt SOURCE transform/fragments/invsqrt.cu)
-
-add_fragment(cudf_test_fragments FRAGMENT lehmer_mean SOURCE transform/fragments/lehmer_mean.cu)
-
-add_fragment(
-  cudf_test_fragments FRAGMENT sum_of_squares SOURCE transform/fragments/sum_of_squares.cu
-)
-
-add_fragment(cudf_test_fragments FRAGMENT to_upper SOURCE transform/fragments/to_upper.cu)
-
-add_fragment(cudf_test_fragments FRAGMENT copy_string SOURCE transform/fragments/copy_string.cu)
-
-add_fragment(
-  cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
-)
+add_fragment(cudf_test_fragments FRAGMENT udfs_lto_ir SOURCE fragments/udfs.cu)
+add_fragment(cudf_test_fragments FRAGMENT udfs_ptx SOURCE fragments/udfs.cu PTX)
 
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
 )
 
-ConfigureTest(
-  TRANSFORM_LTO_TEST transform/transform_lto_test.cpp
-  ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s
-)
-add_dependencies(TRANSFORM_LTO_TEST cudf_test_fragments)
-target_include_directories(TRANSFORM_LTO_TEST PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-
-# AST JIT expressions in these tests call LTO callees from the same fragments.
-foreach(test AST_TEST JOIN_TEST MIXED_JOIN_TEST)
-  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
-  add_dependencies(${test} cudf_test_fragments)
-  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
-endforeach()
+ConfigureTest(TRANSFORM_LTO_TEST transform/transform_lto_test.cpp)
 
 # ##################################################################################################
 # * lists tests ----------------------------------------------------------------------------------
@@ -789,8 +757,6 @@ ConfigureTest(LABEL_BINS_TEST labeling/label_bins_tests.cpp)
 
 # ##################################################################################################
 # * jit tests ----------------------------------------------------------------------------------
-ConfigureTest(JIT_PARSER_TEST jit/parse_ptx_function.cpp)
-target_include_directories(JIT_PARSER_TEST PRIVATE "$<BUILD_INTERFACE:${CUDF_SOURCE_DIR}/src>")
 
 ConfigureTest(ROW_IR_TEST jit/row_ir.cpp)
 
@@ -900,6 +866,26 @@ ConfigureTest(
   ROARING_DISABLE_AVX=1
   CROARING_COMPILER_SUPPORTS_AVX512=0
 )
+
+# Share the LTO and PTX modules between the test executables.
+foreach(
+  test IN
+  ITEMS AST_TEST
+        BINARYOP_TEST
+        FILTER_TEST
+        JOIN_TEST
+        MIXED_JOIN_TEST
+        STREAM_BINARYOP_TEST
+        STREAM_JOIN_TEST
+        STREAM_STREAM_COMPACTION_TEST
+        STREAM_TRANSFORM_TEST
+        TRANSFORM_LTO_TEST
+        TRANSFORM_TEST
+)
+  target_sources(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR}/cudf_test_fragments.s)
+  add_dependencies(${test} cudf_test_fragments)
+  target_include_directories(${test} PRIVATE ${cudf_test_fragments_SOURCE_DIR})
+endforeach()
 
 # ##################################################################################################
 # Install tests ####################################################################################

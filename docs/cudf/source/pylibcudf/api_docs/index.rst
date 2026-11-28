@@ -45,6 +45,7 @@ This page provides API documentation for pylibcudf.
     transform
     transpose
     types
+    udf
     unary
     utilities
 

@@ -212,6 +212,14 @@ template <typename T>
 concept struct_view = cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::struct_view>;
 
 /**
+ * @brief Satisfied if `T` is the opaque user-data tag, `cudf::user_data`.
+ *
+ * @tparam T The type to verify
+ */
+template <typename T>
+concept user_data = cuda::std::same_as<cuda::std::remove_cv_t<T>, cudf::user_data>;
+
+/**
  * @brief Satisfied if `T` is a nested type.
  *
  * "Nested" types can have an arbitrarily deep list of descendants of the same type. Strings are

@@ -23,9 +23,6 @@ rapids_cmake_build_type("Release")
 
 # Fetch librtcx and its dependencies
 find_package(CUDAToolkit REQUIRED)
-include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_zstd.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_xxhash.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_nvtx.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_rtcx.cmake)
 
 # For now, disable CMake's automatic module scanning for C++ files. There is an sccache bug in the
@@ -122,23 +119,32 @@ macro(add_fragment)
 endmacro()
 
 # Compile and embed the UDFs so we can link them at runtime
+rtcx_add_embed(string_transform_fragments)
+add_fragment(
+  string_transform_fragments FRAGMENT transforms SOURCE fragments.cu LINK_LIBRARIES cudf::cudf
+)
+rtcx_embed(
+  string_transform_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed"
+)
+
+foreach(example IN ITEMS compute_checksum_jit extract_email_jit format_phone_jit localize_phone_jit)
+  target_sources(
+    ${example} PRIVATE ${string_transform_fragments_SOURCE_DIR}/string_transform_fragments.s
+  )
+endforeach()
+foreach(
+  example IN
+  ITEMS compute_checksum_jit extract_email_jit extract_email_precompiled format_phone_jit
+        format_phone_precompiled localize_phone_jit localize_phone_precompiled
+)
+  target_include_directories(${example} PRIVATE ${string_transform_fragments_SOURCE_DIR})
+  add_dependencies(${example} string_transform_fragments)
+endforeach()
+
 rtcx_add_embed(url_log_fragments)
 add_fragment(
-  url_log_fragments
-  FRAGMENT
-  url_component_sizes
-  SOURCE
-  url_logs/fragments.cu
-  DEFINITIONS
-  UDF_COMPUTE_SIZES
-  INCLUDE_DIRECTORIES
-  ${CMAKE_CURRENT_LIST_DIR}/url_logs
-  LINK_LIBRARIES
-  cudf::cudf
-)
-add_fragment(
-  url_log_fragments FRAGMENT url_component_output SOURCE url_logs/fragments.cu DEFINITIONS
-  UDF_WRITE_OUTPUT INCLUDE_DIRECTORIES ${CMAKE_CURRENT_LIST_DIR}/url_logs LINK_LIBRARIES cudf::cudf
+  url_log_fragments FRAGMENT url_components SOURCE url_logs/fragments.cu INCLUDE_DIRECTORIES
+  ${CMAKE_CURRENT_LIST_DIR}/url_logs LINK_LIBRARIES cudf::cudf
 )
 rtcx_embed(url_log_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 

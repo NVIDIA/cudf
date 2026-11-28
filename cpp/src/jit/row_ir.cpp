@@ -959,7 +959,9 @@ bool is_nullable(scalar_input const& in)
 
 bool is_nullable(column_input const& in) { return in.column.nullable(); }
 
-void declare_udfs(std::span<std::unique_ptr<node> const> output_irs, code_sink& sink)
+void declare_udfs(std::string_view function_name,
+                  std::span<std::unique_ptr<node> const> output_irs,
+                  code_sink& sink)
 {
   auto by_symbol = [](ast::jit::udf const& lhs, ast::jit::udf const& rhs) {
     return lhs.symbol < rhs.symbol;
@@ -970,6 +972,9 @@ void declare_udfs(std::span<std::unique_ptr<node> const> output_irs, code_sink& 
       self(self, *arg);
     }
     if (auto udf = ir.get_udf()) {
+      CUDF_EXPECTS(udf->symbol != function_name,
+                   "UDF symbol must differ from the generated function name",
+                   std::invalid_argument);
       // Only one declaration is emitted for each symbol. Decimal scales may differ between calls,
       // since the declared device types do not carry them.
       auto const same_type      = [](data_type lhs, data_type rhs) { return lhs.id() == rhs.id(); };
@@ -1079,10 +1084,13 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
   }();
 
   code_sink sink;
-  declare_udfs(output_irs_, sink);
-  sink.emit(std::format("__device__ cudf::errc {}(", function_name));
-  sink.emit(args_decl);
-  sink.emit(")\n{\n");
+  sink.emit("#include <cudf/detail/row_ir/includes.hpp>\n");
+  declare_udfs(function_name, output_irs_, sink);
+  sink.emit(std::format(R"CUDA(extern "C" __device__ cudf::errc {0}({1})
+{{
+)CUDA",
+                        function_name,
+                        args_decl));
   for (auto& ir : output_irs_) {
     ir->emit_code(instance_, target, sink);
   }
@@ -1091,7 +1099,7 @@ std::tuple<std::string, null_aware, std::vector<output_nullability>> ast_convert
     sink.get_code(), generate_null_aware_udf ? null_aware::YES : null_aware::NO, null_policies};
 }
 
-std::variant<column_view, scalar_column_view> get_column_view(scalar_input const& in)
+transform_input get_column_view(scalar_input const& in)
 {
   if (auto* s = std::get_if<std::unique_ptr<column>>(&in)) {
     return scalar_column_view{**s};
@@ -1100,10 +1108,7 @@ std::variant<column_view, scalar_column_view> get_column_view(scalar_input const
   }
 }
 
-std::variant<column_view, scalar_column_view> get_column_view(column_input const& in)
-{
-  return column_view{in.column};
-}
+transform_input get_column_view(column_input const& in) { return column_view{in.column}; }
 
 // Due to the AST expression tree structure, we can't generate the IR without the target
 // tables
@@ -1158,9 +1163,7 @@ transform_args ast_converter::compute_table(
                                  .input_table_sources  = std::move(table_sources),
                                  .input_column_indices = std::move(column_indices),
                                  .udf                  = std::move(code),
-                                 .source_type          = cudf::udf_source_type::CUDA,
                                  .is_null_aware        = is_null_aware,
-                                 .user_data            = std::nullopt,
                                  .inputs               = inputs,
                                  .outputs              = std::move(outputs),
                                  .string_offsets{},

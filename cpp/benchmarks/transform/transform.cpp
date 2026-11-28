@@ -13,6 +13,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/transform.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
@@ -26,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <format>
 #include <vector>
 
 enum class TreeType {
@@ -51,29 +53,37 @@ static void BM_transform(nvbench::state& state)
   std::string const op = "+";
   std::string expression;
   if constexpr (reuse_columns) {
-    expression = "c0 " + op + " c0";
+    expression = std::format("c0 {} c0", op);
     std::for_each(cuda::counting_iterator<cudf::size_type>{1},
                   cuda::counting_iterator{num_columns},
-                  [&](cudf::size_type) { expression = "( " + expression + " ) " + op + " c0 "; });
+                  [&](cudf::size_type) { expression = std::format("({}) {} c0", expression, op); });
   } else {
-    expression = "c0 " + op + " c1";
-    std::for_each(cuda::counting_iterator<cudf::size_type>{2},
-                  cuda::counting_iterator{num_columns},
-                  [&](cudf::size_type col) {
-                    expression = "( " + expression + " ) " + op + " c" + std::to_string(col);
-                  });
+    expression = std::format("c0 {} c1", op);
+    std::for_each(
+      cuda::counting_iterator<cudf::size_type>{2},
+      cuda::counting_iterator{num_columns},
+      [&](cudf::size_type col) { expression = std::format("({}) {} c{}", expression, op, col); });
   }
 
   std::string type_name = cudf::type_to_name(cudf::data_type{cudf::type_to_id<key_type>()});
-  std::string params    = type_name + " c0";
+  std::string params    = std::format("{} c0", type_name);
 
   std::for_each(
     cuda::counting_iterator<cudf::size_type>{1},
     cuda::counting_iterator{num_columns},
-    [&](cudf::size_type param) { params += ", " + type_name + " c" + std::to_string(param); });
+    [&](cudf::size_type param) { params += std::format(", {} c{}", type_name, param); });
 
-  std::string code =
-    "void transform(" + type_name + "* out, " + params + " ) {  *out = " + expression + "; }";
+  auto const code = std::format(R"CUDA(
+#include <cudf/udf_includes.hpp>
+extern "C" __device__ cudf::errc transform({0}* out, {1})
+{{
+  *out = {2};
+  return cudf::errc::SUCCESS;
+}}
+)CUDA",
+                                type_name,
+                                params,
+                                expression);
 
   std::vector<cudf::transform_input> inputs;
 
@@ -91,10 +101,9 @@ static void BM_transform(nvbench::state& state)
   auto const mem_stats_logger = cudf::memory_stats_logger();
 
   state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-    cudf::transform(code,
-                    cudf::udf_source_type::CUDA,
-                    cudf::null_aware::NO,
-                    std::nullopt,
+    auto compiled = cudf::compile_cuda_to_lto_ir(code.c_str());
+    auto module   = compiled.view();
+    cudf::transform(cudf::transform_udf{"transform", {&module, 1}},
                     inputs,
                     std::array{cudf::transform_output{cudf::data_type{cudf::type_to_id<key_type>()},
                                                       cudf::output_nullability::PRESERVE}},

@@ -5,6 +5,24 @@
 # cmake-format: on
 # =============================================================================
 
+if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13.0.0)
+  set(DEFAULT_CUDF_LTO_ARCHITECTURE 75)
+else()
+  set(DEFAULT_CUDF_LTO_ARCHITECTURE 70)
+endif()
+
+# LTO IR can only be linked for targets greater than or equal to its architecture. An explicit
+# override must therefore not exceed the architecture of any target GPU on which it will be linked.
+set(CUDF_LTO_ARCHITECTURE
+    "${DEFAULT_CUDF_LTO_ARCHITECTURE}"
+    CACHE STRING "LTO fragment architecture"
+)
+
+if(NOT CUDF_LTO_ARCHITECTURE MATCHES "^[0-9]+$")
+  message(FATAL_ERROR "CUDF_LTO_ARCHITECTURE must be a numeric architecture")
+endif()
+message(VERBOSE "CUDF: Using ${CUDF_LTO_ARCHITECTURE} as the common LTO architecture")
+
 if(CMAKE_COMPILER_IS_GNUCXX)
   list(APPEND CUDF_CXX_FLAGS -Wall -Werror -Wno-unknown-pragmas)
 endif()

@@ -1115,45 +1115,25 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
   /////////////////////////////////////////////////////////////////////////////
 
   /**
-   * Transform a vector using a custom function.  Be careful this is not
+   * Transform a vector using a precompiled custom function. Be careful this is not
    * simple to do.  You need to be positive you know what type of data you are
-   * processing and how the data is laid out.  This also only works on fixed
-   * length types.
-   * @param udf This function will be applied to every element in the vector
-   * @param isPtx is the code of the function ptx? true or C/C++ false.
-   */
-  public final ColumnVector transform(String udf, boolean isPtx) {
-    return transform(udf, isPtx, DType.INT32);
-  }
-
-  /**
-   * Transform a vector using a custom function, producing a column of the given type.  Be careful
-   * this is not simple to do.  You need to be positive you know what type of data you are
-   * processing and how the data is laid out.  Only fixed-width and STRING output types are
-   * supported.
-   * The type is not checked against the UDF; with PTX, a fixed-width store must be exactly the
-   * width of outputType.  For DECIMAL outputs the CUDA output parameter is a
-   * {@code numeric::decimal32/64/128} pointer; only its unscaled value is stored, so the UDF must
-   * produce it at outputType's scale.
+   * processing and how the data is laid out. Only fixed-width and STRING output types are
+   * supported. The output type and scale must match the UDF's output parameter.
+   * For DECIMAL outputs the output parameter is a {@code numeric::decimal32/64/128} pointer;
+   * only its unscaled value is stored, so the UDF must produce it at outputType's scale.
    * For STRING outputs the output parameter is a {@code cudf::string_view} pointer to device
    * memory, e.g. a slice of a STRING input; its characters are copied into the result column.
-   * @param udf This function will be applied to every element in the vector
-   * @param isPtx is the code of the function ptx? true or C/C++ false.
-   * @param outputType the type of the output column. The type of the UDF's output parameter
-   *                   must match it.
+   * @param udf the function applied to every element in the vector; see {@link TransformUDF}
+   *            for the UDF contract
+   * @param outputType the type of the output column
    * @throws IllegalArgumentException if outputType is neither a fixed-width type nor STRING
    */
-  public final ColumnVector transform(String udf, boolean isPtx, DType outputType) {
-    if (outputType.getSizeInBytes() == 0 && !outputType.equals(DType.STRING)) {
-      throw new IllegalArgumentException(
-          "transform only supports fixed-width and STRING output types, got " + outputType);
-    }
-    return new ColumnVector(transform(getNativeView(), udf, isPtx,
-        outputType.getTypeId().getNativeId(), outputType.getScale(), false, 0, 0));
+  public final ColumnVector transform(TransformUDF udf, DType outputType) {
+    return transform(udf, outputType, null, null);
   }
 
   /**
-   * Transform a vector using a custom function, as {@link #transform(String, boolean, DType)},
+   * Transform a vector using a precompiled custom function, as {@link #transform(TransformUDF, DType)},
    * optionally passing user data to the UDF, and optionally writing STRING output into
    * preallocated offsets.
    * <p>
@@ -1162,8 +1142,9 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * valid until this method returns, such as the characters of a STRING input or the user data;
    * the characters are copied into the result column.
    * <p>
-   * With {@code userData}, the UDF takes two extra leading parameters:
-   * {@code (void* user_data, cudf::size_type row, <output>* output, <input> input)}.  The buffer
+   * With {@code userData}, a {@code void*} input precedes the column input and follows the
+   * output pointer. If {@link TransformUDF#isIndexed()} is true, a logical row index precedes
+   * the output pointer, independently of whether user data is supplied. The buffer
    * is passed as is; its size is not passed, and the UDF must stay within it.  A UDF producing
    * STRING output can use it as scratch space: write the characters of each row into that row's
    * slot of the buffer, for example at {@code row * maxBytesPerRow}, and set the
@@ -1180,10 +1161,9 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    * are uninitialized; the UDF must write all of them.  The offsets are typically computed by a
    * preceding transform producing the output size of each row.  The offsets must start at 0 and
    * be non-decreasing; this is not checked, and invalid offsets make the UDF write out of bounds.
-   * Null rows must have zero-length slots: the UDF is not called for them, so any characters
-   * there stay uninitialized.
-   * @param udf This function will be applied to every element in the vector
-   * @param isPtx is the code of the function ptx? true or C/C++ false.
+   * Null output rows must have zero-length slots. A non-null-aware UDF is not called for
+   * input-null rows, so any characters in their slots stay uninitialized.
+   * @param udf the function applied to every element; see {@link TransformUDF} for its contract
    * @param outputType the type of the output column. The type of the UDF's output parameter
    *                   must match it.
    * @param userData device memory passed to the UDF, or null to pass none
@@ -1194,8 +1174,10 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
    *                                  if stringOffsets is given for a non-STRING output, or has
    *                                  the wrong type, nulls, or the wrong number of rows
    */
-  public final ColumnVector transform(String udf, boolean isPtx, DType outputType,
+  public final ColumnVector transform(TransformUDF udf, DType outputType,
       BaseDeviceMemoryBuffer userData, ColumnView stringOffsets) {
+    Objects.requireNonNull(udf, "udf");
+    Objects.requireNonNull(outputType, "outputType");
     if (outputType.getSizeInBytes() == 0 && !outputType.equals(DType.STRING)) {
       throw new IllegalArgumentException(
           "transform only supports fixed-width and STRING output types, got " + outputType);
@@ -1219,9 +1201,16 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
         throw new IllegalArgumentException("string offsets must not have nulls");
       }
     }
-    return new ColumnVector(transform(getNativeView(), udf, isPtx,
-        outputType.getTypeId().getNativeId(), outputType.getScale(),
-        userData != null, userData == null ? 0 : userData.getAddress(),
+    LtoFragment[] fragments = udf.getFragments();
+    byte[][] modules = new byte[fragments.length][];
+    int[] binaryTypes = new int[fragments.length];
+    for (int i = 0; i < fragments.length; ++i) {
+      modules[i] = fragments[i].getData();
+      binaryTypes[i] = fragments[i].getBinaryType().getNativeId();
+    }
+    return new ColumnVector(transform(getNativeView(), udf.getSymbol(), modules, binaryTypes,
+        udf.isNullAware(), udf.isIndexed(), outputType.getTypeId().getNativeId(),
+        outputType.getScale(), userData != null, userData == null ? 0 : userData.getAddress(),
         stringOffsets == null ? 0 : stringOffsets.getNativeView()));
   }
 
@@ -5277,9 +5266,10 @@ public class ColumnView implements AutoCloseable, BinaryOperable {
 
   private static native long containsVector(long valuesHandle, long searchSpaceHandle) throws CudfException;
 
-  private static native long transform(long viewHandle, String udf, boolean isPtx,
-      int outputTypeId, int outputScale, boolean hasUserData, long userDataAddress,
-      long stringOffsetsViewHandle);
+  private static native long transform(long viewHandle, String symbol, byte[][] modules,
+                                       int[] binaryTypes, boolean nullAware, boolean indexed,
+                                       int outputTypeId, int outputScale, boolean hasUserData,
+                                       long userDataAddress, long stringOffsetsViewHandle);
 
   private static native long clamper(long nativeView, long loScalarHandle, long loScalarReplaceHandle,
                                      long hiScalarHandle, long hiScalarReplaceHandle);

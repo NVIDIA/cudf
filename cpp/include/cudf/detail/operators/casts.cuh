@@ -10,7 +10,6 @@
 #include <cudf/utilities/export.hpp>
 
 #include <cuda/std/concepts>
-#include <cuda/std/type_traits>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/default_stream.hpp>
@@ -21,6 +23,7 @@
 #include <cudf/join/streaming_hash_join.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
+#include <cudf/udf.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -250,11 +253,11 @@ TEST_F(JoinTest, FullJoinWithPostFilter)
                                           cudf::join_kind::FULL_JOIN,
                                           size,
                                           stream);
-  auto jit_result     = cudf::filter_join_indices_jit(conditional0,
-                                                  conditional1,
+  auto jit_result     = cudf::filter_join_indices_jit(conditional0.view().select({0}),
+                                                  conditional1.view().select({0}),
                                                   left_indices,
                                                   right_indices,
-                                                  predicate,
+                                                  cudf::test::get_udf("greater_int32_t"),
                                                   cudf::join_kind::FULL_JOIN,
                                                       {},
                                                   stream);

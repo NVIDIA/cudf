@@ -2,6 +2,8 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <tests/udf.hpp>
+
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
@@ -26,8 +28,6 @@
 #include <rmm/cuda_stream.hpp>
 
 #include <cuda/iterator>
-
-#include <cudf_test_fragments.hpp>
 
 #include <algorithm>
 #include <array>
@@ -81,24 +81,23 @@ cudf::ast::jit::udf callee(char const* symbol,
   return {symbol, is_pure, output, {input}};
 }
 
-cudf::lto_fragments modules()
-{
-  static auto const fragments = std::array{cudf::lto_fragment{
-    cudf::lto_binary_type::FATBIN, cudf_test_fragments::get(cudf_test_fragments::ast_udf_callees)}};
-  return fragments;
-}
-
 auto run_column(cudf::table_view const& table, cudf::ast::expression const& expr)
 {
-  return cudf::compute_column_jit(
-    table, expr, modules(), cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  return cudf::compute_column_jit(table,
+                                  expr,
+                                  cudf::test::get_udf_fragments(),
+                                  cudf::get_default_stream(),
+                                  cudf::get_current_device_resource_ref());
 }
 
 auto run_table(cudf::table_view const& table,
                std::span<std::reference_wrapper<cudf::ast::expression const> const> exprs)
 {
-  return cudf::compute_table_jit(
-    table, exprs, modules(), cudf::get_default_stream(), cudf::get_current_device_resource_ref());
+  return cudf::compute_table_jit(table,
+                                 exprs,
+                                 cudf::test::get_udf_fragments(),
+                                 cudf::get_default_stream(),
+                                 cudf::get_current_device_resource_ref());
 }
 
 }  // namespace
@@ -494,7 +493,7 @@ TEST_F(JITExpressionTest, UdfCallInTransformProgram)
   std::reference_wrapper<cudf::ast::expression const> expressions[] = {call};
   auto program                                                      = cudf::transform_program{table,
                                          expressions,
-                                         modules(),
+                                         cudf::test::get_udf_fragments(),
                                          cudf::get_default_stream(),
                                          cudf::get_current_device_resource_ref()};
 

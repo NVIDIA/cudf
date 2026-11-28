@@ -75,6 +75,7 @@
 #include <array>
 #include <numeric>
 #include <utility>
+#include <vector>
 
 using cudf::jni::ptr_as_jlong;
 using cudf::jni::release_as_jlong;
@@ -1551,44 +1552,68 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_containsVector(JNIEnv* en
 JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_ColumnView_transform(JNIEnv* env,
                                                                  jobject j_object,
                                                                  jlong handle,
-                                                                 jstring j_udf,
-                                                                 jboolean j_is_ptx,
+                                                                 jstring j_symbol,
+                                                                 jobjectArray j_modules,
+                                                                 jintArray j_binary_types,
+                                                                 jboolean j_null_aware,
+                                                                 jboolean j_indexed,
                                                                  jint j_dtype,
                                                                  jint j_scale,
                                                                  jboolean j_has_user_data,
                                                                  jlong j_user_data,
                                                                  jlong j_string_offsets)
 {
+  JNI_NULL_CHECK(env, j_symbol, "UDF symbol is null", 0);
+  JNI_NULL_CHECK(env, j_modules, "UDF modules are null", 0);
+  JNI_NULL_CHECK(env, j_binary_types, "UDF binary types are null", 0);
   JNI_TRY
   {
     cudf::jni::auto_set_device(env);
     cudf::column_view* column = reinterpret_cast<cudf::column_view*>(handle);
-    cudf::jni::native_jstring n_j_udf(env, j_udf);
-    std::string n_udf              = n_j_udf;
-    cudf::transform_input inputs[] = {*column};
-    // A flag rather than a null address: an empty buffer may have a null address.
-    auto user_data =
-      j_has_user_data ? std::optional<void*>{reinterpret_cast<void*>(j_user_data)} : std::nullopt;
-    // cudf::transform takes ownership of the offsets, which become the result's offsets child.
-    // The Java layer has checked they have no nulls; copy them without a validity mask.
+    cudf::jni::native_jstring n_j_symbol(env, j_symbol);
+    std::string n_symbol = n_j_symbol;
+    cudf::jni::native_jobjectArray<jbyteArray> n_modules(env, j_modules);
+    cudf::jni::native_jintArray binary_types(env, j_binary_types);
+    CUDF_EXPECTS(n_modules.size() > 0 && n_modules.size() == binary_types.size(),
+                 "A UDF requires a binary type for each compiled module",
+                 std::invalid_argument);
+    std::vector<std::vector<uint8_t>> modules;
+    std::vector<cudf::lto_fragment> fragments;
+    for (int i = 0; i < n_modules.size(); ++i) {
+      auto const module_array = n_modules[i];
+      {
+        cudf::jni::native_jbyteArray n_module(env, module_array);
+        modules.push_back(n_module.to_vector<uint8_t>());
+      }
+      env->DeleteLocalRef(module_array);
+      fragments.push_back({static_cast<cudf::lto_binary_type>(binary_types[i]), modules.back()});
+    }
+    std::vector<cudf::transform_input> inputs;
+    // An empty buffer can have a null address and must still be passed to the UDF.
+    if (j_has_user_data) {
+      inputs.emplace_back(cudf::user_data{reinterpret_cast<void*>(j_user_data)});
+    }
+    inputs.emplace_back(*column);
+    // The result owns its offsets. Copy without the all-valid mask checked by the Java layer.
     std::vector<std::unique_ptr<cudf::column>> string_offsets;
     if (j_string_offsets != 0) {
       auto const& offsets = *reinterpret_cast<cudf::column_view*>(j_string_offsets);
       string_offsets.push_back(std::make_unique<cudf::column>(cudf::column_view{
         offsets.type(), offsets.size(), offsets.head(), nullptr, 0, offsets.offset()}));
     }
-    return release_as_jlong(std::move(
-      cudf::transform(n_udf,
-                      j_is_ptx ? cudf::udf_source_type::PTX : cudf::udf_source_type::CUDA,
-                      cudf::null_aware::NO,
-                      user_data,
-                      inputs,
-                      std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
-                                                        cudf::output_nullability::PRESERVE}},
-                      std::move(string_offsets),
-                      std::nullopt)
-        ->release()
-        .front()));
+    return release_as_jlong(
+      std::move(cudf::transform(
+                  cudf::transform_udf{n_symbol,
+                                      fragments,
+                                      j_null_aware ? cudf::null_aware::YES : cudf::null_aware::NO,
+                                      static_cast<bool>(j_indexed)},
+                  inputs,
+                  std::array{cudf::transform_output{cudf::jni::make_data_type(j_dtype, j_scale),
+                                                    cudf::output_nullability::PRESERVE}},
+                  std::move(string_offsets),
+                  std::nullopt)
+                  ->release()
+                  .front()));
   }
   JNI_CATCH(env, 0);
 }

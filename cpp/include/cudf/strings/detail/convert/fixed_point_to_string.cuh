@@ -7,7 +7,6 @@
 #include <cudf/strings/detail/convert/int_to_string.cuh>
 
 #include <cuda/std/algorithm.max.h>
-#include <cuda/std/functional>
 
 namespace cudf::strings::detail {
 

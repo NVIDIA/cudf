@@ -21,8 +21,8 @@
 #include <cuda/std/optional>
 
 #include <jit/column_accessor.cuh>
-#include <jit/transform_kernel.cuh>
 #include <jit/type_list.cuh>
+#include <transform/jit/transform_kernel.cuh>
 
 #include <string>
 #include <type_traits>

@@ -19,10 +19,9 @@ The following examples are included:
    first match into protocol, host, port, path, query, and fragment columns (based on https://datatracker.ietf.org/doc/html/rfc3986):
    - `regex`: one six-capture `cudf::strings::extract` expression.
    - `precompiled`: sequential public partition, conditional-copy, and concatenate APIs.
-   - `jit`: a fused byte parser compiled from CUDA source at runtime. Its sizing pass produces exact
-     per-row output sizes; scans create offsets and a second pass writes all six output columns.
-   - `lto`: the same fused parser ABI, AOT-compiled to embedded fatbins and JIT-linked with
-     libcudf's precompiled transform kernels.
+   - `lto`: a fused byte parser AOT-compiled to an embedded fatbin and JIT-linked with
+     libcudf's precompiled transform kernels. Its sizing pass produces exact per-row output sizes;
+     scans create offsets and a second pass writes all six output columns.
 
 ## Compile and execute
 

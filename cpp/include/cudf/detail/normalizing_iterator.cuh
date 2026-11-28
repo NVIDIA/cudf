@@ -14,7 +14,7 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/type_traits>
+#include <cuda/std/iterator>
 
 namespace cudf {
 namespace detail {

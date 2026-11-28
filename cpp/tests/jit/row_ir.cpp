@@ -8,11 +8,13 @@
 #include "cudf_test/column_wrapper.hpp"
 
 #include <cudf_test/debug_utilities.hpp>
+#include <cudf_test/table_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/ast/jit/udf.hpp>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/transform.hpp>
+#include <cudf/udf.hpp>
 
 #include <cuda/iterator>
 
@@ -21,6 +23,8 @@
 #include <cctype>
 #include <cstdint>
 #include <functional>
+#include <stdexcept>
+#include <string_view>
 
 namespace row_ir = cudf::detail::row_ir;
 
@@ -357,7 +361,6 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
 
   ASSERT_EQ(transform_args.scalar_columns.size(), 1);
   ASSERT_EQ(transform_args.scalar_columns[0]->view().size(), 1);
-  EXPECT_EQ(transform_args.source_type, cudf::udf_source_type::CUDA);
   EXPECT_EQ(transform_args.is_null_aware, cudf::null_aware::NO);
   EXPECT_EQ(transform_args.outputs.size(), 1);
   EXPECT_EQ(transform_args.outputs[0].nullability, cudf::output_nullability::ALL_VALID);
@@ -378,7 +381,8 @@ TEST_F(RowIRCudaCodeGenTest, AstConversionBasic)
             column->null_count());
 
   auto expected_udf =
-    R"***(__device__ cudf::errc expression(int32_t* out_0, int32_t in_0, int32_t in_1)
+    R"***(#include <cudf/detail/row_ir/includes.hpp>
+extern "C" __device__ cudf::errc expression(int32_t* out_0, int32_t in_0, int32_t in_1)
 {
 int32_t tmp_0 = in_0;
 int32_t tmp_1 = in_1;
@@ -390,14 +394,16 @@ return cudf::errc::SUCCESS;
 
   EXPECT_EQ(transform_args.udf, expected_udf);
 
-  auto result = cudf::transform(transform_args.udf,
-                                transform_args.source_type,
-                                transform_args.is_null_aware,
-                                transform_args.user_data,
-                                transform_args.inputs,
-                                transform_args.outputs,
-                                std::move(transform_args.string_offsets),
-                                transform_args.row_size);
+  auto udf_module =
+    cudf::compile_cuda_to_lto_ir(transform_args.udf.c_str(), {}, {}, {}, true, "cudf_row_ir");
+  auto const udf_fragment = udf_module.view();
+  auto result             = cudf::transform(
+    cudf::transform_udf{
+      transform_args.udf_expression, {&udf_fragment, 1}, transform_args.is_null_aware},
+    transform_args.inputs,
+    transform_args.outputs,
+    std::move(transform_args.string_offsets),
+    transform_args.row_size);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->get_column(0).view());
 }
@@ -457,10 +463,11 @@ TEST_F(RowIRCudaCodeGenTest, CrossOutputCSE)
   row_ir::ast_converter converter{
     cudf::get_default_stream(), cudf::get_current_device_resource_ref(), table, {}};
   auto const& [code, null_aware, nullability] =
-    converter.generate_code(row_ir::target::CUDA, expressions, "compute_operation");
+    converter.generate_code(row_ir::target::CUDA, expressions, "cudf_transform");
 
   auto expected_code =
-    R"***(__device__ cudf::errc compute_operation(int32_t* out_0, int32_t* out_1, int32_t in_0)
+    R"***(#include <cudf/detail/row_ir/includes.hpp>
+extern "C" __device__ cudf::errc cudf_transform(int32_t* out_0, int32_t* out_1, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
 int32_t tmp_1 = cudf::detail::row_ir::evaluate<cudf::detail::row_ir::opcode::ADD, cudf::error_policy::PROPAGATE>(tmp_0, tmp_0);
@@ -484,7 +491,7 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
   // of a pure callee share one evaluation; separate calls of an impure one are never merged, but
   // one call referred to twice is evaluated once.
   auto ref      = cudf::ast::column_reference{3};
-  auto code_for = [&](bool is_pure, bool one_call) {
+  auto code_for = [&](bool is_pure, bool one_call, std::string_view function_name) {
     auto const function = cudf::ast::jit::udf{
       "f", is_pure, cudf::data_type{cudf::type_id::INT32}, {cudf::data_type{cudf::type_id::INT32}}};
     auto tree = cudf::ast::tree{};
@@ -495,12 +502,13 @@ TEST_F(RowIRCudaCodeGenTest, UdfCallCSE)
     row_ir::ast_converter converter{
       cudf::get_default_stream(), cudf::get_current_device_resource_ref(), table, {}};
     auto [code, null_aware, nullability] =
-      converter.generate_code(row_ir::target::CUDA, expressions, "compute_operation");
+      converter.generate_code(row_ir::target::CUDA, expressions, function_name);
     return code;
   };
 
-  auto expected_pure = R"***(extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
-__device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
+  auto expected_pure = R"***(#include <cudf/detail/row_ir/includes.hpp>
+extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
+extern "C" __device__ cudf::errc cudf_transform(int32_t* out_0, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
 CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
@@ -510,8 +518,9 @@ int32_t tmp_3 = tmp_2;
 return cudf::errc::SUCCESS;
 })***";
 
-  auto expected_impure = R"***(extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
-__device__ cudf::errc compute_operation(int32_t* out_0, int32_t in_0)
+  auto expected_impure = R"***(#include <cudf/detail/row_ir/includes.hpp>
+extern "C" __device__ cudf::errc f(int32_t* out, int32_t in_0);
+extern "C" __device__ cudf::errc cudf_transform(int32_t* out_0, int32_t in_0)
 {
 int32_t tmp_0 = in_0;
 CUDF_ROW_IR_PROPAGATE_ERROR(int32_t, tmp_1, cudf::detail::row_ir::invoke_udf<false, false, cudf::error_policy::PROPAGATE, &::f, int32_t>(tmp_0));
@@ -522,9 +531,10 @@ int32_t tmp_4 = tmp_3;
 return cudf::errc::SUCCESS;
 })***";
 
-  EXPECT_EQ(code_for(true, false), expected_pure);
-  EXPECT_EQ(code_for(false, false), expected_impure);
-  EXPECT_EQ(code_for(false, true), expected_pure);
+  EXPECT_EQ(code_for(true, false, "cudf_transform"), expected_pure);
+  EXPECT_EQ(code_for(false, false, "cudf_transform"), expected_impure);
+  EXPECT_EQ(code_for(false, true, "cudf_transform"), expected_pure);
+  EXPECT_THROW(code_for(true, false, "f"), std::invalid_argument);
 }
 
 CUDF_TEST_PROGRAM_MAIN()

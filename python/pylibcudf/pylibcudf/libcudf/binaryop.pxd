@@ -84,15 +84,6 @@ cdef extern from "cudf/binaryop.hpp" namespace "cudf" nogil:
         device_async_resource_ref mr
     ) except +libcudf_exception_handler
 
-    cdef unique_ptr[column] binary_operation (
-        const column_view& lhs,
-        const column_view& rhs,
-        const string& op,
-        data_type output_type,
-        cudaStream_t stream,
-        device_async_resource_ref mr
-    ) except +libcudf_exception_handler
-
 cdef extern from "cudf/binaryop.hpp" namespace "cudf::binops" nogil:
     cdef bool is_supported_operation(
         data_type output_type,

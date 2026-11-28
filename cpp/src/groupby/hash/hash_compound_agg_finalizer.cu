@@ -65,7 +65,7 @@ void finalize_means(table_view const& values,
     auto out =
       mutable_column_view{mean.type(), mean.size(), mean.head(), nullptr, 0, mean.offset()};
     cudf::binops::compiled::apply_binary_op<cudf::binops::compiled::ops::Div>(
-      out, sums, counts, false, false, stream);
+      out, sums, counts, false, false, nan_semantics::UNORDERED, stream);
   }
 }
 

@@ -32,7 +32,10 @@
 #include <vector>
 
 /**
- * @brief contains(column, scalar) over columns whose row lengths follow skewed distributions.
+ * @brief contains/find/rfind with a scalar target over columns whose row lengths follow skewed
+ * distributions.
+ *
+ * `api` axis values: contains, find, find_bytes, rfind, rfind_bytes
  *
  * `dist` axis values:
  *   fixed_L              every row L bytes
@@ -202,6 +205,7 @@ static void bench_find_skewed(nvbench::state& state)
   auto const hit_rate = static_cast<int>(state.get_int64("hit_rate"));
   auto const null_pct = static_cast<int>(state.get_int64("null_pct"));
   auto const dist     = state.get_string("dist");
+  auto const api      = state.get_string("api");
 
   auto const stream = cudf::get_default_stream();
   auto const data   = make_skewed_column(dist, num_rows, hit_rate, null_pct, stream);
@@ -214,10 +218,29 @@ static void bench_find_skewed(nvbench::state& state)
 
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   state.add_global_memory_reads<nvbench::int8_t>(data.column->alloc_size());
-  state.add_global_memory_writes<nvbench::int8_t>(input.size());
+  if (api == "contains") {
+    state.add_global_memory_writes<nvbench::int8_t>(input.size());
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::contains(input, target); });
+    return;
+  }
 
-  state.exec(nvbench::exec_tag::sync,
-             [&](nvbench::launch& launch) { cudf::strings::contains(input, target); });
+  state.add_global_memory_writes<nvbench::int32_t>(input.size());
+  if (api == "find") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::find(input, target); });
+  } else if (api == "find_bytes") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::find_bytes(input, target); });
+  } else if (api == "rfind") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::rfind(input, target); });
+  } else if (api == "rfind_bytes") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::rfind_bytes(input, target); });
+  } else {
+    state.skip("unknown api: " + api);
+  }
 }
 
 NVBENCH_BENCH(bench_find_skewed)
@@ -225,6 +248,7 @@ NVBENCH_BENCH(bench_find_skewed)
   .add_int64_axis("num_rows", {262144, 2097152})
   .add_int64_axis("hit_rate", {20})
   .add_int64_axis("null_pct", {0})
+  .add_string_axis("api", {"contains", "find", "find_bytes", "rfind", "rfind_bytes"})
   .add_string_axis("dist",
                    {"fixed_16",
                     "fixed_64",

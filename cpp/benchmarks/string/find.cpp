@@ -28,6 +28,13 @@ static void bench_find_string(nvbench::state& state)
   auto const col    = create_string_column(num_rows, max_width, hit_rate);
   auto const input  = cudf::strings_column_view(col->view());
 
+  auto const is_find =
+    api == "find" || api == "find_bytes" || api == "rfind" || api == "rfind_bytes";
+  if (tgt_type == "column" && is_find && api != "find") {
+    state.skip("no column target overload");
+    return;
+  }
+
   auto target        = cudf::string_scalar("0987 5W43");
   auto targets_col   = cudf::make_column_from_scalar(target, num_rows);
   auto const targets = cudf::strings_column_view(targets_col->view());
@@ -35,7 +42,7 @@ static void bench_find_string(nvbench::state& state)
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
   auto const data_size = col->alloc_size();
   state.add_global_memory_reads<nvbench::int8_t>(data_size);
-  if (api == "find") {
+  if (is_find) {
     state.add_global_memory_writes<nvbench::int32_t>(input.size());
   } else {
     state.add_global_memory_writes<nvbench::int8_t>(input.size());
@@ -50,6 +57,15 @@ static void bench_find_string(nvbench::state& state)
       state.exec(nvbench::exec_tag::sync,
                  [&](nvbench::launch& launch) { cudf::strings::find(input, targets); });
     }
+  } else if (api == "find_bytes") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::find_bytes(input, target); });
+  } else if (api == "rfind") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::rfind(input, target); });
+  } else if (api == "rfind_bytes") {
+    state.exec(nvbench::exec_tag::sync,
+               [&](nvbench::launch& launch) { cudf::strings::rfind_bytes(input, target); });
   } else if (api == "contains") {
     if (tgt_type == "scalar") {
       state.exec(nvbench::exec_tag::sync,
@@ -84,7 +100,8 @@ NVBENCH_BENCH(bench_find_string)
   .add_int64_axis("max_width", {32, 64, 128, 256})
   .add_int64_axis("num_rows", {32768, 262144, 2097152})
   .add_int64_axis("hit_rate", {20, 80})  // percentage
-  .add_string_axis("api", {"find", "contains", "starts_with", "ends_with"})
+  .add_string_axis(
+    "api", {"find", "find_bytes", "rfind", "rfind_bytes", "contains", "starts_with", "ends_with"})
   .add_string_axis("target", {"scalar", "column"});
 
 static void bench_find_string_skewed(nvbench::state& state)

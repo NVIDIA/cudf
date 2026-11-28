@@ -831,7 +831,7 @@ table_with_metadata reader_impl::read_chunk_internal(read_mode mode)
   // `prepare_dict_transcode`, the entries in `out_columns` are currently INT32 indices columns.
   // Assemble them into DICTIONARY32 columns here by attaching per-chunk keys; concatenate
   // remaps indices to the unified keys child.
-  assemble_dict_transcoded_columns(out_columns);
+  assemble_dict_transcoded_columns(out_columns, mr);
 
   out_columns = cudf::structs::detail::enforce_null_consistency(
     std::move(out_columns), _stream, mr.get_output_mr());

@@ -617,10 +617,10 @@ streaming_groupby::impl::do_finalize_and_release(cuda::stream_ref stream, cudf::
 }
 
 cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert(
-  table_view const& batch_keys, bool use_partials, cuda::stream_ref stream)
+  table_view const& batch_keys, cuda::stream_ref stream)
 {
-  if (_has_nested_keys) { return probe_and_insert_impl<true>(batch_keys, use_partials, stream); }
-  return probe_and_insert_impl<false>(batch_keys, use_partials, stream);
+  if (_has_nested_keys) { return probe_and_insert_impl<true>(batch_keys, stream); }
+  return probe_and_insert_impl<false>(batch_keys, stream);
 }
 
 // Constructor, destructor, and move ops require full impl definition.

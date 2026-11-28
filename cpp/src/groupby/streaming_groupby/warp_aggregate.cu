@@ -157,15 +157,20 @@ __device__ void aggregate_count(cg::coalesced_group const& thread_group,
 template <typename T>
 CUDF_KERNEL void __launch_bounds__(partial_aggregation_block_size)
   aggregate_warp_kernel(size_type num_rows,
-                        size_type const* targets,
+                        size_type const* group_ids,
+                        size_type capacity,
+                        size_type partials_per_group,
                         detail::value_accessor<hash::rep_type_t<T>> values,
                         bool has_nulls,
                         aggregation_columns outputs)
 {
   auto const row = cudf::detail::grid_1d::global_thread_id();
   if (row >= num_rows) { return; }
-  auto const target = targets[row];
-  if (target == cudf::detail::CUDF_SIZE_TYPE_SENTINEL) { return; }
+  auto const group = group_ids[row];
+  if (group == cudf::detail::CUDF_SIZE_TYPE_SENTINEL) { return; }
+  auto const partial =
+    static_cast<size_type>(blockIdx.x % static_cast<uint32_t>(partials_per_group));
+  auto const target = partial * capacity + group;
 
   // COUNT_ALL also includes rows with null values.
   if (outputs.count_all.output != nullptr) {
@@ -201,7 +206,9 @@ struct aggregation_dispatch {
   template <typename T>
   void operator()(column_view const& input,
                   aggregation_columns outputs,
-                  device_span<size_type const> targets,
+                  device_span<size_type const> group_ids,
+                  size_type capacity,
+                  size_type partials_per_group,
                   cuda::stream_ref stream,
                   cudf::memory_resources mr) const
   {
@@ -215,11 +222,13 @@ struct aggregation_dispatch {
          is_warp_aggregation_supported<T, aggregation::SUM_OF_SQUARES>),
       "Unsupported type and aggregation kind for warp aggregation");
     auto const values   = column_device_view::create(input, stream, mr.get_temporary_mr());
-    auto const num_rows = static_cast<size_type>(targets.size());
+    auto const num_rows = static_cast<size_type>(group_ids.size());
     cudf::detail::grid_1d const grid{num_rows, partial_aggregation_block_size};
     aggregate_warp_kernel<T><<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
       num_rows,
-      targets.data(),
+      group_ids.data(),
+      capacity,
+      partials_per_group,
       detail::value_accessor<hash::rep_type_t<T>>{*values},
       input.has_nulls(),
       outputs);
@@ -231,6 +240,8 @@ struct aggregation_dispatch {
   void operator()(column_view const&,
                   aggregation_columns,
                   device_span<size_type const>,
+                  size_type,
+                  size_type,
                   cuda::stream_ref,
                   cudf::memory_resources) const
   {
@@ -242,11 +253,18 @@ struct aggregation_dispatch {
 
 void compute_warp_aggregates(table_view const& values,
                              host_span<aggregation::Kind const> kinds,
-                             device_span<size_type const> targets,
+                             device_span<size_type const> group_ids,
+                             size_type capacity,
+                             size_type partials_per_group,
                              mutable_table_view const& output,
                              cuda::stream_ref stream,
                              cudf::memory_resources mr)
 {
+  CUDF_EXPECTS(partials_per_group > 0, "partials_per_group must be positive");
+  CUDF_EXPECTS(output.num_columns() == 0 or
+                 output.num_rows() >= static_cast<int64_t>(capacity) * partials_per_group,
+               "Output is smaller than capacity * partials_per_group");
+
   for (size_type begin = 0; begin < values.num_columns();) {
     auto const& input = values.column(begin);
     aggregation_columns columns{};
@@ -262,7 +280,15 @@ void compute_warp_aggregates(table_view const& values,
     auto const type = cudf::is_dictionary(input.type())
                         ? dictionary_column_view(input).keys().type()
                         : input.type();
-    type_dispatcher(type, aggregation_dispatch{}, input, columns, targets, stream, mr);
+    type_dispatcher(type,
+                    aggregation_dispatch{},
+                    input,
+                    columns,
+                    group_ids,
+                    capacity,
+                    partials_per_group,
+                    stream,
+                    mr);
     begin = end;
   }
 }

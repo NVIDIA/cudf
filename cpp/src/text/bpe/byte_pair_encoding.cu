@@ -957,7 +957,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
     output_sizes.begin(), output_sizes.end(), stream, mr);
 
   // build the output: the inclusive count of separators gives each byte's output position
-  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), bytes, cuda::no_init);
   auto const sep_char = separator.to_string(stream)[0];
   auto const d_counts = cuda::transform_iterator(
     chars_begin,
@@ -976,7 +976,7 @@ std::unique_ptr<cudf::column> byte_pair_encoding(cudf::strings_column_view const
 
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    input.null_count(),
                                    cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

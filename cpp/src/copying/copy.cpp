@@ -12,6 +12,7 @@
 #include <cudf/table/table.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/execution>
 #include <cuda/stream>
 
 #include <algorithm>
@@ -116,7 +117,12 @@ std::unique_ptr<column> allocate_like(column_view const& input,
   return std::make_unique<column>(
     input.type(),
     size,
-    rmm::device_buffer(size * size_of(input.type()), stream, mr.get_output_mr()),
+    cuda::device_buffer<std::byte>(
+      stream,
+      mr.get_output_mr(),
+      size * size_of(input.type()),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, size_of(input.type())}),
     cudf::detail::create_null_mask(size, allocate_mask, stream, mr),
     0);
 }
@@ -143,12 +149,14 @@ std::unique_ptr<column> empty_like(column_view const& input)
                  std::back_inserter(children),
                  [](column_view const& col) { return empty_like(col); });
 
-  return std::make_unique<cudf::column>(input.type(),
-                                        0,
-                                        rmm::device_buffer{},
-                                        cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                        0,
-                                        std::move(children));
+  return std::make_unique<cudf::column>(
+    input.type(),
+    0,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0,
+    std::move(children));
 }
 
 /*

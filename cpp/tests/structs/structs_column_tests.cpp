@@ -17,8 +17,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <algorithm>
@@ -611,12 +610,13 @@ TEST_F(StructColumnWrapperTest, TestStructsColumnWithEmptyChild)
   // because EMPTY columns cannot have a null mask. This test ensures that
   // we can construct a structs column with a parent null mask and an EMPTY
   // child and then view it.
-  auto empty_col =
-    std::make_unique<cudf::column>(cudf::data_type(cudf::type_id::EMPTY),
-                                   3,
-                                   rmm::device_buffer{},
-                                   cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
-                                   0);
+  auto empty_col = std::make_unique<cudf::column>(
+    cudf::data_type(cudf::type_id::EMPTY),
+    3,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+    0);
   int num_rows{empty_col->size()};
   vector_of_columns cols;
   cols.push_back(std::move(empty_col));

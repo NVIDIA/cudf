@@ -11,8 +11,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 namespace cudf {
@@ -85,7 +84,7 @@ std::unique_ptr<column> contains(column_view const& haystack,
  * @return A vector of bools indicating if each row in `needles` has matching rows in `haystack`
  */
 CUDF_EXPORT
-rmm::device_uvector<bool> contains(table_view const& haystack,
+cuda::device_buffer<bool> contains(table_view const& haystack,
                                    table_view const& needles,
                                    null_equality compare_nulls,
                                    nan_equality compare_nans,

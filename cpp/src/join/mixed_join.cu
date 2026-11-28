@@ -131,7 +131,7 @@ mixed_join(table_view const& left_equality,
                                      mr);
 }
 
-std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>>
+std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<size_type>>>
 compute_mixed_join_output_size(table_view const& left_equality,
                                table_view const& right_equality,
                                table_view const& left_conditional,
@@ -156,17 +156,17 @@ compute_mixed_join_output_size(table_view const& left_equality,
   if (right_conditional.num_rows() == 0) {
     auto const left_num_rows = left_conditional.num_rows();
     if (join_type == join_kind::LEFT_JOIN) {
-      auto counts = rmm::device_uvector<size_type>(
-        static_cast<std::size_t>(left_num_rows), stream, mr.get_output_mr());
+      auto counts =
+        cuda::device_buffer<size_type>(stream, mr.get_output_mr(), left_num_rows, cuda::no_init);
       thrust::uninitialized_fill(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         counts.begin(),
         counts.end(),
         size_type{1});
       return {static_cast<std::size_t>(left_num_rows),
-              std::make_unique<rmm::device_uvector<size_type>>(std::move(counts))};
+              std::make_unique<cuda::device_buffer<size_type>>(std::move(counts))};
     }
-    return {0, std::make_unique<rmm::device_uvector<size_type>>(0, stream, mr.get_output_mr())};
+    return {0, std::make_unique<cuda::device_buffer<size_type>>(stream, mr.get_output_mr())};
   }
 
   auto const hash_joiner = cudf::hash_join{right_equality, compare_nulls, stream};
@@ -211,7 +211,7 @@ mixed_inner_join(
                             mr);
 }
 
-std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>> mixed_inner_join_size(
+std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<size_type>>> mixed_inner_join_size(
   table_view const& left_equality,
   table_view const& right_equality,
   table_view const& left_conditional,
@@ -258,7 +258,7 @@ mixed_left_join(table_view const& left_equality,
                             mr);
 }
 
-std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>> mixed_left_join_size(
+std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<size_type>>> mixed_left_join_size(
   table_view const& left_equality,
   table_view const& right_equality,
   table_view const& left_conditional,

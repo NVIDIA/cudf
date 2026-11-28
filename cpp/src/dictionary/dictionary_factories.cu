@@ -58,7 +58,7 @@ std::unique_ptr<column> make_dictionary_column(column_view const& keys_column,
   children.emplace_back(std::move(keys_copy));
   return std::make_unique<column>(data_type{type_id::DICTIONARY32},
                                   indices_column.size(),
-                                  rmm::device_buffer{0, stream, mr.get_output_mr()},
+                                  cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
                                   std::move(null_mask),
                                   null_count,
                                   std::move(children));
@@ -80,12 +80,14 @@ std::unique_ptr<column> make_dictionary_column(std::unique_ptr<column> keys_colu
   std::vector<std::unique_ptr<column>> children;
   children.emplace_back(std::move(indices_column));
   children.emplace_back(std::move(keys_column));
-  return std::make_unique<column>(data_type{type_id::DICTIONARY32},
-                                  count,
-                                  rmm::device_buffer{},
-                                  std::move(null_mask),
-                                  null_count,
-                                  std::move(children));
+  return std::make_unique<column>(
+    data_type{type_id::DICTIONARY32},
+    count,
+    cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                   cudf::get_current_device_resource_ref()},
+    std::move(null_mask),
+    null_count,
+    std::move(children));
 }
 
 namespace {

@@ -1937,11 +1937,12 @@ TEST_F(ParquetChunkedReaderInputLimitTest, Mixed)
                str_offset_iter + num_rows + 1,
                str_offset_col->mutable_view().begin<int>());
   auto str_iter = cudf::detail::make_counting_transform_iterator(0, char_values{});
-  rmm::device_buffer str_chars(num_chars, stream);
+  cuda::device_buffer<std::byte> str_chars(
+    stream, cudf::get_current_device_resource_ref(), num_chars, cuda::no_init);
   thrust::copy(rmm::exec_policy_nosync(stream),
                str_iter,
                str_iter + num_chars,
-               static_cast<int8_t*>(str_chars.data()));
+               reinterpret_cast<int8_t*>(str_chars.data()));
   auto col2 =
     cudf::make_strings_column(num_rows,
                               std::move(str_offset_col),

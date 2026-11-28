@@ -13,8 +13,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/error.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <nvbench/nvbench.cuh>
@@ -188,11 +187,14 @@ skewed_column make_skewed_column(
   auto [null_mask, null_count] =
     null_pct > 0 ? cudf::test::detail::make_null_mask(valid.begin(), valid.end(), stream)
                  : std::pair{cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0};
-  auto column = cudf::make_strings_column(static_cast<cudf::size_type>(num_rows),
-                                          make_offsets_column(offsets),
-                                          rmm::device_buffer(chars.data(), chars.size(), stream),
-                                          null_count,
-                                          std::move(null_mask));
+  auto column = cudf::make_strings_column(
+    static_cast<cudf::size_type>(num_rows),
+    make_offsets_column(offsets),
+    cuda::device_buffer<char>(
+      stream, cudf::get_current_device_resource_ref(), chars.begin(), chars.end())
+      .as_bytes<std::byte>(),
+    null_count,
+    std::move(null_mask));
   stream.sync();
   return {std::move(column), chars_size, *std::max_element(lengths.begin(), lengths.end())};
 }

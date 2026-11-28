@@ -1353,11 +1353,12 @@ TEST_F(OrcChunkedReaderInputLimitTest, MixedColumnsHavingList)
                     iter + num_rows + 1,
                     str_offset_col->mutable_view().begin<int>(),
                     offset_gen{str_size});
-  rmm::device_buffer str_chars(num_chars, stream);
+  cuda::device_buffer<std::byte> str_chars(
+    stream, cudf::get_current_device_resource_ref(), num_chars, cuda::no_init);
   thrust::transform(rmm::exec_policy_nosync(stream),
                     iter,
                     iter + num_chars,
-                    static_cast<int8_t*>(str_chars.data()),
+                    reinterpret_cast<int8_t*>(str_chars.data()),
                     char_values{});
   auto const str_col =
     cudf::make_strings_column(num_rows,

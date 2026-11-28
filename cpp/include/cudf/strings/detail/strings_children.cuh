@@ -76,14 +76,15 @@ struct string_offsets_fn {
  * @return An array of chars gathered from the input string-index pair iterator
  */
 template <typename IndexPairIterator>
-rmm::device_uvector<char> make_chars_buffer(column_view const& offsets,
+cuda::device_buffer<char> make_chars_buffer(column_view const& offsets,
                                             int64_t chars_size,
                                             IndexPairIterator begin,
                                             size_type strings_count,
                                             cuda::stream_ref stream,
                                             cudf::memory_resources mr)
 {
-  auto chars_data      = rmm::device_uvector<char>(chars_size, stream, mr.get_output_mr());
+  auto chars_data =
+    cuda::device_buffer<char>(stream, mr.get_output_mr(), chars_size, cuda::no_init);
   auto const d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets);
 
   auto const src_ptrs = cuda::transform_iterator(
@@ -259,8 +260,8 @@ auto make_strings_children(SizeAndExecuteFunction size_and_exec_fn,
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // Now build the chars column
-  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
-  cudf::prefetch::detail::prefetch(chars, stream);
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), bytes, cuda::no_init);
+  cudf::prefetch::detail::prefetch(chars.data(), chars.size(), stream);
   size_and_exec_fn.d_chars = chars.data();
 
   // Execute the function fn again to fill in the chars data.

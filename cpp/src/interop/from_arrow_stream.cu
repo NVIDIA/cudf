@@ -43,7 +43,7 @@ std::unique_ptr<column> make_empty_column_from_schema(ArrowSchema const* schema,
     case type_id::EMPTY: {
       return std::make_unique<column>(data_type(type_id::EMPTY),
                                       0,
-                                      rmm::device_buffer{},
+                                      cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
                                       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                       0);
     }

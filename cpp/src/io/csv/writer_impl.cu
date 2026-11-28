@@ -306,7 +306,7 @@ struct column_to_strings_fn {
 
     return make_strings_column(column_v.size(),
                                std::move(offsets_column),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                column_v.null_count(),
                                cudf::detail::copy_bitmask(column_v, stream_, mr_));
   }
@@ -527,7 +527,7 @@ void write_chunked(data_sink* out_sink,
       ->release();
   }();
   auto const total_num_bytes = contents_w_nl.data->size();
-  auto const ptr_all_bytes   = static_cast<char const*>(contents_w_nl.data->data());
+  auto const ptr_all_bytes   = reinterpret_cast<char const*>(contents_w_nl.data->data());
 
   auto const compression = options.get_compression();
   auto const block_size  = options.get_compression_block_size();

@@ -17,6 +17,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -135,7 +136,7 @@ std::unique_ptr<column> from_booleans(column_view const& booleans,
 
   return make_strings_column(strings_count,
                              std::move(offsets),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              booleans.null_count(),
                              std::move(null_mask));
 }

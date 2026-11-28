@@ -83,7 +83,7 @@ struct format_compiler {
   std::string_view const format;
   cuda::device_buffer<format_item> d_items;
   format_compiler(std::string_view format, cuda::stream_ref stream)
-    : format(format), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+    : format(format), d_items(stream, cudf::get_current_device_resource_ref())
   {
     static std::map<char, int8_t> const specifier_lengths = {
       {'-', -1},  // '-' if negative
@@ -416,7 +416,7 @@ struct dispatch_from_durations_fn {
 
     return make_strings_column(strings_count,
                                std::move(offsets),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                durations.null_count(),
                                std::move(null_mask));
   }

@@ -327,14 +327,14 @@ std::unique_ptr<cudf::column> normalize_spaces(cudf::strings_column_view const& 
                     output_position_fn{d_bits.data(), d_warp_offsets.data(), shift - first_offset});
 
   // write the kept characters
-  auto chars = rmm::device_uvector<char>(total_size, stream, mr.get_output_mr());
+  auto chars = cuda::device_buffer<char>(stream, mr.get_output_mr(), total_size, cuda::no_init);
   write_spaces_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
     d_input, d_bits.data(), d_warp_offsets.data(), chars.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    input.null_count(),
                                    cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

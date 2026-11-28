@@ -254,7 +254,7 @@ std::unique_ptr<table> split_re(strings_column_view const& input,
     results.push_back(std::make_unique<column>(
       data_type{type_id::STRING},
       strings_count,
-      rmm::device_buffer{0, stream, mr.get_output_mr()},  // no data
+      cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},  // no data
       cudf::detail::create_null_mask(strings_count, mask_state::ALL_NULL, stream, mr),
       strings_count));
     return std::make_unique<table>(std::move(results));

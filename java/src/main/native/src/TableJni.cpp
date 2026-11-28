@@ -17,6 +17,7 @@
 #include <cudf/concatenate.hpp>
 #include <cudf/contiguous_split.hpp>
 #include <cudf/copying.hpp>
+#include <cudf/detail/utilities/cuda.hpp>
 #include <cudf/filling.hpp>
 #include <cudf/groupby.hpp>
 #include <cudf/interop.hpp>
@@ -926,7 +927,7 @@ jlongArray mixed_join_size(JNIEnv* env,
       throw std::runtime_error("Too many values in device buffer to convert into a column");
     }
     auto col_size = static_cast<size_type>(matches_per_row->size());
-    auto col_data = matches_per_row->release();
+    auto col_data = std::move(*matches_per_row);
     cudf::jni::native_jlongArray result(env, 2);
     result[0] = static_cast<jlong>(join_size);
     result[1] =
@@ -5116,8 +5117,11 @@ Java_ai_rapids_cudf_Table_contiguousSplitGroups(JNIEnv* env,
       auto end        = std::cend(split_indices);
       auto const size = cudf::distance(begin, end);
       auto const vec  = thrust::host_vector<cudf::size_type>(begin, end);
-      auto buf =
-        rmm::device_buffer{vec.data(), size * sizeof(cudf::size_type), cudf::get_default_stream()};
+      auto buf        = cuda::device_buffer<cudf::size_type>{cudf::get_default_stream(),
+                                                             cudf::get_current_device_resource_ref(),
+                                                             vec.data(),
+                                                             vec.data() + size};
+      cudf::detail::sync_stream(cudf::get_default_stream());
       auto gather_map_col =
         std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                        size,

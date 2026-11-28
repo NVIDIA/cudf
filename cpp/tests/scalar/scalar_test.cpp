@@ -40,7 +40,8 @@ constexpr bool has_explicit_value_constructor =
 
 static_assert(has_explicit_value_constructor<cudf::string_scalar, std::string_view>);
 static_assert(has_explicit_value_constructor<cudf::string_scalar, cudf::string_view>);
-static_assert(has_explicit_value_constructor<cudf::string_scalar, rmm::device_buffer&&>);
+static_assert(
+  has_explicit_value_constructor<cudf::string_scalar, cuda::device_buffer<std::byte>&&>);
 static_assert(has_explicit_value_constructor<cudf::list_scalar, cudf::column_view const&>);
 static_assert(has_explicit_value_constructor<cudf::list_scalar, cudf::column&&>);
 static_assert(has_explicit_value_constructor<cudf::struct_scalar, cudf::table_view const&>);

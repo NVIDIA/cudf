@@ -8,10 +8,9 @@
 #include <cudf/types.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/random>
 #include <thrust/transform.h>
@@ -23,7 +22,7 @@
 #include <cstdint>
 #include <limits>
 
-rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
+cuda::device_buffer<std::int32_t> random_device_vector(std::size_t nelem,
                                                        std::int32_t min_val,
                                                        std::int32_t max_val,
                                                        cuda::stream_ref stream,
@@ -32,7 +31,7 @@ rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
   // Fill vector with random data.
   using index_t        = std::int64_t;
   auto const end_index = rapidsmpf::safe_cast<index_t>(nelem);
-  rmm::device_uvector<std::int32_t> vec(nelem, stream, mr);
+  cuda::device_buffer<std::int32_t> vec(stream, mr, nelem, cuda::no_init);
   cuda::counting_iterator<index_t> const begin(0);
   cuda::counting_iterator<index_t> const end(end_index);
   thrust::transform(

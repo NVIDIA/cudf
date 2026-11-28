@@ -53,7 +53,7 @@ std::unique_ptr<cudf::column> column_from_scalar_dispatch::operator()<cudf::stri
       size,
       make_column_from_scalar(
         numeric_scalar<int32_t>(0, true, stream, temp_mr), size + 1, stream, mr),
-      rmm::device_buffer{},
+      cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
       size,
       cudf::detail::create_null_mask(size, mask_state::ALL_NULL, stream, mr));
   }

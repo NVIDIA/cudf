@@ -11,8 +11,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_uvector.hpp>
-
 #include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/utility>
@@ -91,7 +89,7 @@ std::unique_ptr<column> make_strings_column(device_span<string_view const> strin
 
 std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             std::unique_ptr<column> offsets_column,
-                                            rmm::device_buffer&& chars_buffer,
+                                            cuda::device_buffer<std::byte>&& chars_buffer,
                                             size_type null_count,
                                             cuda::device_buffer<cudf::bitmask_type>&& null_mask)
 {
@@ -114,8 +112,8 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
 }
 
 std::unique_ptr<column> make_strings_column(size_type num_strings,
-                                            rmm::device_uvector<size_type>&& offsets,
-                                            rmm::device_uvector<char>&& chars,
+                                            cuda::device_buffer<size_type>&& offsets,
+                                            cuda::device_buffer<char>&& chars,
                                             cuda::device_buffer<cudf::bitmask_type>&& null_mask,
                                             size_type null_count)
 {
@@ -132,7 +130,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
   auto offsets_column = std::make_unique<column>(  //
     data_type{type_id::INT32},
     offsets_size,
-    offsets.release(),
+    std::move(offsets).template as_bytes<std::byte>(),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
 
@@ -142,7 +140,7 @@ std::unique_ptr<column> make_strings_column(size_type num_strings,
 
   return std::make_unique<column>(data_type{type_id::STRING},
                                   num_strings,
-                                  chars.release(),
+                                  std::move(chars).template as_bytes<std::byte>(),
                                   std::move(null_mask),
                                   null_count,
                                   std::move(children));

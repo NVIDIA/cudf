@@ -584,7 +584,10 @@ void make_device_json_column(device_span<SymbolT const> input,
                          initialize_string_offsets_and_lengths_fn{col.string_offsets.data(),
                                                                   col.string_lengths.data()});
     } else if (column_category == NC_LIST) {
-      col.child_offsets.resize(max_row_offsets[i] + 2, stream);
+      // The buffer is empty until this column is initialized.
+      // TODO: use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved
+      col.child_offsets = cuda::device_buffer<int32_t>(
+        stream, col.child_offsets.memory_resource(), max_row_offsets[i] + 2, cuda::no_init);
       thrust::uninitialized_fill(
         rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
         col.child_offsets.begin(),

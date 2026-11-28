@@ -245,8 +245,8 @@ struct column_scalar_scatterer_impl<struct_view, MapIterator> {
 
     auto scatter_functor   = column_scalar_scatterer<decltype(scatter_iter)>{};
     auto fields_iter_begin = make_counting_transform_iterator(0, [&](auto const& i) {
-      auto row_slr = detail::get_element(
-        typed_s->view().column(i), 0, stream, cudf::get_current_device_resource_ref());
+      auto row_slr =
+        detail::get_element(typed_s->view().column(i), 0, stream, mr.get_temporary_mr());
       return type_dispatcher<dispatch_storage_type>(row_slr->type(),
                                                     scatter_functor,
                                                     *row_slr,
@@ -265,7 +265,7 @@ struct column_scalar_scatterer_impl<struct_view, MapIterator> {
         : detail::create_null_mask(target.size(), mask_state::UNALLOCATED, stream, mr);
     column null_mask_stub(data_type{type_id::STRUCT},
                           target.size(),
-                          rmm::device_buffer{},
+                          cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
                           std::move(null_mask),
                           target.null_count());
     scatter_scalar_bitmask_inplace(source, scatter_iter, scatter_rows, null_mask_stub, stream, mr);

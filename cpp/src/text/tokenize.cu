@@ -221,14 +221,14 @@ std::unique_ptr<cudf::column> character_tokenize(cudf::strings_column_view const
     mrs.as_temporary());
 
   // create the output chars buffer -- just a copy of the input's chars
-  rmm::device_uvector<char> output_chars(chars_bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> output_chars(stream, mr.get_output_mr(), chars_bytes, cuda::no_init);
   thrust::copy(
     rmm::exec_policy_nosync(stream, temp_mr), d_chars, d_chars + chars_bytes, output_chars.data());
 
   auto output_strings =
     cudf::make_strings_column(num_characters,
                               std::move(offsets_column),
-                              output_chars.release(),
+                              std::move(output_chars).template as_bytes<std::byte>(),
                               0,
                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
   return cudf::make_lists_column(strings_count,

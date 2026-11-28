@@ -12,9 +12,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 
 #include <nvbench/nvbench.cuh>
@@ -66,8 +66,10 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     std::transform(it, it + num_rows, data.begin(), [num_rows, preceding_size](auto i) {
       return std::min(i + 1, std::max(preceding_size, i + 1 - num_rows));
     });
-    auto buf = rmm::device_buffer(
-      data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
+    auto buf = cuda::device_buffer<cudf::size_type>(cudf::get_default_stream(),
+                                                    cudf::get_current_device_resource_ref(),
+                                                    data.begin(),
+                                                    data.end());
     cudf::get_default_stream().sync();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,
@@ -82,8 +84,10 @@ void bench_row_variable_rolling_sum(nvbench::state& state, nvbench::type_list<Ty
     std::transform(it, it + num_rows, data.begin(), [num_rows, following_size](auto i) {
       return std::max(-i - 1, std::min(following_size, num_rows - i - 1));
     });
-    auto buf = rmm::device_buffer(
-      data.data(), num_rows * sizeof(cudf::size_type), cudf::get_default_stream());
+    auto buf = cuda::device_buffer<cudf::size_type>(cudf::get_default_stream(),
+                                                    cudf::get_current_device_resource_ref(),
+                                                    data.begin(),
+                                                    data.end());
     cudf::get_default_stream().sync();
     return std::make_unique<cudf::column>(cudf::data_type(cudf::type_to_id<cudf::size_type>()),
                                           num_rows,

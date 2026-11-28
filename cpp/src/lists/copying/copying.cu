@@ -44,7 +44,8 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
   auto start_offset = cudf::detail::get_value<int32_t>(lists.offsets(), start, stream);
   auto end_offset   = cudf::detail::get_value<int32_t>(lists.offsets(), end, stream);
 
-  rmm::device_uvector<int32_t> out_offsets(offsets_count, stream);
+  cuda::device_buffer<int32_t> out_offsets(
+    stream, cudf::get_current_device_resource_ref(), offsets_count, cuda::no_init);
 
   // Compute the offsets column of the result:
   thrust::transform(
@@ -56,7 +57,7 @@ std::unique_ptr<cudf::column> copy_slice(lists_column_view const& lists,
   auto offsets =
     std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                    offsets_count,
-                                   out_offsets.release(),
+                                   std::move(out_offsets).template as_bytes<std::byte>(),
                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                    0);
 

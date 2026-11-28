@@ -278,7 +278,7 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
     // return new strings column
     return cudf::make_strings_column(input.size(),
                                      std::move(offsets_column),
-                                     chars.release(),
+                                     std::move(chars).template as_bytes<std::byte>(),
                                      input.null_count(),
                                      cudf::detail::copy_bitmask(input.parent(), stream, mr));
   }
@@ -353,7 +353,7 @@ std::unique_ptr<cudf::column> replace_helper(ReplacerFn replacer,
     cudf::strings::detail::make_offsets_child_column(d_sizes, stream, mr.get_output_mr()));
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets_column),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    input.null_count(),
                                    cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

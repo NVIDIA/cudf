@@ -418,10 +418,10 @@ struct copy_block_partitions_dispatcher {
                                      cuda::stream_ref stream,
                                      cudf::memory_resources mr)
   {
-    rmm::device_buffer output(input.size() * sizeof(DataType), stream, mr.get_output_mr());
+    cuda::device_buffer<DataType> output(stream, mr.get_output_mr(), input.size(), cuda::no_init);
 
     copy_block_partitions_impl(input.data<DataType>(),
-                               static_cast<DataType*>(output.data()),
+                               output.data(),
                                input.size(),
                                num_partitions,
                                row_partition_numbers,

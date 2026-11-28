@@ -55,7 +55,12 @@ struct scalar_as_column_view {
     auto null_mask = cudf::detail::create_null_mask(1, cudf::mask_state::ALL_NULL, stream, mr);
     auto const* null_mask_ptr = null_mask.data();
     auto aux_col              = std::make_unique<column>(
-      data_type{type_id::INT8}, 0, rmm::device_buffer{}, std::move(null_mask), 1);
+      data_type{type_id::INT8},
+      0,
+      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                  cudf::get_current_device_resource_ref()},
+      std::move(null_mask),
+      1);
     auto col_v = column_view(s.type(), 1, h_scalar_type_view.data(), null_mask_ptr, 1);
     return std::pair{col_v, std::move(aux_col)};
   }
@@ -94,12 +99,14 @@ scalar_as_column_view::return_type scalar_as_column_view::operator()<cudf::strin
     s.type(), 1, h_scalar_type_view.data(), null_mask_ptr, 1, 0, {offsets_column->view()});
   std::vector<std::unique_ptr<column>> children;
   children.push_back(std::move(offsets_column));
-  auto aux_col = std::make_unique<column>(data_type{type_id::INT8},
-                                          0,
-                                          rmm::device_buffer{},
-                                          std::move(null_mask),
-                                          1,
-                                          std::move(children));
+  auto aux_col =
+    std::make_unique<column>(data_type{type_id::INT8},
+                             0,
+                             cuda::device_buffer<std::byte>{
+                               cudf::get_default_stream(), cudf::get_current_device_resource_ref()},
+                             std::move(null_mask),
+                             1,
+                             std::move(children));
   return std::pair{col_v, std::move(aux_col)};
 }
 

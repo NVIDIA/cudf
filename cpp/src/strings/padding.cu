@@ -16,6 +16,7 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -119,7 +120,7 @@ std::unique_ptr<column> pad(strings_column_view const& input,
 
   return make_strings_column(input.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
@@ -188,7 +189,7 @@ std::unique_ptr<column> zfill(strings_column_view const& input,
 
   return make_strings_column(input.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
@@ -212,8 +213,11 @@ std::unique_ptr<column> zfill_by_widths(strings_column_view const& input,
   auto [null_mask, null_count] =
     cudf::detail::bitmask_and(table_view({input.parent(), widths}), stream, mr);
 
-  return make_strings_column(
-    input.size(), std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(input.size(),
+                             std::move(offsets_column),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 
 }  // namespace detail

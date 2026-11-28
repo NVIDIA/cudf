@@ -2235,12 +2235,12 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> json_column_to
       column_names.emplace_back(
         json_col.child_columns.empty() ? list_child_name : json_col.child_columns.begin()->first);
 
-      rmm::device_uvector<json_column::row_offset_t> d_offsets =
-        cudf::detail::make_device_uvector_async(json_col.child_offsets, stream, mr.get_output_mr());
+      cuda::device_buffer<json_column::row_offset_t> d_offsets =
+        cudf::detail::make_device_buffer_async(json_col.child_offsets, stream, mr.get_output_mr());
       auto offsets_column =
         std::make_unique<column>(data_type{type_id::INT32},
                                  num_rows,
-                                 d_offsets.release(),
+                                 std::move(d_offsets).template as_bytes<std::byte>(),
                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                  0);
       // Create children column

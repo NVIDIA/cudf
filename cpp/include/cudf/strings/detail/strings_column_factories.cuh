@@ -23,6 +23,7 @@
 
 #include <cub/block/block_reduce.cuh>
 #include <cuda/atomic>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/iterator>
@@ -89,7 +90,7 @@ std::unique_ptr<column> make_strings_column(IndexPairIterator begin,
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             chars_data.release(),
+                             std::move(chars_data).template as_bytes<std::byte>(),
                              null_count,
                              std::move(null_mask));
 }
@@ -277,7 +278,7 @@ std::vector<std::unique_ptr<column>> make_strings_column_batch(
     output[idx]           = make_strings_column(
       strings_count,
       std::move(offsets),
-      chars_data.release(),
+      std::move(chars_data).template as_bytes<std::byte>(),
       null_count,
       null_count ? std::move(null_masks[idx])
                            : cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));

@@ -528,7 +528,7 @@ std::unique_ptr<column> concatenate(std::span<column_view const> columns_to_conc
       });
     return std::make_unique<column>(data_type(type_id::EMPTY),
                                     length,
-                                    rmm::device_buffer{},
+                                    cuda::device_buffer<std::byte>{stream, mr.get_output_mr()},
                                     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                     length);
   }

@@ -18,8 +18,6 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-
 #include <cuda/buffer>
 #include <cuda/iterator>
 
@@ -519,7 +517,10 @@ TEST_F(CopyBitmaskTest, TestCopyColumnViewVectorContiguous)
   auto copy_mask = cudf::copy_bitmask(gold_mask.data(), 0, num_elements);
   cudf::column original{t,
                         num_elements,
-                        rmm::device_buffer{num_elements * sizeof(int), cudf::get_default_stream()},
+                        cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                       cudf::get_current_device_resource_ref(),
+                                                       num_elements * sizeof(int),
+                                                       cuda::no_init},
                         std::move(copy_mask),
                         null_count};
   std::vector<cudf::size_type> indices{0,
@@ -564,12 +565,14 @@ TEST_F(CopyBitmaskTest, TestCopyColumnViewVectorDiscontiguous)
   for (unsigned i = 0; i < split.size() - 1; i++) {
     auto [null_mask, null_count] = cudf::test::detail::make_null_mask(
       validity_bit.begin() + split[i], validity_bit.begin() + split[i + 1]);
-    cols.emplace_back(
-      t,
-      split[i + 1] - split[i],
-      rmm::device_buffer{sizeof(int) * (split[i + 1] - split[i]), cudf::get_default_stream()},
-      std::move(null_mask),
-      null_count);
+    cols.emplace_back(t,
+                      split[i + 1] - split[i],
+                      cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                                     cudf::get_current_device_resource_ref(),
+                                                     sizeof(int) * (split[i + 1] - split[i]),
+                                                     cuda::no_init},
+                      std::move(null_mask),
+                      null_count);
     views.push_back(cols.back());
   }
   cuda::device_buffer<cudf::bitmask_type> concatenated_bitmask = cudf::concatenate_masks(views);

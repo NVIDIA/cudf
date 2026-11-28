@@ -229,7 +229,7 @@ struct dispatch_unary_cast_to {
     auto output     = std::make_unique<column>(
       type,
       size,
-      rmm::device_buffer{size * sizeof(TargetT), stream, mr.get_output_mr()},
+      cuda::device_buffer<TargetT>(stream, mr.get_output_mr(), size, cuda::no_init),
       detail::copy_bitmask(input, stream, mr),
       input.null_count());
 
@@ -253,7 +253,7 @@ struct dispatch_unary_cast_to {
     auto output     = std::make_unique<column>(
       type,
       size,
-      rmm::device_buffer{size * sizeof(TargetT), stream, mr.get_output_mr()},
+      cuda::device_buffer<TargetT>(stream, mr.get_output_mr(), size, cuda::no_init),
       detail::copy_bitmask(input, stream, mr),
       input.null_count());
 
@@ -282,7 +282,7 @@ struct dispatch_unary_cast_to {
     auto output     = std::make_unique<column>(
       type,
       size,
-      rmm::device_buffer{size * sizeof(DeviceT), stream, mr.get_output_mr()},
+      cuda::device_buffer<DeviceT>(stream, mr.get_output_mr(), size, cuda::no_init),
       cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
       0);
 
@@ -345,7 +345,7 @@ struct dispatch_unary_cast_to {
       auto output     = std::make_unique<column>(
         cudf::data_type{type.id(), input.type().scale()},
         size,
-        rmm::device_buffer{size * sizeof(TargetDeviceT), stream, casted_mr.get_output_mr()},
+        cuda::device_buffer<TargetDeviceT>(stream, casted_mr.get_output_mr(), size, cuda::no_init),
         detail::copy_bitmask(input, stream, casted_mr),
         input.null_count());
 

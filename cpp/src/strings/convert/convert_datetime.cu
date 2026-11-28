@@ -114,7 +114,7 @@ struct format_compiler {
   format_compiler(std::string_view fmt,
                   cuda::stream_ref stream,
                   specifier_map extra_specifiers = {})
-    : format(fmt), d_items(stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init)
+    : format(fmt), d_items(stream, cudf::get_current_device_resource_ref())
   {
     specifiers.insert(extra_specifiers.begin(), extra_specifiers.end());
     auto items  = cudf::detail::make_empty_host_vector<format_item>(format.length(), stream);
@@ -1088,7 +1088,7 @@ struct datetime_formatter_fn {
 };
 
 //
-using strings_children = std::pair<std::unique_ptr<cudf::column>, rmm::device_uvector<char>>;
+using strings_children = std::pair<std::unique_ptr<cudf::column>, cuda::device_buffer<char>>;
 struct dispatch_from_timestamps_fn {
   template <cudf::concepts::timestamp T>
   strings_children operator()(column_device_view const& d_timestamps,
@@ -1149,7 +1149,7 @@ std::unique_ptr<column> from_timestamps(column_view const& timestamps,
 
   return make_strings_column(timestamps.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              timestamps.null_count(),
                              cudf::detail::copy_bitmask(timestamps, stream, mr));
 }

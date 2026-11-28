@@ -469,7 +469,7 @@ std::pair<std::unique_ptr<column>, std::vector<column_name_info>> device_json_co
       auto offsets_column =
         std::make_unique<column>(data_type{type_id::INT32},
                                  num_rows + 1,
-                                 json_col.child_offsets.release(),
+                                 std::move(json_col.child_offsets).template as_bytes<std::byte>(),
                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                  0);
       // Create children column
@@ -575,7 +575,10 @@ table_with_metadata device_parse_nested_json_impl(
 
   device_json_column root_column(stream, mr);
   root_column.type = json_col_t::ListColumn;
-  root_column.child_offsets.resize(2, stream);
+  // The buffer is empty here; allocate once instead of resizing.
+  // TODO: use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved
+  root_column.child_offsets =
+    cuda::device_buffer<int32_t>(stream, mr.get_output_mr(), 2, cuda::no_init);
   thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                root_column.child_offsets.begin(),
                root_column.child_offsets.end(),

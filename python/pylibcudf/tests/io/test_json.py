@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import io
 
@@ -396,7 +396,8 @@ def test_read_json_lines_recovery_mode(recovery_mode, source_or_sink):
         assert_table_and_meta_eq(exp, tbl_w_meta)
 
 
-def test_read_json_string_column():
+@pytest.mark.parametrize("trailing_null", [False, True])
+def test_read_json_string_column(trailing_null):
     # Test the string column overload specifically
     # Create a string column with JSON strings
     json_strings = [
@@ -405,12 +406,18 @@ def test_read_json_string_column():
         '{"name": "Charlie", "age": 35}',
     ]
 
-    # Create string column
-    string_col = plc.Column.from_iterable_of_py(json_strings)
+    # An unused separator after the only valid row must not reach the JSON reader.
+    if trailing_null:
+        json_strings = [*json_strings[:1], None]
+    string_col = plc.Column.from_arrow(pa.array(json_strings))
 
     # Create separator and narep scalars
-    separator = plc.Scalar.from_py("\n")
-    narep = plc.Scalar.from_py("null")
+    separator = plc.Scalar.from_py("invalid JSON" if trailing_null else "\n")
+    narep = (
+        plc.Scalar.from_py(None, plc.DataType(plc.TypeId.STRING))
+        if trailing_null
+        else plc.Scalar.from_py("null")
+    )
 
     # Read JSON from string column
     got = plc.io.json.read_json_from_string_column(
@@ -422,6 +429,8 @@ def test_read_json_string_column():
         [["Alice", "Bob", "Charlie"], [30, 25, 35]], names=["name", "age"]
     )
 
+    if trailing_null:
+        expect = expect.slice(0, 1)
     assert_table_and_meta_eq(expect, got)
 
 

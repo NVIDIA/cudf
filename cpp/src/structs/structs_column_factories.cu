@@ -38,12 +38,15 @@ std::unique_ptr<cudf::column> make_structs_column(
     }
   }
 
-  return std::make_unique<column>(cudf::data_type{type_id::STRUCT},
-                                  num_rows,
-                                  rmm::device_buffer{},  // Empty data buffer. Structs hold no data.
-                                  std::move(null_mask),
-                                  null_count,
-                                  std::move(child_columns));
+  return std::make_unique<column>(
+    cudf::data_type{type_id::STRUCT},
+    num_rows,
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref()},  // Empty data buffer. Structs hold no data.
+    std::move(null_mask),
+    null_count,
+    std::move(child_columns));
 }
 
 /// Column factory that adopts child columns and constructs struct hierarchy
@@ -66,12 +69,15 @@ std::unique_ptr<cudf::column> create_structs_hierarchy(
                            [&](auto const& child_col) { return num_rows == child_col->size(); }),
                "Child columns must have the same number of rows as the Struct column.");
 
-  return std::make_unique<column>(cudf::data_type{type_id::STRUCT},
-                                  num_rows,
-                                  rmm::device_buffer{},  // Empty data buffer. Structs hold no data.
-                                  std::move(null_mask),
-                                  null_count,
-                                  std::move(child_columns));
+  return std::make_unique<column>(
+    cudf::data_type{type_id::STRUCT},
+    num_rows,
+    cuda::device_buffer<std::byte>{
+      cudf::get_default_stream(),
+      cudf::get_current_device_resource_ref()},  // Empty data buffer. Structs hold no data.
+    std::move(null_mask),
+    null_count,
+    std::move(child_columns));
 }
 
 }  // namespace cudf

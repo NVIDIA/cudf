@@ -11,11 +11,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
+#include <cstddef>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -67,26 +66,26 @@ class column {
   column(column&& other) noexcept;
 
   /**
-   * @brief Construct a new column by taking ownership of the contents of a device_uvector.
+   * @brief Construct a new column by taking ownership of the contents of a device_buffer.
    *
-   * @param other The device_uvector whose contents will be moved into the new column.
+   * @param other The device_buffer whose contents will be moved into the new column.
    * @param null_mask Column's null value indicator bitmask. May be empty if `null_count` is 0.
    * @param null_count The count of null elements.
    */
   template <typename T>
     requires(cudf::concepts::arithmetic<T> or cudf::concepts::chrono<T>)
-  column(rmm::device_uvector<T>&& other,
+  column(cuda::device_buffer<T>&& other,
          cuda::device_buffer<cudf::bitmask_type>&& null_mask,
          size_type null_count)
     : _type{cudf::data_type{cudf::type_to_id<T>()}},
       _size{[&]() {
         CUDF_EXPECTS(
           other.size() <= static_cast<std::size_t>(std::numeric_limits<size_type>::max()),
-          "The device_uvector size exceeds the column size limit",
+          "The device_buffer size exceeds the column size limit",
           std::overflow_error);
         return static_cast<size_type>(other.size());
       }()},
-      _data{other.release()},
+      _data{std::move(other).template as_bytes<std::byte>()},
       _null_mask{std::move(null_mask)},
       _null_count{null_count}
   {
@@ -107,16 +106,16 @@ class column {
    * @param null_count Optional, the count of null elements.
    * @param children Optional, vector of child columns
    */
-  template <typename B1, typename B2 = cuda::device_buffer<cudf::bitmask_type>>
+  template <typename T, typename B2 = cuda::device_buffer<cudf::bitmask_type>>
   column(data_type dtype,
          size_type size,
-         B1&& data,
+         cuda::device_buffer<T>&& data,
          B2&& null_mask,
          size_type null_count,
          std::vector<std::unique_ptr<column>>&& children = {})
     : _type{dtype},
       _size{size},
-      _data{std::forward<B1>(data)},
+      _data{std::move(data).template as_bytes<std::byte>()},
       _null_mask{std::forward<B2>(null_mask)},
       _null_count{null_count},
       _children{std::move(children)}
@@ -252,7 +251,7 @@ class column {
    * Returned by `column::release()`.
    */
   struct contents {
-    std::unique_ptr<rmm::device_buffer> data;  ///< data device memory buffer
+    std::unique_ptr<cuda::device_buffer<std::byte>> data;  ///< data device memory buffer
     std::unique_ptr<cuda::device_buffer<cudf::bitmask_type>>
       null_mask;                                    ///< null mask device memory buffer
     std::vector<std::unique_ptr<column>> children;  ///< child columns
@@ -328,8 +327,10 @@ class column {
  private:
   cudf::data_type _type{type_id::EMPTY};  ///< Logical type of elements in the column
   cudf::size_type _size{};                ///< The number of elements in the column
-  rmm::device_buffer _data{};             ///< Dense, contiguous, type erased device memory
-                                          ///< buffer containing the column elements
+  cuda::device_buffer<std::byte> _data{
+    cudf::get_default_stream(),
+    cudf::get_current_device_resource_ref()};  ///< Dense, contiguous, type erased device memory
+                                               ///< buffer containing the column elements
   cuda::device_buffer<cudf::bitmask_type> _null_mask = cudf::create_null_mask(
     0, cudf::mask_state::UNALLOCATED);               ///< Bitmask used to represent null values.
                                                      ///< May be empty if `null_count() == 0`

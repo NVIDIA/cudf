@@ -15,6 +15,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -104,7 +105,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
   }();
 
   // create output chars child column
-  rmm::device_uvector<char> chars(total_bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), total_bytes, cuda::no_init);
   auto d_chars = chars.data();
 
   // run kernel to shift all the characters
@@ -117,7 +118,7 @@ std::unique_ptr<column> shift(strings_column_view const& input,
   // caller sets the null-mask
   return make_strings_column(input.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              0,
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

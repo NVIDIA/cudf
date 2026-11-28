@@ -15,10 +15,10 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
 #include <cuco/static_set.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -121,7 +121,7 @@ void perform_contains(table_view const& haystack,
                       null_equality compare_nulls,
                       Comparator const& d_equal,
                       ProbingScheme const& probing_scheme,
-                      rmm::device_uvector<bool>& contained,
+                      cuda::device_buffer<bool>& contained,
                       cuda::stream_ref stream)
 {
   auto const haystack_iter = cudf::detail::make_counting_transform_iterator(
@@ -209,7 +209,7 @@ void dispatch_nan_comparator(table_view const& haystack,
                              cudf::detail::row::equality::self_comparator self_equal,
                              cudf::detail::row::equality::two_table_comparator two_table_equal,
                              Hasher const& d_hasher,
-                             rmm::device_uvector<bool>& contained,
+                             cuda::device_buffer<bool>& contained,
                              cuda::stream_ref stream)
 {
   // Distinguish probing scheme CG sizes between nested and flat types for better performance

@@ -19,6 +19,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/utility>
@@ -304,7 +305,7 @@ std::unique_ptr<column> md5(table_view const& input,
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
-  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), bytes, cuda::no_init);
   auto d_chars = chars.data();
 
   auto const device_input = table_device_view::create(input, stream);
@@ -338,7 +339,7 @@ std::unique_ptr<column> md5(table_view const& input,
 
   return make_strings_column(input.num_rows(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              0,
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

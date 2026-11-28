@@ -360,7 +360,10 @@ struct make_literal {
         std::string val = jni_ast.read<std::string>();
         return std::make_unique<cudf::string_scalar>(val, is_valid);
       } else {
-        return std::make_unique<cudf::string_scalar>(rmm::device_buffer{}, is_valid);
+        return std::make_unique<cudf::string_scalar>(
+          cuda::device_buffer<std::byte>{cudf::get_default_stream(),
+                                         cudf::get_current_device_resource_ref()},
+          is_valid);
       }
     }();
 

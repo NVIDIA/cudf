@@ -11,10 +11,10 @@
 
 #include <cudf_streaming/partition_utils.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/mr/cuda_memory_resource.hpp>
 #include <rmm/mr/pool_memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <benchmark/benchmark.h>
@@ -26,8 +26,10 @@
 // Helper function to create a table with a single int column
 std::unique_ptr<cudf::table> create_int_table(cudf::size_type num_rows, cuda::stream_ref stream)
 {
-  auto data =
-    rmm::device_buffer(rapidsmpf::safe_cast<std::size_t>(num_rows) * sizeof(std::int32_t), stream);
+  cuda::device_buffer<std::int32_t> data(stream,
+                                         cudf::get_current_device_resource_ref(),
+                                         rapidsmpf::safe_cast<std::size_t>(num_rows),
+                                         cuda::no_init);
   auto validity = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream);  // No nulls
 
   auto column = std::make_unique<cudf::column>(

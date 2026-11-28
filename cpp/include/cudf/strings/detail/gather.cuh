@@ -19,6 +19,7 @@
 #include <cudf/utilities/prefetch.hpp>
 
 #include <cub/device/device_memcpy.cuh>
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/std/execution>
@@ -253,8 +254,8 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
   cudf::prefetch::detail::prefetch(strings.chars_begin(stream), strings.chars_size(stream), stream);
 
   // build output char column
-  auto out_chars_data = rmm::device_uvector<char>(out_char_bytes, stream, output_mr);
-  cudf::prefetch::detail::prefetch(out_chars_data, stream);
+  auto out_chars_data = cuda::device_buffer<char>(stream, output_mr, out_char_bytes, cuda::no_init);
+  cudf::prefetch::detail::prefetch(out_chars_data.data(), out_chars_data.size(), stream);
   auto d_out_chars = out_chars_data.data();
 
   constexpr int warps_per_threadblock = 4;
@@ -318,7 +319,7 @@ std::unique_ptr<cudf::column> gather(strings_column_view const& strings,
 
   return make_strings_column(output_count,
                              std::move(out_offsets_column),
-                             out_chars_data.release(),
+                             std::move(out_chars_data).template as_bytes<std::byte>(),
                              0,  // caller sets these
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

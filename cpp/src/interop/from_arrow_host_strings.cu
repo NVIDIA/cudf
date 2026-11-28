@@ -24,7 +24,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/cuda_device.hpp>
-#include <rmm/device_buffer.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -52,7 +51,7 @@ std::unique_ptr<column> from_arrow_string(
 {
   auto [offsets_column, offset, char_data_length] = get_offsets_column(schema, input, stream, mr);
 
-  rmm::device_buffer chars(char_data_length, stream, mr.get_output_mr());
+  cuda::device_buffer<std::byte> chars(stream, mr.get_output_mr(), char_data_length, cuda::no_init);
   auto const* chars_data = static_cast<uint8_t const*>(input->buffers[chars_buffer_idx]) + offset;
   CUDF_CUDA_TRY(cudf::detail::memcpy_async(chars.data(), chars_data, chars.size(), stream));
 

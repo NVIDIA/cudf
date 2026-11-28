@@ -16,6 +16,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/std/limits>
 #include <cuda/stream>
 
@@ -463,7 +464,7 @@ filter_join_indices(cudf::table_view const& left,
  * @return A pair containing the exact number of pairs that `filter_join_indices` would produce
  *         and the per-output contribution counts that sum to that number.
  */
-[[nodiscard]] std::pair<std::size_t, std::unique_ptr<rmm::device_uvector<size_type>>>
+[[nodiscard]] std::pair<std::size_t, std::unique_ptr<cuda::device_buffer<size_type>>>
 filter_join_indices_output_size(
   cudf::table_view const& left,
   cudf::table_view const& right,

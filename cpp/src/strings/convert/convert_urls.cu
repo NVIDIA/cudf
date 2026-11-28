@@ -135,7 +135,7 @@ std::unique_ptr<column> url_encode(strings_column_view const& input,
 
   return make_strings_column(input.size(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              input.null_count(),
                              cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }
@@ -402,7 +402,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
     row_sizes.begin(), row_sizes.end(), stream, mr);
 
   // create the chars column
-  rmm::device_uvector<char> chars(out_chars_bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), out_chars_bytes, cuda::no_init);
   auto d_out_chars = chars.data();
   auto const offsets =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
@@ -418,7 +418,7 @@ std::unique_ptr<column> url_decode(strings_column_view const& strings,
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              strings.null_count(),
                              std::move(null_mask));
 }

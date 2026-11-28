@@ -19,6 +19,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/concepts>
 #include <cuda/stream>
@@ -399,7 +400,7 @@ struct dispatch_from_floats_fn {
 
     return make_strings_column(strings_count,
                                std::move(offsets),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                floats.null_count(),
                                std::move(null_mask));
   }

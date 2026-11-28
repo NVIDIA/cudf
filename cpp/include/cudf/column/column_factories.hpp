@@ -11,6 +11,7 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 
+#include <cuda/std/execution>
 #include <cuda/std/utility>
 #include <cuda/stream>
 
@@ -100,7 +101,12 @@ std::unique_ptr<column> make_numeric_column(
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     std::forward<B>(null_mask),
     null_count);
 }
@@ -158,7 +164,12 @@ std::unique_ptr<column> make_fixed_point_column(
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     std::forward<B>(null_mask),
     null_count);
 }
@@ -218,7 +229,12 @@ std::unique_ptr<column> make_timestamp_column(
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     std::forward<B>(null_mask),
     null_count);
 }
@@ -278,7 +294,12 @@ std::unique_ptr<column> make_duration_column(
   return std::make_unique<column>(
     type,
     size,
-    rmm::device_buffer{size * cudf::size_of(type), stream, mr.get_output_mr()},
+    cuda::device_buffer<std::byte>{
+      stream,
+      mr.get_output_mr(),
+      size * cudf::size_of(type),
+      cuda::no_init,
+      cuda::std::execution::prop{cuda::allocation_alignment, cudf::size_of(type)}},
     std::forward<B>(null_mask),
     null_count);
 }
@@ -446,7 +467,7 @@ std::unique_ptr<column> make_strings_column(
  */
 std::unique_ptr<column> make_strings_column(size_type num_strings,
                                             std::unique_ptr<column> offsets_column,
-                                            rmm::device_buffer&& chars_buffer,
+                                            cuda::device_buffer<std::byte>&& chars_buffer,
                                             size_type null_count,
                                             cuda::device_buffer<cudf::bitmask_type>&& null_mask);
 

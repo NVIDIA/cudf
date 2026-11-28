@@ -11,7 +11,6 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/resource_ref.hpp>
 
@@ -23,31 +22,37 @@
 #include <cuda/stream>
 #include <thrust/for_each.h>
 
+#include <utility>
+
 namespace cudf::detail {
 
 template <typename Set>
-rmm::device_uvector<size_type> reduce_by_row_keep_any(Set& set,
-                                                      size_type num_rows,
-                                                      cuda::stream_ref stream,
-                                                      cudf::memory_resources mr)
+std::pair<cuda::device_buffer<size_type>, size_type> reduce_by_row_keep_any(
+  Set& set, size_type num_rows, cuda::stream_ref stream, cudf::memory_resources mr)
 {
-  auto output_indices = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
+  auto output_indices =
+    cuda::device_buffer<size_type>(stream, mr.get_output_mr(), num_rows, cuda::no_init);
 
   auto const iter = cuda::counting_iterator<cudf::size_type>{0};
   set.insert_async(iter, iter + num_rows, stream.get());
   auto const output_end = set.retrieve_all(output_indices.begin(), stream.get());
-  output_indices.resize(cuda::std::distance(output_indices.begin(), output_end), stream);
-  return output_indices;
+  // Preserve the allocation and return its logical size until CCCL can resize without copying.
+  // TODO: use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved
+  auto const output_size =
+    static_cast<size_type>(cuda::std::distance(output_indices.begin(), output_end));
+  return {std::move(output_indices), output_size};
 }
 
 template <typename Set>
-rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
-                                                                  size_type num_rows,
-                                                                  duplicate_keep_option keep,
-                                                                  cuda::stream_ref stream,
-                                                                  cudf::memory_resources mr)
+std::pair<cuda::device_buffer<size_type>, size_type> reduce_by_row_keep_first_last_none(
+  Set& set,
+  size_type num_rows,
+  duplicate_keep_option keep,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr)
 {
-  auto output_indices    = rmm::device_uvector<size_type>(num_rows, stream, mr.get_output_mr());
+  auto output_indices =
+    cuda::device_buffer<size_type>(stream, mr.get_output_mr(), num_rows, cuda::no_init);
   auto reduction_results = cuda::device_buffer<size_type>(
     stream, cudf::get_current_device_resource_ref(), num_rows, cuda::no_init);
   initialize_reduction_results(
@@ -78,8 +83,9 @@ rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(Set& set,
 
   auto const output_size =
     copy_reduction_results(reduction_results.data(), num_rows, output_indices.data(), keep, stream);
-  output_indices.resize(output_size, stream);
-  return output_indices;
+  // Preserve the allocation and return its logical size until CCCL can resize without copying.
+  // TODO: use resize() once https://github.com/NVIDIA/cccl/issues/12051 is resolved
+  return {std::move(output_indices), output_size};
 }
 
 }  // namespace cudf::detail

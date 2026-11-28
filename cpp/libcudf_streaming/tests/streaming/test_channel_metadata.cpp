@@ -12,8 +12,7 @@
 #include <cudf_streaming/channel_metadata.hpp>
 #include <cudf_streaming/table_chunk.hpp>
 
-#include <rmm/device_buffer.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <rapidsmpf/memory/buffer_resource.hpp>
@@ -187,7 +186,8 @@ class StreamingChannelMetadataGPU : public ::testing::Test {
 
   std::shared_ptr<table_chunk> make_chunk(std::vector<int32_t> vals)
   {
-    rmm::device_buffer buf(vals.data(), vals.size() * sizeof(int32_t), stream);
+    cuda::device_buffer<int32_t> buf(
+      stream, cudf::get_current_device_resource_ref(), vals.begin(), vals.end());
     stream.sync();
     auto col =
       std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},

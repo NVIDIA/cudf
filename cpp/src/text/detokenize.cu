@@ -166,7 +166,7 @@ std::unique_ptr<cudf::column> detokenize(cudf::strings_column_view const& string
   return cudf::make_strings_column(
     output_count,
     std::move(offsets_column),
-    chars.release(),
+    std::move(chars).template as_bytes<std::byte>(),
     0,
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }

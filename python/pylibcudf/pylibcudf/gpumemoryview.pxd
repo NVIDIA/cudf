@@ -4,17 +4,22 @@ from libc.stdint cimport uint8_t, uint64_t, uintptr_t
 from libcpp.memory cimport unique_ptr
 
 from pylibcudf.libcudf.types cimport bitmask_type
-from pylibcudf.libcudf.utilities.device_buffer cimport device_buffer
+from pylibcudf.libcudf.utilities.device_buffer cimport byte, device_buffer
+
+
+ctypedef fused buffer_element:
+    byte
+    bitmask_type
 
 
 cdef class _CudaDeviceBuffer:
-    cdef unique_ptr[device_buffer[bitmask_type]] c_obj
+    cdef unique_ptr[device_buffer[byte]] c_obj
     cdef object stream
     cdef object mr
 
 
 cdef gpumemoryview _from_cuda_device_buffer(
-    unique_ptr[device_buffer[bitmask_type]] buf, object stream, object mr
+    unique_ptr[device_buffer[buffer_element]] buf, object stream, object mr
 )
 
 cdef class _CudaByteBuffer:

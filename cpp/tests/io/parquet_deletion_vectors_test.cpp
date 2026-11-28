@@ -75,9 +75,9 @@ auto build_column_from_host_data(cudf::host_span<T const> host_data,
   CUDF_EXPECTS(not host_data.empty(), "Host data vector must not be empty");
 
   auto const num_rows = host_data.size();
-  rmm::device_buffer buffer{num_rows * sizeof(T), stream, mr};
+  cuda::device_buffer<std::byte> buffer{stream, mr, num_rows * sizeof(T), cuda::no_init};
   cudf::detail::cuda_memcpy<T>(
-    cudf::device_span<T>{static_cast<T*>(buffer.data()), num_rows}, host_data, stream);
+    cudf::device_span<T>{reinterpret_cast<T*>(buffer.data()), num_rows}, host_data, stream);
   return std::make_unique<cudf::column>(cudf::data_type{data_type},
                                         num_rows,
                                         std::move(buffer),

@@ -506,7 +506,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
 
     cudf::detail::join_streams(streams, stream);
 
-    auto chars          = char_storage.gather(stream, mr);
+    auto chars          = char_storage.gather<cuda::device_buffer<char>>(stream, mr);
     auto global_offsets = row_offset_storage.gather<cuda::device_buffer<byte_offset>>(stream, mr);
     return std::pair{std::move(global_offsets), std::move(chars)};
   }();
@@ -574,7 +574,7 @@ std::unique_ptr<cudf::column> multibyte_split(cudf::io::text::data_chunk_source 
   } else {
     return cudf::make_strings_column(string_count,
                                      std::move(offsets),
-                                     chars.release(),
+                                     std::move(chars).template as_bytes<std::byte>(),
                                      0,
                                      cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
   }

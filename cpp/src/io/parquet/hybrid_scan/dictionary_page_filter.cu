@@ -984,7 +984,7 @@ struct dictionary_caster {
    * @return A vector of BOOL8 columns
    */
   [[nodiscard]] std::vector<std::unique_ptr<cudf::column>> build_columns(
-    cudf::host_span<rmm::device_buffer> results_buffers,
+    cudf::host_span<cuda::device_buffer<bool>> results_buffers,
     cuda::stream_ref stream,
     cudf::memory_resources mr)
   {
@@ -1091,7 +1091,8 @@ struct dictionary_caster {
     auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, temp_mr);
 
     // Device buffers to store the dictionary membership results for all predicates
-    std::vector<rmm::device_buffer> results_buffers(total_num_literals);
+    std::vector<cuda::device_buffer<bool>> results_buffers;
+    results_buffers.reserve(total_num_literals);
     // Host vector of pointers to the result buffers
     auto host_results_ptrs = cudf::detail::make_host_vector<bool*>(total_num_literals, stream);
     std::for_each(cuda::counting_iterator<cudf::size_type>{0},
@@ -1099,9 +1100,9 @@ struct dictionary_caster {
                   [&](auto i) {
                     // Allocate the results buffer using the user-provided memory resource (output
                     // memory)
-                    results_buffers[i] =
-                      rmm::device_buffer(total_row_groups, stream, mr.get_output_mr());
-                    host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
+                    results_buffers.emplace_back(
+                      stream, mr.get_output_mr(), total_row_groups, cuda::no_init);
+                    host_results_ptrs[i] = results_buffers.back().data();
                   });
     if constexpr (not cuda::std::is_same_v<T, cudf::string_view>) {
       // Decode fixed width dictionaries and insert them to cuco hash sets, one dictionary per
@@ -1227,7 +1228,8 @@ struct dictionary_caster {
     auto const d_operators = cudf::detail::make_device_buffer_async(operators, stream, temp_mr);
 
     // Device buffers to store the dictionary membership results for all predicates
-    std::vector<rmm::device_buffer> results_buffers(total_num_literals);
+    std::vector<cuda::device_buffer<bool>> results_buffers;
+    results_buffers.reserve(total_num_literals);
     // Host vector of pointers to the result buffers
     auto host_results_ptrs = cudf::detail::make_host_vector<bool*>(total_num_literals, stream);
     std::for_each(cuda::counting_iterator<cudf::size_type>{0},
@@ -1235,9 +1237,9 @@ struct dictionary_caster {
                   [&](auto i) {
                     // Allocate the results buffer using the user-provided memory resource (output
                     // memory)
-                    results_buffers[i] =
-                      rmm::device_buffer(total_row_groups, stream, mr.get_output_mr());
-                    host_results_ptrs[i] = static_cast<bool*>(results_buffers[i].data());
+                    results_buffers.emplace_back(
+                      stream, mr.get_output_mr(), total_row_groups, cuda::no_init);
+                    host_results_ptrs[i] = results_buffers.back().data();
                   });
 
     // Device vector of pointers to the result buffers

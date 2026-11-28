@@ -23,11 +23,11 @@
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuco/types.cuh>
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <memory>
@@ -51,7 +51,7 @@ namespace {
  * @param func The input functor to invoke
  */
 template <bool HasNested, typename Func>
-rmm::device_uvector<cudf::size_type> dispatch_row_equal(
+std::pair<cuda::device_buffer<size_type>, size_type> dispatch_row_equal(
   null_equality compare_nulls,
   nan_equality compare_nans,
   bool has_nulls,
@@ -74,17 +74,17 @@ rmm::device_uvector<cudf::size_type> dispatch_row_equal(
 }
 }  // namespace
 
-rmm::device_uvector<size_type> distinct_indices(table_view const& input,
-                                                duplicate_keep_option keep,
-                                                null_equality nulls_equal,
-                                                nan_equality nans_equal,
-                                                cuda::stream_ref stream,
-                                                cudf::memory_resources mr)
+std::pair<cuda::device_buffer<size_type>, size_type> distinct_indices(table_view const& input,
+                                                                      duplicate_keep_option keep,
+                                                                      null_equality nulls_equal,
+                                                                      nan_equality nans_equal,
+                                                                      cuda::stream_ref stream,
+                                                                      cudf::memory_resources mr)
 {
   auto const num_rows = input.num_rows();
 
   if (num_rows == 0 or input.num_columns() == 0) {
-    return rmm::device_uvector<size_type>(0, stream, mr.get_output_mr());
+    return {cuda::device_buffer<size_type>{stream, mr.get_output_mr()}, 0};
   }
 
   auto temp_mr = cudf::get_current_device_resource_ref();
@@ -166,7 +166,8 @@ std::unique_ptr<table> distinct(table_view const& input,
                                                    stream,
                                                    cudf::get_current_device_resource_ref());
   return detail::gather(input,
-                        gather_map,
+                        device_span<size_type const>{gather_map.first.data(),
+                                                     static_cast<std::size_t>(gather_map.second)},
                         out_of_bounds_policy::DONT_CHECK,
                         negative_index_policy::NOT_ALLOWED,
                         stream,
@@ -195,9 +196,12 @@ std::unique_ptr<column> distinct_indices(table_view const& input,
                                          cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
-  auto indices = detail::distinct_indices(input, keep, nulls_equal, nans_equal, stream, mr);
-  return std::make_unique<column>(
-    std::move(indices), cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED), 0);
+  auto [indices, size] = detail::distinct_indices(input, keep, nulls_equal, nans_equal, stream, mr);
+  return std::make_unique<column>(data_type{type_id::INT32},
+                                  size,
+                                  std::move(indices),
+                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
+                                  0);
 }
 
 }  // namespace cudf

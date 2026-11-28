@@ -14,8 +14,9 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_uvector.hpp>
+
+#include <cuda/buffer>
 
 #include <memory>
 #include <stdexcept>
@@ -112,7 +113,8 @@ JNIEXPORT jlong JNICALL Java_ai_rapids_cudf_JoinMatchContext_matchCountsColumn(J
     auto const ctx    = reinterpret_cast<cudf::join_partition_context const*>(j_handle);
     auto const counts = ctx->left_table_context->match_counts();
     auto const stream = cudf::get_default_stream();
-    rmm::device_buffer data(counts.data(), counts.size_bytes(), stream);
+    cuda::device_buffer<cudf::size_type> data(
+      stream, cudf::get_current_device_resource_ref(), counts.begin(), counts.end());
     auto column =
       std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                      static_cast<cudf::size_type>(counts.size()),

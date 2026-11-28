@@ -18,6 +18,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/iterator>
 #include <cuda/stream>
@@ -52,7 +53,7 @@ std::unique_ptr<column> replace_nulls(strings_column_view const& input,
   auto d_offsets = cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
   // build chars column
-  rmm::device_uvector<char> chars(bytes, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), bytes, cuda::no_init);
   auto d_chars = chars.data();
   thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                      cuda::counting_iterator<size_type>{0},
@@ -65,7 +66,7 @@ std::unique_ptr<column> replace_nulls(strings_column_view const& input,
 
   return make_strings_column(strings_count,
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              0,
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

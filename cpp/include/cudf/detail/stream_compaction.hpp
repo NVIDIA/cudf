@@ -11,9 +11,10 @@
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
-
+#include <cuda/buffer>
 #include <cuda/stream>
+
+#include <utility>
 
 namespace cudf {
 namespace detail {
@@ -101,14 +102,14 @@ std::unique_ptr<table> stable_distinct(table_view const& input,
 /**
  * @copydoc cudf::distinct_indices
  *
- * @return A device_uvector containing the result indices
+ * @return A device buffer containing the result indices and their logical count
  */
-rmm::device_uvector<size_type> distinct_indices(table_view const& input,
-                                                duplicate_keep_option keep,
-                                                null_equality nulls_equal,
-                                                nan_equality nans_equal,
-                                                cuda::stream_ref stream,
-                                                cudf::memory_resources mr);
+std::pair<cuda::device_buffer<size_type>, size_type> distinct_indices(table_view const& input,
+                                                                      duplicate_keep_option keep,
+                                                                      null_equality nulls_equal,
+                                                                      nan_equality nans_equal,
+                                                                      cuda::stream_ref stream,
+                                                                      cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace cudf

@@ -8,6 +8,8 @@
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 
+#include <cuda/buffer>
+
 #include <rapidsmpf/memory/buffer.hpp>
 #include <rapidsmpf/utils/misc.hpp>
 
@@ -42,11 +44,11 @@ std::size_t constexpr random_table_size_lower_bound(cudf::size_type ncolumns, cu
  * @param max_val Maximum value (inclusive) for the random data.
  * @param stream CUDA stream to use for memory and kernel operations.
  * @param mr Device memory resource for allocating the device vector.
- * @return A unique pointer to the generated device vector.
+ * @return The generated device buffer.
  *
  * @note The function uses the specified CUDA stream for asynchronous operations.
  */
-rmm::device_uvector<std::int32_t> random_device_vector(std::size_t nelem,
+cuda::device_buffer<std::int32_t> random_device_vector(std::size_t nelem,
                                                        std::int32_t min_val,
                                                        std::int32_t max_val,
                                                        cuda::stream_ref stream,

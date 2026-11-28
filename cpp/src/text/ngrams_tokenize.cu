@@ -204,7 +204,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
   cuda::device_buffer<cudf::size_type> ngram_sizes(stream, temp_mr, total_ngrams, cuda::no_init);
 
   // build output chars column
-  rmm::device_uvector<char> chars(output_chars_size, stream, mr.get_output_mr());
+  cuda::device_buffer<char> chars(stream, mr.get_output_mr(), output_chars_size, cuda::no_init);
   auto d_chars = chars.data();
   // Generate the ngrams into the chars column data buffer.
   // The ngram_builder_fn functor also fills the ngram_sizes vector with the
@@ -227,7 +227,7 @@ std::unique_ptr<cudf::column> ngrams_tokenize(cudf::strings_column_view const& s
   // create the output strings column
   return make_strings_column(total_ngrams,
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              0,
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }

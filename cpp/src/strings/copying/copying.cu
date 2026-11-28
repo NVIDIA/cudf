@@ -12,9 +12,9 @@
 #include <cudf/strings/strings_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/functional>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -60,8 +60,11 @@ std::unique_ptr<cudf::column> copy_slice(strings_column_view const& input,
   // slice the chars child column
   auto const data_size =
     static_cast<std::size_t>(get_offset_value(offsets_column->view(), strings_count, stream));
-  auto chars_buffer = rmm::device_buffer{
-    input.chars_begin(stream) + chars_offset, data_size, stream, mr.get_output_mr()};
+  auto chars_buffer = cuda::device_buffer<std::byte>{
+    stream,
+    mr.get_output_mr(),
+    reinterpret_cast<std::byte const*>(input.chars_begin(stream) + chars_offset),
+    reinterpret_cast<std::byte const*>(input.chars_begin(stream) + chars_offset) + (data_size)};
 
   // slice the null mask
   auto null_mask = cudf::detail::copy_bitmask(

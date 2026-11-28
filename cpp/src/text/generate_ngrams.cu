@@ -146,7 +146,7 @@ std::unique_ptr<cudf::column> generate_ngrams(cudf::strings_column_view const& s
   return cudf::make_strings_column(
     ngrams_count,
     std::move(offsets_column),
-    chars.release(),
+    std::move(chars).template as_bytes<std::byte>(),
     0,
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 }
@@ -298,7 +298,7 @@ std::unique_ptr<cudf::column> generate_character_ngrams(cudf::strings_column_vie
   auto output =
     cudf::make_strings_column(total_ngrams,
                               std::move(offsets_column),
-                              chars.release(),
+                              std::move(chars).template as_bytes<std::byte>(),
                               0,
                               cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED, stream, mr));
 

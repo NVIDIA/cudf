@@ -11,14 +11,16 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/resource_ref.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
+
+#include <utility>
 
 namespace cudf::detail {
 
-template rmm::device_uvector<size_type> reduce_by_row_keep_first_last_none(
+template std::pair<cuda::device_buffer<size_type>, size_type> reduce_by_row_keep_first_last_none(
   distinct_set_t<cudf::detail::row::equality::device_row_comparator<
     false,
     cudf::nullate::DYNAMIC,

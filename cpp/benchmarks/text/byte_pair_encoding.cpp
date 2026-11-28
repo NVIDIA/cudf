@@ -16,7 +16,7 @@
 
 #include <nvtext/byte_pair_encoding.hpp>
 
-#include <rmm/device_buffer.hpp>
+#include <cuda/buffer>
 
 #include <nvbench/nvbench.cuh>
 
@@ -107,8 +107,10 @@ std::unique_ptr<cudf::column> make_text_column(std::string const& text,
   }
   auto const num_rows = static_cast<cudf::size_type>(offsets.size() - 1);
   auto stream         = cudf::get_default_stream();
-  auto d_chars        = rmm::device_buffer(chars.data(), chars.size(), stream);
-  auto d_offsets      = [&]() -> std::unique_ptr<cudf::column> {
+  auto d_chars        = cuda::device_buffer<char>(
+                   stream, cudf::get_current_device_resource_ref(), chars.begin(), chars.end())
+                   .as_bytes<std::byte>();
+  auto d_offsets = [&]() -> std::unique_ptr<cudf::column> {
     if (size < std::numeric_limits<int32_t>::max()) {
       std::vector<int32_t> offsets32(offsets.begin(), offsets.end());
       return cudf::test::fixed_width_column_wrapper<int32_t>(offsets32.begin(), offsets32.end())

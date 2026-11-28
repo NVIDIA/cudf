@@ -34,7 +34,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/block/block_reduce.cuh>
@@ -1455,10 +1454,9 @@ struct cast_variant_fn {
   template <variant_fixed_width T>
   std::unique_ptr<column> operator()()
   {
-    rmm::device_buffer data{num_rows * sizeof(T), stream, mr.get_output_mr()};
-    auto const grid = cudf::detail::grid_1d{num_rows, block_size};
-    auto const d_out =
-      device_span<T>{static_cast<T*>(data.data()), static_cast<std::size_t>(num_rows)};
+    cuda::device_buffer<T> data(stream, mr.get_output_mr(), num_rows, cuda::no_init);
+    auto const grid            = cudf::detail::grid_1d{num_rows, block_size};
+    device_span<T> const d_out = data;
     cast_variant_primitive_kernel<T>
       <<<grid.num_blocks, block_size, 0, stream.get()>>>(values, d_out, d_null_mask, d_status);
     CUDF_CUDA_TRY(cudaGetLastError());
@@ -1478,10 +1476,9 @@ struct cast_variant_fn {
   std::unique_ptr<column> operator()()
   {
     using Rep = typename T::rep;
-    rmm::device_buffer data{num_rows * sizeof(Rep), stream, mr.get_output_mr()};
-    auto const grid = cudf::detail::grid_1d{num_rows, block_size};
-    auto const d_out =
-      device_span<Rep>{static_cast<Rep*>(data.data()), static_cast<std::size_t>(num_rows)};
+    cuda::device_buffer<Rep> data(stream, mr.get_output_mr(), num_rows, cuda::no_init);
+    auto const grid              = cudf::detail::grid_1d{num_rows, block_size};
+    device_span<Rep> const d_out = data;
     cast_variant_decimal_kernel<Rep><<<grid.num_blocks, block_size, 0, stream.get()>>>(
       values, d_out, desired_type.scale(), d_null_mask, d_status);
     CUDF_CUDA_TRY(cudaGetLastError());
@@ -1500,33 +1497,32 @@ struct cast_variant_fn {
   template <cudf::concepts::boolean T>
   std::unique_ptr<column> operator()()
   {
-    rmm::device_buffer data{num_rows * sizeof(bool), stream, mr.get_output_mr()};
+    cuda::device_buffer<bool> data(stream, mr.get_output_mr(), num_rows, cuda::no_init);
 
     auto* dp_s = d_status;
 
-    thrust::for_each(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     cuda::counting_iterator<size_type>(0),
-                     cuda::counting_iterator<size_type>(num_rows),
-                     [vals  = this->values,
-                      d_out = static_cast<bool*>(data.data()),
-                      dnm   = this->d_null_mask,
-                      dp_s] __device__(size_type row) {
-                       if (!should_decode_row(row, dnm, dp_s)) {
-                         d_out[row] = false;
-                         return;
-                       }
-                       // The row's null bit is still set here, so a failure can clear it unguarded.
-                       auto const fail = [&](op_status s) {
-                         d_out[row] = false;
-                         cudf::clear_bit(dnm, row);
-                         if (dp_s) { dp_s[row] = s; }
-                       };
-                       auto const val     = list_row_span(vals, row);
-                       auto const decoded = decode_bool(val);
-                       if (!decoded) { return fail(cast_status_for_bool(val)); }
-                       d_out[row] = *decoded;
-                       if (dp_s) { dp_s[row] = op_status::SUCCESS; }
-                     });
+    thrust::for_each(
+      rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+      cuda::counting_iterator<size_type>(0),
+      cuda::counting_iterator<size_type>(num_rows),
+      [vals = this->values, d_out = data.data(), dnm = this->d_null_mask, dp_s] __device__(
+        size_type row) {
+        if (!should_decode_row(row, dnm, dp_s)) {
+          d_out[row] = false;
+          return;
+        }
+        // The row's null bit is still set here, so a failure can clear it unguarded.
+        auto const fail = [&](op_status s) {
+          d_out[row] = false;
+          cudf::clear_bit(dnm, row);
+          if (dp_s) { dp_s[row] = s; }
+        };
+        auto const val     = list_row_span(vals, row);
+        auto const decoded = decode_bool(val);
+        if (!decoded) { return fail(cast_status_for_bool(val)); }
+        d_out[row] = *decoded;
+        if (dp_s) { dp_s[row] = op_status::SUCCESS; }
+      });
 
     auto const null_count =
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
@@ -1550,7 +1546,7 @@ struct cast_variant_fn {
       num_rows - cudf::detail::count_set_bits(d_null_mask, 0, num_rows, stream);
     return make_strings_column(num_rows,
                                std::move(offsets_column),
-                               chars.release(),
+                               std::move(chars).template as_bytes<std::byte>(),
                                null_count,
                                null_count > 0
                                  ? std::move(null_mask)
@@ -2035,14 +2031,16 @@ std::unique_ptr<column> get_variant_type_id(column_view const& values,
                         : cudf::create_null_mask(num_rows, mask_state::ALL_VALID, stream, mr);
   auto* d_null_mask = null_mask.data();
 
-  rmm::device_buffer data{
-    static_cast<std::size_t>(num_rows) * sizeof(uint8_t), stream, mr.get_output_mr()};
+  cuda::device_buffer<std::byte> data{stream,
+                                      mr.get_output_mr(),
+                                      static_cast<std::size_t>(num_rows) * sizeof(uint8_t),
+                                      cuda::no_init};
 
   thrust::transform(
     rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
     cuda::counting_iterator<size_type>(0),
     cuda::counting_iterator<size_type>(num_rows),
-    static_cast<uint8_t*>(data.data()),
+    reinterpret_cast<uint8_t*>(data.data()),
     [values = val_lists_device_view, d_null_mask] __device__(size_type row) -> uint8_t {
       if (!cudf::bit_is_set(d_null_mask, row)) { return 0; }
       auto const ltype = logical_type_of(list_row_span(values, row));

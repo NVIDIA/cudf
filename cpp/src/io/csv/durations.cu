@@ -14,6 +14,7 @@
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/cmath>
 #include <cuda/stream>
@@ -183,8 +184,9 @@ struct dispatch_from_durations_fn {
       cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
 
     // build chars column
-    auto chars_data = rmm::device_uvector<char>(chars_bytes, stream, mr.get_output_mr());
-    auto d_chars    = chars_data.data();
+    auto chars_data =
+      cuda::device_buffer<char>(stream, mr.get_output_mr(), chars_bytes, cuda::no_init);
+    auto d_chars = chars_data.data();
 
     thrust::for_each_n(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                        cuda::counting_iterator<size_type>{0},
@@ -193,7 +195,7 @@ struct dispatch_from_durations_fn {
 
     return make_strings_column(strings_count,
                                std::move(offsets_column),
-                               chars_data.release(),
+                               std::move(chars_data).template as_bytes<std::byte>(),
                                durations.null_count(),
                                std::move(null_mask));
   }

@@ -12,7 +12,6 @@
 #include <cudf/strings/string_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/resource_ref.hpp>
 
 #include <cuda/buffer>
@@ -121,7 +120,7 @@ struct mutable_strings_column {
   std::unique_ptr<column> _col = nullptr;
 
   [[nodiscard]] static auto make(size_type size,
-                                 rmm::device_buffer chars,
+                                 cuda::device_buffer<std::byte> chars,
                                  std::unique_ptr<column> offsets,
                                  cuda::device_buffer<cudf::bitmask_type> null_mask,
                                  size_type null_count)

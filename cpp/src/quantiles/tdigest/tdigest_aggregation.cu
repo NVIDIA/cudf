@@ -18,6 +18,7 @@
 #include <cudf/detail/tdigest/tdigest.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/cuda.hpp>
+#include <cudf/detail/utilities/cuda_memcpy.hpp>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/fixed_point/conv.hpp>
 #include <cudf/lists/lists_column_view.hpp>
@@ -26,8 +27,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
 
-#include <rmm/device_buffer.hpp>
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 
 #include <cub/device/device_reduce.cuh>
@@ -361,13 +360,14 @@ struct cluster_info {
   // separately, instead of using traditional offsets.
 
   // cluster weight limits
-  cuda::device_buffer<double> cluster_wl{
-    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+  cuda::device_buffer<double> cluster_wl{cudf::get_default_stream(),
+                                         cudf::get_current_device_resource_ref()};
   // start index of weight limits, per group
-  rmm::device_uvector<int32_t> cluster_start{0, cudf::get_default_stream()};
+  cuda::device_buffer<int32_t> cluster_start{cudf::get_default_stream(),
+                                             cudf::get_current_device_resource_ref()};
   // number of weight limits, per group
-  cuda::device_buffer<size_type> num_clusters{
-    cudf::get_default_stream(), cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+  cuda::device_buffer<size_type> num_clusters{cudf::get_default_stream(),
+                                              cudf::get_current_device_resource_ref()};
   bool requires_rescan =
     true;  // in the case of our worst-case memory optimization, this flag
            // is set to true to indicate that cluster_start needs to be rescanned
@@ -784,7 +784,8 @@ cluster_info generate_group_cluster_info(int delta,
   // generate group cluster start positions (where the clusters for a given group start. however
   // these are not traditional offsets because in the simple case, we will be over-allocating a
   // worse case estimate)
-  cinfo.cluster_start = rmm::device_uvector<size_type>(num_groups + 1, stream, temp_mr);
+  cinfo.cluster_start =
+    cuda::device_buffer<size_type>(stream, temp_mr, num_groups + 1, cuda::no_init);
   compute_cluster_starts(cinfo, stream, cudf::get_current_device_resource_ref());
 
   // because of the simple path, the number of allocated clusters may not end up being the same as
@@ -792,7 +793,12 @@ cluster_info generate_group_cluster_info(int delta,
   size_t const allocated_clusters = [&]() -> size_t {
     // if we can't go down the fast path, get the count from the result of the scan
     if (simple_mem_usage > max_simple_cluster_usage) {
-      return cinfo.cluster_start.element(num_groups, stream);
+      size_type count{};
+      cudf::detail::cuda_memcpy(
+        cudf::host_span<size_type>{&count, 1},
+        cudf::device_span<size_type const>{cinfo.cluster_start.data() + num_groups, 1},
+        stream);
+      return count;
     }
     // otherwise the simple count we've computed earlier is sufficient
     return simple_cluster_count;
@@ -831,7 +837,8 @@ cluster_info generate_group_cluster_info(int delta,
     auto p_cluster_start = std::move(cinfo.cluster_start);
     // cluster_start is returned as part of the output, so make sure to use the user supplied mr
     // instead of the current resource.
-    cinfo.cluster_start = rmm::device_uvector(p_cluster_start, stream, mr.get_output_mr());
+    cinfo.cluster_start =
+      cuda::device_buffer<size_type>(stream, mr.get_output_mr(), p_cluster_start);
     cudf::detail::sync_stream(stream);
   }
 

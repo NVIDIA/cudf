@@ -24,7 +24,6 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/type_checks.hpp>
 
-#include <rmm/device_uvector.hpp>
 #include <rmm/exec_policy.hpp>
 #include <rmm/mr/polymorphic_allocator.hpp>
 
@@ -241,7 +240,7 @@ class key_remap_table_interface {
  public:
   virtual ~key_remap_table_interface() = default;
 
-  virtual std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(
+  virtual std::unique_ptr<cuda::device_buffer<cudf::size_type>> probe(
     cudf::table_view const& left_keys,
     cuda::stream_ref stream,
     cudf::memory_resources mr) const = 0;
@@ -370,7 +369,7 @@ class key_remap_table : public key_remap_table_interface {
   }
 
  public:
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(
+  std::unique_ptr<cuda::device_buffer<cudf::size_type>> probe(
     cudf::table_view const& left_keys,
     cuda::stream_ref stream,
     cudf::memory_resources mr) const override
@@ -380,14 +379,14 @@ class key_remap_table : public key_remap_table_interface {
     cudf::size_type const left_num_rows{left_keys.num_rows()};
 
     if (left_num_rows == 0) {
-      return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
+      return std::make_unique<cuda::device_buffer<cudf::size_type>>(stream, mr.get_output_mr());
     }
 
     auto const temp_mr = cudf::get_current_device_resource_ref();
 
     if (this->_right.num_rows() == 0) {
-      auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
-        left_num_rows, stream, mr.get_output_mr());
+      auto result = std::make_unique<cuda::device_buffer<cudf::size_type>>(
+        stream, mr.get_output_mr(), left_num_rows, cuda::no_init);
       thrust::fill(rmm::exec_policy_nosync(stream, temp_mr),
                    result->begin(),
                    result->end(),
@@ -395,8 +394,8 @@ class key_remap_table : public key_remap_table_interface {
       return result;
     }
 
-    auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
-      left_num_rows, stream, mr.get_output_mr());
+    auto result = std::make_unique<cuda::device_buffer<cudf::size_type>>(
+      stream, mr.get_output_mr(), left_num_rows, cuda::no_init);
     auto const output_begin =
       cuda::make_transform_output_iterator(result->begin(), extract_index{});
 
@@ -595,7 +594,7 @@ class key_remapping_impl {
   {
   }
 
-  std::unique_ptr<rmm::device_uvector<cudf::size_type>> probe(cudf::table_view const& keys,
+  std::unique_ptr<cuda::device_buffer<cudf::size_type>> probe(cudf::table_view const& keys,
                                                               cuda::stream_ref stream,
                                                               cudf::memory_resources mr) const
   {
@@ -608,12 +607,12 @@ class key_remapping_impl {
                  cudf::data_type_error);
 
     if (keys.num_rows() == 0) {
-      return std::make_unique<rmm::device_uvector<cudf::size_type>>(0, stream, mr.get_output_mr());
+      return std::make_unique<cuda::device_buffer<cudf::size_type>>(stream, mr.get_output_mr());
     }
 
     if (_table == nullptr) {
-      auto result = std::make_unique<rmm::device_uvector<cudf::size_type>>(
-        keys.num_rows(), stream, mr.get_output_mr());
+      auto result = std::make_unique<cuda::device_buffer<cudf::size_type>>(
+        stream, mr.get_output_mr(), keys.num_rows(), cuda::no_init);
       thrust::fill(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                    result->begin(),
                    result->end(),
@@ -687,7 +686,7 @@ std::unique_ptr<cudf::column> remap_keys_internal(detail::key_remapping_impl con
   auto const row_count = static_cast<cudf::size_type>(indices->size());
   return std::make_unique<cudf::column>(cudf::data_type{cudf::type_id::INT32},
                                         row_count,
-                                        indices->release(),
+                                        std::move(*indices),
                                         cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
                                         0);
 }

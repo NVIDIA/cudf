@@ -87,7 +87,8 @@ std::unique_ptr<cudf::column> generate_random_string_column(cudf::size_type lowe
     0, random_number_generator<cudf::size_type>(lower, upper));
   auto [offsets_column, computed_bytes] = cudf::strings::detail::make_offsets_child_column(
     offsets_begin, offsets_begin + num_rows, stream, mr);
-  rmm::device_uvector<char> chars(computed_bytes, stream);
+  cuda::device_buffer<char> chars(
+    stream, cudf::get_current_device_resource_ref(), computed_bytes, cuda::no_init);
 
   auto const offset_itr =
     cudf::detail::offsetalator_factory::make_input_iterator(offsets_column->view());
@@ -101,7 +102,7 @@ std::unique_ptr<cudf::column> generate_random_string_column(cudf::size_type lowe
 
   return cudf::make_strings_column(num_rows,
                                    std::move(offsets_column),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    0,
                                    cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

@@ -136,16 +136,19 @@ TEST_F(StringsFactoriesTest, CreateColumnFromOffsets)
   }
 
   std::vector<cudf::bitmask_type> h_nulls{h_null_mask};
-  auto d_buffer = cudf::detail::make_device_uvector(
+  auto d_buffer = cudf::detail::make_device_buffer(
     h_buffer, cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   auto d_offsets = std::make_unique<cudf::column>(
-    cudf::detail::make_device_uvector(
+    cudf::detail::make_device_buffer(
       h_offsets, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
   auto d_nulls = cudf::copy_bitmask(h_nulls.data(), 0, count);
-  auto column  = cudf::make_strings_column(
-    count, std::move(d_offsets), d_buffer.release(), null_count, std::move(d_nulls));
+  auto column  = cudf::make_strings_column(count,
+                                          std::move(d_offsets),
+                                          std::move(d_buffer).template as_bytes<std::byte>(),
+                                          null_count,
+                                          std::move(d_nulls));
   EXPECT_EQ(column->type(), cudf::data_type{cudf::type_id::STRING});
   EXPECT_EQ(column->null_count(), null_count);
   EXPECT_EQ(1, column->num_children());
@@ -184,16 +187,20 @@ TEST_F(StringsFactoriesTest, CreateScalar)
 
 TEST_F(StringsFactoriesTest, EmptyStringsColumn)
 {
-  auto d_chars   = rmm::device_uvector<char>(0, cudf::get_default_stream());
+  auto d_chars =
+    cuda::device_buffer<char>(cudf::get_default_stream(), cudf::get_current_device_resource_ref());
   auto d_offsets = std::make_unique<cudf::column>(
-    cudf::detail::make_zeroed_device_uvector<cudf::size_type>(
+    cudf::detail::make_zeroed_device_buffer<cudf::size_type>(
       1, cudf::get_default_stream(), cudf::get_current_device_resource_ref()),
     cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED),
     0);
   auto d_nulls = cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED);
 
-  auto results =
-    cudf::make_strings_column(0, std::move(d_offsets), d_chars.release(), 0, std::move(d_nulls));
+  auto results = cudf::make_strings_column(0,
+                                           std::move(d_offsets),
+                                           std::move(d_chars).template as_bytes<std::byte>(),
+                                           0,
+                                           std::move(d_nulls));
   cudf::test::expect_column_empty(results->view());
 
   cuda::device_buffer<string_pair> d_strings{cudf::get_default_stream(),

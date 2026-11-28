@@ -12,9 +12,9 @@
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <rmm/device_buffer.hpp>
 #include <rmm/device_scalar.hpp>
 
+#include <cuda/buffer>
 #include <cuda/stream>
 
 #include <span>
@@ -550,7 +550,7 @@ class string_scalar : public scalar {
    * @param stream CUDA stream used for device memory operations.
    * @param mr Device memory resource to use for device memory allocation.
    */
-  explicit string_scalar(rmm::device_buffer&& data,
+  explicit string_scalar(cuda::device_buffer<std::byte>&& data,
                          bool is_valid             = true,
                          cuda::stream_ref stream   = cudf::get_default_stream(),
                          cudf::memory_resources mr = cudf::get_current_device_resource_ref());
@@ -584,7 +584,9 @@ class string_scalar : public scalar {
   [[nodiscard]] char const* data() const;
 
  protected:
-  rmm::device_buffer _data{};  ///< device memory containing the string
+  cuda::device_buffer<char> _data{
+    cudf::get_default_stream(),
+    cudf::get_current_device_resource_ref()};  ///< device memory containing the string
 };
 
 /**

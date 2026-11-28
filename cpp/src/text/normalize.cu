@@ -669,14 +669,14 @@ std::unique_ptr<cudf::column> normalize_characters(cudf::strings_column_view con
     output_sizes.data(), output_sizes.data() + output_sizes.size(), stream, mr);
 
   // write the normalized characters
-  auto chars = rmm::device_uvector<char>(total_size, stream, mr.get_output_mr());
+  auto chars = cuda::device_buffer<char>(stream, mr.get_output_mr(), total_size, cuda::no_init);
   normalized_chars_kernel<<<grid.num_blocks, grid.num_threads_per_block, 0, stream.get()>>>(
     fn, d_block_offsets.data(), chars.data());
   CUDF_CUDA_TRY(cudaGetLastError());
 
   return cudf::make_strings_column(input.size(),
                                    std::move(offsets),
-                                   chars.release(),
+                                   std::move(chars).template as_bytes<std::byte>(),
                                    input.null_count(),
                                    cudf::detail::copy_bitmask(input.parent(), stream, mr));
 }

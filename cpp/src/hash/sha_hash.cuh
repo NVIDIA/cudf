@@ -22,6 +22,7 @@
 
 #include <rmm/exec_policy.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/std/bit>
 #include <cuda/std/concepts>
@@ -509,7 +510,7 @@ std::unique_ptr<column> sha_hash(table_view const& input,
   auto [offsets_column, bytes] =
     cudf::strings::detail::make_offsets_child_column(begin, begin + input.num_rows(), stream, mr);
 
-  auto chars   = rmm::device_uvector<char>(bytes, stream, mr.get_output_mr());
+  auto chars   = cuda::device_buffer<char>(stream, mr.get_output_mr(), bytes, cuda::no_init);
   auto d_chars = chars.data();
 
   auto const device_input = table_device_view::create(input, stream);
@@ -532,7 +533,7 @@ std::unique_ptr<column> sha_hash(table_view const& input,
 
   return make_strings_column(input.num_rows(),
                              std::move(offsets_column),
-                             chars.release(),
+                             std::move(chars).template as_bytes<std::byte>(),
                              0,
                              cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
 }

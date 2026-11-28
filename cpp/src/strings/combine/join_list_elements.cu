@@ -20,6 +20,7 @@
 
 #include <rmm/device_uvector.hpp>
 
+#include <cuda/buffer>
 #include <cuda/iterator>
 #include <cuda/stream>
 
@@ -206,8 +207,11 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                            stream,
                            mr);
 
-  return make_strings_column(
-    num_rows, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(num_rows,
+                             std::move(offsets_column),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 
 namespace {
@@ -281,8 +285,11 @@ std::unique_ptr<column> join_list_elements(lists_column_view const& lists_string
                            stream,
                            mr);
 
-  return make_strings_column(
-    num_rows, std::move(offsets_column), chars.release(), null_count, std::move(null_mask));
+  return make_strings_column(num_rows,
+                             std::move(offsets_column),
+                             std::move(chars).template as_bytes<std::byte>(),
+                             null_count,
+                             std::move(null_mask));
 }
 
 }  // namespace detail

@@ -15,6 +15,7 @@
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
+#include <cudf/utilities/pinned_memory.hpp>
 #include <cudf/utilities/span.hpp>
 
 #include <cuda/buffer>
@@ -236,6 +237,29 @@ cuda::device_buffer<std::remove_cv_t<T>> make_device_buffer(std::span<T, Extent>
                                                             cudf::memory_resources mr)
 {
   return make_device_buffer(host_span{source_data.data(), source_data.size()}, stream, mr);
+}
+
+/**
+ * @brief Asynchronously construct a pinned host `cuda::host_buffer` of uninitialized elements.
+ *
+ * Prefer this over `make_pinned_vector_async` when the buffer is only used through stream-ordered
+ * copies: the thrust-facing allocator behind that factory synchronizes `stream` on every
+ * allocation, whereas this factory allocates and releases through the pinned pool's async
+ * interface and synchronizes nothing.
+ *
+ * @note This function does not synchronize `stream`. The elements are uninitialized and a HOST
+ * write into them is only safe once `stream` has been synchronized, because the pool may hand back
+ * a block whose previous stream-ordered copy is still in flight.
+ *
+ * @tparam T The type of the data to allocate (trivially copyable)
+ * @param size The number of elements in the created buffer
+ * @param stream The stream on which to allocate memory
+ * @return A pinned host buffer of `size` uninitialized elements
+ */
+template <typename T>
+cuda::host_buffer<T> make_pinned_buffer_async(std::size_t size, cuda::stream_ref stream)
+{
+  return cuda::host_buffer<T>(stream, cudf::get_pinned_memory_resource(), size, cuda::no_init);
 }
 
 }  // namespace cudf::detail

@@ -426,6 +426,7 @@ ConfigureTest(
 # * copying tests ---------------------------------------------------------------------------------
 ConfigureTest(
   COPYING_TEST
+  copying/batch_gather_tests.cpp
   copying/concatenate_tests.cpp
   copying/copy_if_else_nested_tests.cpp
   copying/copy_range_tests.cpp

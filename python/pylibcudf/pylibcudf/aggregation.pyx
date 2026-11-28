@@ -59,6 +59,7 @@ from pylibcudf.libcudf.aggregation cimport (
 from pylibcudf.libcudf.types cimport (
     interpolation,
     nan_equality,
+    nan_semantics,
     null_equality,
     null_order,
     null_policy,
@@ -249,30 +250,45 @@ cpdef Aggregation product():
     return Aggregation.from_libcudf(move(make_product_aggregation[aggregation]()))
 
 
-cpdef Aggregation min():
+cpdef Aggregation min(nan_semantics semantics = nan_semantics.DEFAULT):
     """Create a min aggregation.
 
     For details, see :cpp:func:`make_min_aggregation`.
+
+    Parameters
+    ----------
+    semantics : NanSemantics, default NanSemantics.DEFAULT
+        How floating-point NaN values are ordered. With ``UNORDERED`` (the
+        default), a NaN input makes the result NaN. With ``TOTALLY_ORDERED``,
+        NaN is greater than every other value, so the result is NaN only when
+        every input is NaN.
 
     Returns
     -------
     Aggregation
         The min aggregation.
     """
-    return Aggregation.from_libcudf(move(make_min_aggregation[aggregation]()))
+    return Aggregation.from_libcudf(move(make_min_aggregation[aggregation](semantics)))
 
 
-cpdef Aggregation max():
+cpdef Aggregation max(nan_semantics semantics = nan_semantics.DEFAULT):
     """Create a max aggregation.
 
     For details, see :cpp:func:`make_max_aggregation`.
+
+    Parameters
+    ----------
+    semantics : NanSemantics, default NanSemantics.DEFAULT
+        How floating-point NaN values are ordered. A NaN input makes the
+        result NaN with both ``UNORDERED`` (the default) and
+        ``TOTALLY_ORDERED``.
 
     Returns
     -------
     Aggregation
         The max aggregation.
     """
-    return Aggregation.from_libcudf(move(make_max_aggregation[aggregation]()))
+    return Aggregation.from_libcudf(move(make_max_aggregation[aggregation](semantics)))
 
 
 cpdef Aggregation ewma(float center_of_mass, ewm_history history):
@@ -446,30 +462,49 @@ cpdef Aggregation quantile(
     )
 
 
-cpdef Aggregation argmax():
+cpdef Aggregation argmax(nan_semantics semantics = nan_semantics.DEFAULT):
     """Create an argmax aggregation.
 
     For details, see :cpp:func:`make_argmax_aggregation`.
+
+    Parameters
+    ----------
+    semantics : NanSemantics, default NanSemantics.DEFAULT
+        How floating-point NaN values are ordered. The index of the first NaN
+        is returned with both ``UNORDERED`` (the default) and
+        ``TOTALLY_ORDERED``.
 
     Returns
     -------
     Aggregation
         The argmax aggregation.
     """
-    return Aggregation.from_libcudf(move(make_argmax_aggregation[aggregation]()))
+    return Aggregation.from_libcudf(
+        move(make_argmax_aggregation[aggregation](semantics))
+    )
 
 
-cpdef Aggregation argmin():
+cpdef Aggregation argmin(nan_semantics semantics = nan_semantics.DEFAULT):
     """Create an argmin aggregation.
 
     For details, see :cpp:func:`make_argmin_aggregation`.
+
+    Parameters
+    ----------
+    semantics : NanSemantics, default NanSemantics.DEFAULT
+        How floating-point NaN values are ordered. With ``UNORDERED`` (the
+        default), the index of the first NaN is returned. With
+        ``TOTALLY_ORDERED``, NaN is greater than every other value, so a NaN
+        index is returned only when every input is NaN.
 
     Returns
     -------
     Aggregation
         The argmin aggregation.
     """
-    return Aggregation.from_libcudf(move(make_argmin_aggregation[aggregation]()))
+    return Aggregation.from_libcudf(
+        move(make_argmin_aggregation[aggregation](semantics))
+    )
 
 
 cpdef Aggregation nunique(null_policy null_handling = null_policy.EXCLUDE):

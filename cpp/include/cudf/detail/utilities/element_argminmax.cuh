@@ -6,11 +6,14 @@
 #pragma once
 
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/detail/utilities/device_operators.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/error.hpp>
 #include <cudf/utilities/traits.hpp>
+
+#include <cuda/std/type_traits>
 
 #include <type_traits>
 
@@ -29,6 +32,9 @@ struct element_argminmax_fn {
   column_device_view const d_col;
   bool const has_nulls;
   bool const arg_min;
+  /// Order NaN after all other values (`nan_semantics::TOTALLY_ORDERED`) for argmin, instead of
+  /// selecting the first NaN (`nan_semantics::UNORDERED`)
+  bool const totally_ordered = false;
 
   __device__ inline bool out_of_bounds_or_null(size_type idx) const
   {
@@ -58,6 +64,19 @@ struct element_argminmax_fn {
       auto const comparison = lhs.compare(rhs);
       if (comparison == 0) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (comparison < 0) == arg_min ? lhs_idx : rhs_idx;
+    } else if constexpr (cuda::std::is_floating_point_v<T>) {
+      // Select the row holding the MIN/MAX result, with -0 less than +0: the first NaN row for
+      // argmax and for UNORDERED argmin (see ieee_extremum_precedes). With TOTALLY_ORDERED, NaN is
+      // greater than every other value, which only changes argmin: a NaN row is selected only
+      // when every row is NaN (see totally_ordered_minimum_precedes).
+      auto const precedes = [&](T a, T b) {
+        if (!arg_min) { return cudf::detail::ieee_extremum_precedes<false>(a, b); }
+        return totally_ordered ? cudf::detail::totally_ordered_minimum_precedes(a, b)
+                               : cudf::detail::ieee_extremum_precedes<true>(a, b);
+      };
+      if (precedes(lhs, rhs)) { return lhs_idx; }
+      if (precedes(rhs, lhs)) { return rhs_idx; }
+      return lhs_idx < rhs_idx ? lhs_idx : rhs_idx;
     } else {
       if (lhs == rhs) { return lhs_idx < rhs_idx ? lhs_idx : rhs_idx; }
       return (lhs < rhs) == arg_min ? lhs_idx : rhs_idx;

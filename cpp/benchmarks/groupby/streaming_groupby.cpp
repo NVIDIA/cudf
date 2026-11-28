@@ -81,6 +81,10 @@ void bench_streaming_groupby(nvbench::state& state)
   auto const cardinality = static_cast<cudf::size_type>(state.get_int64("cardinality"));
   auto const key_order   = state.get_string("key_order");
   auto const aggs        = state.get_string("aggs");
+  if (aggs != "float_min" && state.get_string("nan_semantics") == "TOTALLY_ORDERED") {
+    state.skip("TOTALLY_ORDERED only changes floating-point MIN");
+    return;
+  }
   if (num_rows <= 0 || batch_size <= 0 || cardinality <= 0) {
     state.skip("num_rows, batch_size, and cardinality must be positive");
     return;
@@ -127,6 +131,13 @@ void bench_streaming_groupby(nvbench::state& state)
 
   std::vector<streaming_aggregation_request> requests;
   add_request(requests, 1, cudf::make_sum_aggregation<cudf::groupby_aggregation>());
+  if (aggs == "float_min") {
+    // MIN on a floating-point column, which nan_semantics affects
+    auto const semantics = state.get_string("nan_semantics") == "TOTALLY_ORDERED"
+                             ? cudf::nan_semantics::TOTALLY_ORDERED
+                             : cudf::nan_semantics::UNORDERED;
+    add_request(requests, 2, cudf::make_min_aggregation<cudf::groupby_aggregation>(semantics));
+  }
   if (aggs == "mixed") {
     add_request(requests, 1, cudf::make_min_aggregation<cudf::groupby_aggregation>());
     add_request(requests, 2, cudf::make_max_aggregation<cudf::groupby_aggregation>());
@@ -312,7 +323,8 @@ NVBENCH_BENCH(bench_streaming_groupby)
   .add_int64_axis("batch_size", {100'000, 1'000'000, 10'000'000, 100'000'000})
   .add_int64_axis("cardinality", {32, 256, 512, 65'536, 1'048'576})
   .add_string_axis("key_order", {"uniform_random", "round_robin", "sorted"})
-  .add_string_axis("aggs", {"sum", "mixed"});
+  .add_string_axis("aggs", {"sum", "mixed", "float_min"})
+  .add_string_axis("nan_semantics", {"UNORDERED", "TOTALLY_ORDERED"});
 
 NVBENCH_BENCH(bench_streaming_groupby_cardinality)
   .set_name("streaming_groupby_cardinality")

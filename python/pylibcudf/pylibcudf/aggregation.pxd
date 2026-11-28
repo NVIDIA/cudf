@@ -19,6 +19,7 @@ from pylibcudf.libcudf.aggregation cimport (
 from pylibcudf.libcudf.types cimport (
     interpolation,
     nan_equality,
+    nan_semantics,
     null_equality,
     null_order,
     null_policy,
@@ -57,9 +58,9 @@ cpdef Aggregation sum()
 
 cpdef Aggregation product()
 
-cpdef Aggregation min()
+cpdef Aggregation min(nan_semantics semantics = *)
 
-cpdef Aggregation max()
+cpdef Aggregation max(nan_semantics semantics = *)
 
 cpdef Aggregation count(null_policy null_handling = *)
 
@@ -79,9 +80,9 @@ cpdef Aggregation median()
 
 cpdef Aggregation quantile(list quantiles, interpolation interp = *)
 
-cpdef Aggregation argmax()
+cpdef Aggregation argmax(nan_semantics semantics = *)
 
-cpdef Aggregation argmin()
+cpdef Aggregation argmin(nan_semantics semantics = *)
 
 cpdef Aggregation ewma(float center_of_mass, ewm_history history)
 

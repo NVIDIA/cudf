@@ -14,6 +14,7 @@ from cudf_polars.testing.asserts import (
     assert_ir_translation_raises,
 )
 from cudf_polars.testing.engine_utils import is_streaming_engine
+from cudf_polars.utils.versions import POLARS_VERSION_LT_21
 
 
 @pytest.fixture(params=[False, True], ids=["nosort", "sort"])
@@ -71,6 +72,29 @@ def test_rolling_integral_orderby(engine: pl.GPUEngine, dtype):
         }
     )
     q = df.rolling("orderby", period="4i", closed="both").agg(pl.col("values").sum())
+
+    assert_gpu_result_equal(q, engine=engine)
+
+
+@pytest.mark.skipif(
+    POLARS_VERSION_LT_21,
+    reason="Polars 2.0 range rolling min/max can propagate NaN",
+)
+@pytest.mark.parametrize("dtype", [pl.Float32, pl.Float64])
+def test_rolling_min_max_nan(engine: pl.GPUEngine, dtype):
+    # Rolling min/max skip NaN in a window that holds other values
+    nan = float("nan")
+    df = pl.LazyFrame(
+        {
+            "orderby": [1, 2, 3, 4, 5, 6, 7],
+            "values": pl.Series([1.0, nan, 3.0, nan, 2.0, None, -1.0], dtype=dtype),
+        }
+    )
+    q = df.rolling("orderby", period="2i").agg(
+        pl.col("values").min().alias("min"),
+        pl.col("values").sum().alias("sum"),
+        pl.col("values").max().alias("max"),
+    )
 
     assert_gpu_result_equal(q, engine=engine)
 

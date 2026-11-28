@@ -29,7 +29,26 @@ class ProxyNDarrayBase(np.ndarray):
     def __array_finalize__(self, obj):
         if obj is None:
             return
-        self._fsproxy_wrapped = getattr(obj, "_fsproxy_wrapped", obj)
+        wrapped = getattr(obj, "_fsproxy_wrapped", obj)
+        target_dtype = super().dtype
+        if (
+            hasattr(wrapped, "astype")
+            and getattr(wrapped, "dtype", None) != target_dtype
+        ):
+            try:
+                wrapped = wrapped.astype(target_dtype)
+            except (ValueError, TypeError):
+                if callable(getattr(obj, "_fsproxy_fast_to_slow", None)):
+                    wrapped = obj._fsproxy_fast_to_slow()
+                elif hasattr(wrapped, "get"):
+                    wrapped = wrapped.get()
+                else:
+                    wrapped = np.asarray(wrapped)
+                wrapped = wrapped.astype(target_dtype)
+        self._fsproxy_wrapped = wrapped
         original_slow = getattr(obj, "_fsproxy_original_slow", None)
-        if original_slow is not None:
+        if (
+            original_slow is not None
+            and getattr(original_slow, "dtype", None) == target_dtype
+        ):
             self._fsproxy_original_slow = original_slow

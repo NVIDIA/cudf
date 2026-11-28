@@ -62,6 +62,8 @@ _GB_AGG_SUPPORTED = (
     "first",
     "last",
     "first_non_null",
+    "collect_set",
+    "collect_list",
 )
 
 _GB_AGG_REDUCTIONS = {
@@ -74,6 +76,8 @@ _GB_AGG_REDUCTIONS = {
     "first": "first",
     "last": "last",
     "first_non_null": "first_non_null",
+    "collect_set": "merge_sets",
+    "collect_list": "merge_lists",
 }
 
 
@@ -145,7 +149,8 @@ def _has_stable_sorted_agg(exprs: Iterable[NamedExpr]) -> bool:
 def _has_order_sensitive_agg(exprs: Iterable[NamedExpr]) -> bool:
     """Return True if reducing an aggregation must preserve input order."""
     return any(
-        isinstance(expr, Agg) and expr.name in {"first", "last", "first_non_null"}
+        isinstance(expr, Agg)
+        and expr.name in {"first", "last", "first_non_null", "collect_list"}
         for ne in exprs
         for expr in traversal([ne.value])
     )

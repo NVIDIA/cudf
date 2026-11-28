@@ -174,6 +174,12 @@ class _RowLabelKeyError(KeyError):
 
 
 class _DataFrameIndexer(_FrameIndexer):
+    def _column_for_setitem(self, name: Hashable) -> Series:
+        """Use Series indexing to write directly to the frame's column."""
+        return Series._from_column(
+            self._frame._data[name], name=name, index=self._frame.index
+        )
+
     def __setitem__(self, key, value):
         indexing_utils.check_dict_or_set_indexers(key)
         if not isinstance(key, tuple):
@@ -355,7 +361,9 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
             key = (list(key[0]), key[1])
 
         try:
-            columns_df = self._frame._get_columns_by_label(key[1])
+            columns_df = self._frame._from_data(
+                self._frame._data.select_by_label(key[1]), self._frame.index
+            )
         except KeyError:
             if not self._frame.empty and isinstance(key[0], slice):
                 indexer = indexing_utils.find_label_range_or_mask(
@@ -400,7 +408,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                     # Row indexers must be validated even when no columns
                     # are selected. Use the index as a Series in that case.
                     row_series = (
-                        self._frame[columns_df._column_names[0]]
+                        self._column_for_setitem(columns_df._column_names[0])
                         if columns_df._num_columns
                         else self._frame.index.to_series()
                     )
@@ -435,7 +443,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                         elif len(row_key) == 0:
                             return
                     for col in columns_df._column_names:
-                        self._frame[col].loc[key[0]] = value
+                        self._column_for_setitem(col).loc[key[0]] = value
                 except KeyError:
                     if not is_scalar(key[0]):
                         raise
@@ -487,7 +495,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                 else:
                     scatter_map = _indices_from_labels(self._frame, row_key)
                 for col in columns_df._column_names:
-                    columns_df[col][scatter_map] = (
+                    self._column_for_setitem(col).iloc[scatter_map] = (
                         value._data[col] if col in value_column_names else NA
                     )
 
@@ -502,12 +510,16 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                         if value.shape[0] != indexed_shape[0]:
                             _shape_mismatch_error(value.shape, indexed_shape)
                         for i, col in enumerate(columns_df._column_names):
-                            self._frame[col].loc[key[0]] = value[:, 0]
+                            self._column_for_setitem(col).loc[key[0]] = value[
+                                :, 0
+                            ]
                     else:
                         if value.shape != indexed_shape:
                             _shape_mismatch_error(value.shape, indexed_shape)
                         for i, col in enumerate(columns_df._column_names):
-                            self._frame[col].loc[key[0]] = value[:, i]
+                            self._column_for_setitem(col).loc[key[0]] = value[
+                                :, i
+                            ]
                 else:
                     # handle cases where value is 1d object:
                     # If the key on column axis is a scalar, we indexed
@@ -515,7 +527,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                     # the columns.
                     if is_scalar(key[1]):
                         for col in columns_df._column_names:
-                            self._frame[col].loc[key[0]] = value
+                            self._column_for_setitem(col).loc[key[0]] = value
                     # Otherwise, there are two situations. The key on row axis
                     # can be a scalar or 1d. In either of the situation, the
                     # ith element in value corresponds to the ith row in
@@ -542,7 +554,7 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                                     if col in value.index
                                     else NA
                                 )
-                                self._frame[col].loc[key[0]] = rhs
+                                self._column_for_setitem(col).loc[key[0]] = rhs
                             elif isinstance(value, (Series, pd.Series)):
                                 # A Series RHS over multiple target rows is
                                 # row-indexed: assign the whole Series so .loc
@@ -551,9 +563,13 @@ class _DataFrameLocIndexer(_DataFrameIndexer):
                                 # list of per-column values). A new scalar
                                 # label also lands here so the unsupported
                                 # append fails loudly instead of silently.
-                                self._frame[col].loc[key[0]] = value
+                                self._column_for_setitem(col).loc[key[0]] = (
+                                    value
+                                )
                             else:
-                                self._frame[col].loc[key[0]] = value[i]
+                                self._column_for_setitem(col).loc[key[0]] = (
+                                    value[i]
+                                )
 
 
 class _DataFrameAtIndexer(_DataFrameLocIndexer):
@@ -599,7 +615,7 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
 
         if is_scalar(value):
             for col in columns_df._column_names:
-                self._frame[col].iloc[key[0]] = value
+                self._column_for_setitem(col).iloc[key[0]] = value
 
         elif isinstance(value, cudf.DataFrame):
             if value.shape != self._frame.iloc[key[0]].shape:
@@ -609,7 +625,7 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
                 )
             value_column_names = set(value._column_names)
             for col in columns_df._column_names:
-                columns_df[col][key[0]] = (
+                self._column_for_setitem(col).iloc[key[0]] = (
                     value._data[col] if col in value_column_names else NA
                 )
 
@@ -624,7 +640,9 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
                     if value.shape[0] != indexed_shape[0]:
                         _shape_mismatch_error(value.shape, indexed_shape)
                     for i, col in enumerate(columns_df._column_names):
-                        self._frame[col].iloc[key[0]] = value[:, 0]
+                        self._column_for_setitem(col).iloc[key[0]] = value[
+                            :, 0
+                        ]
                 else:
                     if value.shape != indexed_shape:
                         _shape_mismatch_error(value.shape, indexed_shape)
@@ -633,10 +651,10 @@ class _DataFrameIlocIndexer(_DataFrameIndexer):
             else:
                 if is_scalar(key[1]):
                     for col in columns_df._column_names:
-                        self._frame[col].iloc[key[0]] = value
+                        self._column_for_setitem(col).iloc[key[0]] = value
                 else:
                     for i, col in enumerate(columns_df._column_names):
-                        self._frame[col].iloc[key[0]] = value[i]
+                        self._column_for_setitem(col).iloc[key[0]] = value[i]
 
 
 class _DataFrameiAtIndexer(_DataFrameIlocIndexer):
@@ -1836,7 +1854,11 @@ class DataFrame(IndexedFrame, GetAttrGetItemMixin):
                             sort=False,
                             allow_non_unique=True,
                         )
-                    if is_scalar(value):
+                    if value is None:
+                        self._data[arg] = column_empty(
+                            len(self), dtype=np.dtype("object")
+                        )
+                    elif is_scalar(value):
                         self._data[arg] = as_column(value, length=len(self))
                     else:
                         value = as_column(value)

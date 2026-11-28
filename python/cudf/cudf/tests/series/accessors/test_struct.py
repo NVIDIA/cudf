@@ -57,7 +57,7 @@ def test_struct_explode():
     assert_eq(expect, got)
 
     # check that a copy was made:
-    got["a"][0] = 5
+    got.loc[0, "a"] = 5
     assert_eq(s.struct.explode(), expect)
 
 

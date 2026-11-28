@@ -1649,6 +1649,11 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
                 ColumnBase.create(plc_col, self.dtype),
             )
 
+    @cached_property
+    def _copy_origin(self) -> object:
+        """Identity shared by shallow copies until a write clears the cache."""
+        return object()
+
     def copy(self, deep: bool = True) -> Self:
         """
         Makes a copy of the Column.
@@ -1665,7 +1670,10 @@ class ColumnBase(Serializable, BinaryOperand, Reducible):
         plc_col = self.plc_column
         if deep:
             plc_col = plc_col.copy()
-        return cast("Self", ColumnBase.create(plc_col, self.dtype))
+        result = cast("Self", ColumnBase.create(plc_col, self.dtype))
+        if not deep:
+            result._copy_origin = self._copy_origin
+        return result
 
     def element_indexing(self, index: int) -> ScalarLike:
         """

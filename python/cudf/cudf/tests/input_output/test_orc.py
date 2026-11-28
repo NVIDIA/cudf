@@ -633,8 +633,8 @@ def test_int_overflow(tmp_path):
     # The number of rows and the large element trigger delta encoding
     num_rows = 513
     df = cudf.DataFrame({"a": [None] * num_rows}, dtype="int64")
-    df["a"][0] = 1024 * 1024 * 1024
-    df["a"][num_rows - 1] = 1
+    df.loc[0, "a"] = 1024 * 1024 * 1024
+    df.loc[num_rows - 1, "a"] = 1
     df.to_orc(file_path)
 
     assert_eq(cudf.read_orc(file_path), df)
@@ -910,7 +910,7 @@ def test_orc_bool_encode_fail():
     # Generate a boolean column longer than a single row group
     fail_df = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
     # Invalidate a row in the first row group
-    fail_df["col"][5000] = None
+    fail_df.loc[5000, "col"] = None
 
     # Should throw instead of generating a file that is incompatible
     # with other readers (see issue #6763)
@@ -919,7 +919,7 @@ def test_orc_bool_encode_fail():
 
     # Generate a boolean column longer than a single row group
     okay_df = cudf.DataFrame({"col": gen_rand_series("bool", 20000)})
-    okay_df["col"][15000] = None
+    okay_df.loc[15000, "col"] = None
     # Invalid row is in the last row group; encoding is assumed to be correct
     okay_df.to_orc(buffer)
 

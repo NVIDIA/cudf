@@ -563,8 +563,9 @@ class IndexedFrame(Frame):
 
         Akin to cudf.DataFrame(...).loc[:, labels]
         """
+        # Each selection owns its column objects and shares their device buffers.
         out = self._from_data(
-            self._data.select_by_label(labels),
+            self._data.select_by_label(labels).copy(deep=False),
             index=self.index,
         )
         self._propagate_metadata(out)
@@ -3189,7 +3190,7 @@ class IndexedFrame(Frame):
             raise ValueError("slice step cannot be zero")
         num_rows = len(self)
         if num_rows == 0:
-            return self
+            return self.copy(deep=False)
         start, stop, stride = arg.indices(num_rows)
         index = self.index
         has_range_index = isinstance(index, RangeIndex)

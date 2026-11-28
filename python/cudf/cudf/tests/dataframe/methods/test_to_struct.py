@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 import numpy as np
@@ -47,7 +47,7 @@ def test_dataframe_to_struct():
     assert_eq(expect, got)
 
     # check that a copy was made:
-    df["a"][0] = 5
+    df.loc[0, "a"] = 5
     assert_eq(got, expect)
 
     # check that a non-string (but convertible to string) named column can be

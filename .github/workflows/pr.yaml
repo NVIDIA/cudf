@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-cuda-pool-handoff
+  group: ${{ github.workflow }}-${{ github.ref }}-cuda-pool-retained
   cancel-in-progress: true
 
 jobs:
@@ -20,12 +20,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {trial: handoff-shared-1, pool: shared, work: handoff}
-          - {trial: handoff-shared-2, pool: shared, work: handoff}
-          - {trial: handoff-shared-3, pool: shared, work: handoff}
-          - {trial: handoff-shared-4, pool: shared, work: handoff}
-          - {trial: handoff-shared-5, pool: shared, work: handoff}
-          - {trial: handoff-separate, pool: separate, work: handoff}
+          - {trial: retained-alloc, pool: retained, work: alloc}
+          - {trial: retained-handoff-1, pool: retained, work: handoff}
+          - {trial: retained-handoff-2, pool: retained, work: handoff}
+          - {trial: retained-handoff-3, pool: retained, work: handoff}
+          - {trial: retained-handoff-4, pool: retained, work: handoff}
     permissions:
       contents: read
     container:

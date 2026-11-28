@@ -23,6 +23,7 @@
   X(cuDevicePrimaryCtxRelease) \
   X(cuCtxSetCurrent)           \
   X(cuMemPoolCreate)           \
+  X(cuMemPoolSetAttribute)     \
   X(cuMemPoolDestroy)          \
   X(cuMemAllocFromPoolAsync)   \
   X(cuMemFreeAsync)            \
@@ -144,9 +145,11 @@ static void* replay(void* argument)
 int main(int argc, char** argv)
 {
   if (argc != 4 ||
-      (strcmp(argv[1], "shared") && strcmp(argv[1], "separate") && strcmp(argv[1], "host")) ||
+      (strcmp(argv[1], "shared") && strcmp(argv[1], "separate") && strcmp(argv[1], "host") &&
+       strcmp(argv[1], "retained")) ||
       (strcmp(argv[2], "alloc") && strcmp(argv[2], "events") && strcmp(argv[2], "handoff"))) {
-    fprintf(stderr, "Usage: %s {shared|separate|host} {alloc|events|handoff} ROUNDS\n", argv[0]);
+    fprintf(
+      stderr, "Usage: %s {shared|separate|host|retained} {alloc|events|handoff} ROUNDS\n", argv[0]);
     return EXIT_FAILURE;
   }
   char* end;
@@ -200,6 +203,11 @@ int main(int argc, char** argv)
   unsigned const pool_count = !strcmp(argv[1], "separate") ? 2 : 1;
   for (unsigned i = 0; i < pool_count; ++i) {
     CHECK(cuMemPoolCreate, &pools[i], &props);
+    if (!strcmp(argv[1], "retained")) {
+      // Match the archived RMM CUDA async resource's default retention policy.
+      uint64_t threshold = UINT64_MAX;
+      CHECK(cuMemPoolSetAttribute, pools[i], CU_MEMPOOL_ATTR_RELEASE_THRESHOLD, &threshold);
+    }
   }
   pthread_barrier_t start;
   if (pthread_barrier_init(&start, NULL, 2) != 0) { return EXIT_FAILURE; }

@@ -6,6 +6,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+import pyarrow as pa
 import pylibcudf as plc
 import pytest
 import rmm
@@ -73,12 +74,14 @@ def test_chunk_handoff(mode):
                 ):
                     table = plc.Table(
                         [
-                            plc.Column.from_iterable_of_py(
-                                [
-                                    3_279_111 * i if i % 11 else None
-                                    for i in range(rows)
-                                ],
-                                _INT64,
+                            plc.Column.from_arrow(
+                                pa.array(
+                                    [
+                                        3_279_111 * i if i % 11 else None
+                                        for i in range(rows)
+                                    ],
+                                    type=pa.int64(),
+                                ),
                                 stream=producer,
                             )
                         ]

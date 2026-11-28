@@ -14,6 +14,7 @@ Provide links and line numbers if applicable.
 
 **Describe the problems or issues found in the documentation**
 A clear and concise description of what you found to be incorrect.
+<!-- Say what the documentation claims and what actually happens, with a command or code that shows it. -->
 
 **Steps taken to verify documentation is incorrect**
 List any steps you have taken:

@@ -5,12 +5,16 @@
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import json
 import threading
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from rapidsmpf.memory.buffer import MemoryType
+from rapidsmpf.memory.reservation_events import ReservationContextCreator
 
 from cudf_polars import __version__
 from cudf_polars.utils.config import (
@@ -21,6 +25,10 @@ from cudf_polars.utils.config import (
 if TYPE_CHECKING:
     from typing import Self
 
+    from rapidsmpf.memory.buffer_resource import BufferResource
+    from rapidsmpf.memory.reservation_events import ReservationContext
+
+    from cudf_polars.quent._reservation_sites import ReservationSite
     from cudf_polars.quent._runtime import QuentSession, QuentWorkerRuntime
 
 __all__ = [
@@ -28,9 +36,64 @@ __all__ = [
     "QuentConfig",
     "QuentQueryConfig",
     "QuentQueryWorkerState",
+    "ReservationContextRegistry",
     "UnboundQuentIRExecutionState",
     "WorkerResources",
 ]
+
+
+class ReservationContextRegistry:
+    """
+    Registry of memory reservation tokens.
+
+    This is used to associate memory reservation events (often occurring
+    in rapidsmpf) with the Actor that was originally responsible for the
+    memory reservation.
+    """
+
+    def __init__(self) -> None:
+        self._creator = ReservationContextCreator()
+        # mapping actor -> site -> token
+        self._tokens: collections.defaultdict[
+            uuid.UUID, dict[ReservationSite, ReservationContext]
+        ] = collections.defaultdict(dict)
+        self._attribution: dict[ReservationContext, tuple[uuid.UUID, str]] = {}
+        self._lock = threading.Lock()
+
+    def token(self, actor_id: uuid.UUID, site: ReservationSite) -> ReservationContext:
+        """Return the stable token for an Actor and reservation site."""
+        with self._lock:
+            actor_tokens = self._tokens[actor_id]
+            if (token := actor_tokens.get(site)) is not None:
+                return token
+            token = self._creator.create()
+            actor_tokens[site] = token
+            self._attribution[token] = (actor_id, site.value)
+            return token
+
+    def resolve(
+        self, token: ReservationContext
+    ) -> tuple[uuid.UUID | None, str | None] | None:
+        """Resolve a token; the default context is deliberately unattributed."""
+        if not token.is_attributed:
+            return None, None
+        with self._lock:
+            return self._attribution.get(token)
+
+    def prune_actor(self, actor_id: uuid.UUID) -> set[ReservationContext]:
+        """Drop cached tokens for a completed Actor and return those tokens."""
+        with self._lock:
+            return set(self._tokens.pop(actor_id, {}).values())
+
+    def tokens_for_actor(self, actor_id: uuid.UUID) -> set[ReservationContext]:
+        """Return cached tokens for an Actor without pruning them."""
+        with self._lock:
+            return set(self._tokens[actor_id].values())
+
+    def forget(self, token: ReservationContext) -> None:
+        """Drop attribution after all occupancy for a token has been released."""
+        with self._lock:
+            self._attribution.pop(token, None)
 
 
 class _ProcessorRegistry:
@@ -127,6 +190,8 @@ class WorkerResources:
     processor_registry: _ProcessorRegistry
     device_memory_id: uuid.UUID
     device_memory_bytes: int
+    reservable_memory_ids: dict[str, uuid.UUID]
+    reservable_memory_limits: dict[str, int]
     filesystem_id: uuid.UUID
     disk_to_device_channel_id: uuid.UUID
     link_channel_ids: dict[int, uuid.UUID]
@@ -139,8 +204,15 @@ class WorkerResources:
         worker_id: uuid.UUID,
         rank: int,
         nranks: int,
+        buffer_resource: BufferResource,
     ) -> Self:
         namespace = uuid.uuid5(engine_id, f"worker:{rank}")
+        memory_types = {member.name.lower(): member for member in MemoryType}
+        available_memory_types = {
+            name: memory_type
+            for name, memory_type in memory_types.items()
+            if buffer_resource.is_reservable(memory_type)
+        }
 
         return cls(
             engine_id=engine_id,
@@ -151,6 +223,14 @@ class WorkerResources:
             processor_registry=_ProcessorRegistry(),
             device_memory_id=uuid.uuid5(namespace, "device-memory"),
             device_memory_bytes=get_total_device_memory() or 0,
+            reservable_memory_ids={
+                name: uuid.uuid5(namespace, f"reservable-memory:{name}")
+                for name in available_memory_types
+            },
+            reservable_memory_limits={
+                name: buffer_resource.memory_limit(memory_type)
+                for name, memory_type in available_memory_types.items()
+            },
             filesystem_id=uuid.uuid5(namespace, "filesystem"),
             disk_to_device_channel_id=uuid.uuid5(namespace, "disk-to-device"),
             link_channel_ids={
@@ -167,6 +247,15 @@ class WorkerResources:
             worker=self.worker_id,
             limits={"bytes": self.device_memory_bytes},
         )
+        for memory_type, memory_id in self.reservable_memory_ids.items():
+            configured_limit = self.reservable_memory_limits[memory_type]
+            context.reservable_memory_observer().handle(memory_id).declared(
+                instance_name=f"{self.instance_suffix} {memory_type} reservable memory",
+                worker=self.worker_id,
+                memory_type=memory_type,
+                limits={"bytes": max(configured_limit, 0)},
+                configured_limit=configured_limit,
+            )
         context.storage_observer().handle(self.filesystem_id).declared(
             instance_name=f"{self.instance_suffix} filesystem",
             worker=self.worker_id,
@@ -283,3 +372,22 @@ class ActorBoundQuentIRExecutionState:
     scan_task_node_id: str | None = None
     scan_task_node_type: str | None = None
     io_bytes: int | None = None
+    _reservation_contexts: dict[ReservationSite, ReservationContext] = (
+        dataclasses.field(default_factory=dict, compare=False, repr=False)
+    )
+    _reservation_contexts_lock: threading.Lock = dataclasses.field(
+        default_factory=threading.Lock,
+        compare=False,
+        repr=False,
+    )
+
+    def reservation_context(self, site: ReservationSite) -> ReservationContext:
+        """Return this Actor's cached reservation context for a site."""
+        with self._reservation_contexts_lock:
+            if (token := self._reservation_contexts.get(site)) is not None:
+                return token
+            token = self.query_worker_state.runtime.reservation_context_registry.token(
+                self.actor_id, site
+            )
+            self._reservation_contexts[site] = token
+            return token

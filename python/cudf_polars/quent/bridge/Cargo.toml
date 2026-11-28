@@ -14,8 +14,8 @@ default = ["collector"]
 collector = []
 
 [dependencies]
-cudf-polars-quent-browser = { path = "../browser", features = ["generate"] }
 pyo3 = { version = "0.30", features = ["abi3-py312"] }
+cudf-polars-quent-browser = { path = "../browser", features = ["generate"] }
 quent-collector-python.workspace = true
 quent-dynamic-attributes.workspace = true
 quent-instrumentation = { workspace = true, features = ["serde", "io-ndjson", "io-collector"] }

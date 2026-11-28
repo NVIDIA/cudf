@@ -16,11 +16,13 @@ from cudf_polars.containers import Column, DataFrame, DataType
 from cudf_polars.dsl.expr import Col
 from cudf_polars.dsl.ir import Empty
 from cudf_polars.dsl.utils.naming import names_to_indices, unique_names
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.collectives.allgather import AllGatherManager
 from cudf_polars.streaming.actor_graph.utils import (
     chunk_to_frame,
     concat_batch,
     empty_table_chunk,
+    reservation_context,
 )
 
 if TYPE_CHECKING:
@@ -356,7 +358,15 @@ async def compute_sort_boundaries(
             exclusive_view=True,
             br=context.br(),
         )
-        async with AllGatherManager(context, comm, allgather_id) as allgather:
+        async with AllGatherManager(
+            context,
+            comm,
+            allgather_id,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.BOUNDARIES_ALLGATHER,
+            ),
+        ) as allgather:
             with allgather.inserting() as inserter:
                 await inserter.insert(comm.rank, chunk)
             concat_table = await allgather.extract_concatenated(

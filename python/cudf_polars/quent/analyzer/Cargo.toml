@@ -8,7 +8,7 @@ publish = false
 default = ["filesystem"]
 filesystem = [
     "dep:quent-io",
-    "dep:quent-store",
+    "quent-store/io-ndjson",
     "cudf-polars-quent-store/filesystem",
 ]
 
@@ -20,7 +20,7 @@ quent-events = { workspace = true, features = ["serde"] }
 quent-io = { workspace = true, optional = true }
 quent-query-engine-analyzer.workspace = true
 quent-query-engine-ui.workspace = true
-quent-store = { workspace = true, features = ["io-ndjson"], optional = true }
+quent-store.workspace = true
 quent-time.workspace = true
 quent-ui.workspace = true
 serde = { version = "1", features = ["derive"] }

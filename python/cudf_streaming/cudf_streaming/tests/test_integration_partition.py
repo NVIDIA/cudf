@@ -19,6 +19,7 @@ from cudf_streaming.partition_utils import (
 from cudf_streaming.testing import assert_eq
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.buffer_resource import BufferResource
+from rapidsmpf.memory.reservation_events import ReservationContextCreator
 from rapidsmpf.memory.spill import spill_partitions, unspill_partitions
 from rmm.pylibrmm.stream import DEFAULT_STREAM
 
@@ -209,3 +210,71 @@ def test_round_trip_with_reservations(
         got = unpack_and_concat(parts, stream, br, reservation=concat_res)
         assert concat_res.size == 0
         assert_eq(expect, got, sort_rows=0)
+
+
+@pytest.mark.parametrize(
+    "operation", ["partition_and_pack", "split_and_pack", "unpack_and_concat"]
+)
+@pytest.mark.parametrize("with_context", [True, False])
+def test_reservation_context(
+    device_mr: rmm.mr.CudaMemoryResource,
+    operation: str,
+    *,
+    with_context: bool,
+) -> None:
+    """The internal reservation carries the given reservation context."""
+    br = BufferResource(device_mr)
+    stream = DEFAULT_STREAM
+    expect = _make_table([[1, 2, 3, 4], [5, 6, 7, 8]])
+    reservation_context = ReservationContextCreator().create()
+    passed_context = reservation_context if with_context else None
+    # Packed up front, so that unpack_and_concat has something to consume.
+    packed = list(
+        partition_and_pack(
+            expect,
+            columns_to_hash=(0,),
+            num_partitions=2,
+            stream=stream,
+            br=br,
+        ).values()
+    )
+
+    br.start_reservation_event_recording()
+    if operation == "partition_and_pack":
+        partition_and_pack(
+            expect,
+            columns_to_hash=(0,),
+            num_partitions=2,
+            stream=stream,
+            br=br,
+            reservation_context=passed_context,
+        )
+    elif operation == "split_and_pack":
+        split_and_pack(
+            expect,
+            splits=[2],
+            stream=stream,
+            br=br,
+            reservation_context=passed_context,
+        )
+    else:
+        got = unpack_and_concat(
+            packed,
+            stream=stream,
+            br=br,
+            reservation_context=passed_context,
+        )
+        assert_eq(expect, got, sort_rows=0)
+    events = br.stop_reservation_event_recording().events
+
+    assert events
+    if with_context:
+        assert any(
+            event.reservation_context == reservation_context
+            and event.byte_delta > 0
+            for event in events
+        )
+    else:
+        assert not any(
+            event.reservation_context.is_attributed for event in events
+        )

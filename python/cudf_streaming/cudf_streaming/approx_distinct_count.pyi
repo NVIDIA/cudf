@@ -5,6 +5,7 @@ from typing import Self
 
 from cudf_streaming.table_chunk import TableChunk
 from rapidsmpf.communicator.communicator import Communicator
+from rapidsmpf.memory.reservation_events import ReservationContext
 from rapidsmpf.streaming.core.channel import Channel
 from rapidsmpf.streaming.core.context import Context
 from rapidsmpf.streaming.core.message import Message
@@ -40,4 +41,6 @@ class CardinalityEstimator:
         ch_out: Channel[CardinalityEstimate],
         ch_sampled: Channel[TableChunk] | None = None,
         column_indices: tuple[int, ...] = (),
+        *,
+        reservation_context: ReservationContext | None = None,
     ) -> None: ...

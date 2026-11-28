@@ -21,6 +21,7 @@ from cudf_streaming.channel_metadata import (
     RowOrderingScope,
 )
 from cudf_streaming.table_chunk import TableChunk
+from rapidsmpf.memory.reservation_events import ReservationContext
 
 from cudf_polars import Translator
 from cudf_polars.containers import DataFrame, DataType
@@ -69,9 +70,16 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
 ):
     """Avoid tree allgather when partial aggregate rows exceed cuDF's row limit."""
 
-    async def fake_allgather_reduce(_context, _comm, _op_id, *local_values):
+    async def fake_allgather_reduce(
+        _context,
+        _comm,
+        _op_id,
+        *local_values,
+        reservation_context,
+    ):
         estimated_size = strategy_chunk.data_alloc_size() * 4
         assert local_values == (estimated_size, 8, 4, 0)
+        assert isinstance(reservation_context, ReservationContext)
         return (estimated_size, 8, 4, 0)
 
     monkeypatch.setattr(groupby_actor_graph, "allgather_reduce", fake_allgather_reduce)
@@ -91,6 +99,7 @@ def test_dynamic_groupby_strategy_avoids_row_limit_allgather(
             False,  # noqa: FBT003
             False,  # noqa: FBT003
             tracer,
+            ReservationContext(),
         )
     )
 

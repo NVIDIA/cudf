@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import logging
 from typing import TYPE_CHECKING, Concatenate, TypeVar
 
 import nvtx
 
 CUDF_POLARS_NVTX_DOMAIN = "cudf_polars"
+_logger = logging.getLogger(__name__)
 
 nvtx_annotate_cudf_polars = functools.partial(
     nvtx.annotate, domain=CUDF_POLARS_NVTX_DOMAIN
@@ -79,10 +81,26 @@ def log_do_evaluate[IRType: ir.IR, **P](
         try:
             result = func(cls, *args, **kwargs)
         except BaseException as error:
-            runtime.emit_evaluate_end(quent_evaluate_id, None, error)
+            try:
+                runtime.emit_evaluate_end(
+                    quent_evaluate_id,
+                    None,
+                    error,
+                )
+            except BaseException:
+                _logger.warning(
+                    "Quent evaluate failure finalization failed",
+                    exc_info=True,
+                )
             raise
         else:
-            runtime.emit_evaluate_end(quent_evaluate_id, result, None)
+            try:
+                runtime.emit_evaluate_end(quent_evaluate_id, result, None)
+            except BaseException:
+                _logger.warning(
+                    "Quent evaluate finalization failed",
+                    exc_info=True,
+                )
             return result
 
     return wrapper

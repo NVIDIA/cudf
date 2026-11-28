@@ -61,6 +61,7 @@ from cudf_polars.dsl.expr import GroupedWindow
 from cudf_polars.dsl.expressions.base import ExecutionContext
 from cudf_polars.dsl.utils.naming import unique_names
 from cudf_polars.dsl.utils.reshape import broadcast
+from cudf_polars.quent._reservation_sites import ReservationSite
 from cudf_polars.streaming.actor_graph.collectives.shuffle import (
     LocalRepartitioner,
     ShuffleManager,
@@ -90,6 +91,7 @@ from cudf_polars.streaming.actor_graph.utils import (
     process_children,
     recv_metadata,
     replay_buffered_channel,
+    reservation_context,
     send_metadata,
     shutdown_on_error,
 )
@@ -100,6 +102,7 @@ from cudf_polars.utils.cuda_stream import stream_ordered_after
 if TYPE_CHECKING:
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.memory.buffer_resource import BufferResource
+    from rapidsmpf.memory.reservation_events import ReservationContext
     from rapidsmpf.streaming.core.channel import Channel
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
@@ -214,6 +217,10 @@ async def _evaluate_broadcast_chunk(
         chunk,
         reserve_extra=global_agg_per_row_size * chunk.shape[0],
         net_memory_delta=0,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.BROADCAST_EVALUATE,
+        ),
     )
     with opaque_memory_usage(extra):
         return await ir_context.to_thread(
@@ -394,6 +401,10 @@ async def _allgather_and_broadcast(
             chunk,
             reserve_extra=chunk.data_alloc_size(),
             net_memory_delta=0,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.ALLGATHER_AGGREGATE,
+            ),
         )
         with opaque_memory_usage(extra):
             partial = await ir_context.to_thread(
@@ -465,6 +476,8 @@ async def _choose_modulus(
     collective_id: int,
     target_partition_size: int,
     sample_byte_count: int,
+    *,
+    reservation_context: ReservationContext,
 ) -> tuple[TableSizeStats, int]:
     """
     Sample input, AllGather size estimates, and derive the forward-shuffle modulus.
@@ -477,10 +490,16 @@ async def _choose_modulus(
         ch_in,
         sample_byte_count,
         metadata_in.local_count,
+        reservation_context=reservation_context,
     )
     if comm.nranks > 1 and not metadata_in.duplicated:
         total_bytes, total_count = await allgather_reduce(
-            context, comm, collective_id, sample.total_size, sample.total_chunks
+            context,
+            comm,
+            collective_id,
+            sample.total_size,
+            sample.total_chunks,
+            reservation_context=reservation_context,
         )
     else:
         total_bytes, total_count = sample.total_size, sample.total_chunks
@@ -526,6 +545,10 @@ async def _distribute_by_group(
                 chunk,
                 reserve_extra=stamp_bytes,
                 net_memory_delta=stamp_bytes,
+                reservation_context=reservation_context(
+                    ir_context.actor_bound_quent_ir_execution_state,
+                    ReservationSite.SHUFFLE_PREPARE,
+                ),
             )
             with opaque_memory_usage(extra):
                 stamped = await ir_context.to_thread(
@@ -707,6 +730,10 @@ async def _shuffle_and_reassemble(
         size_collective_id,
         target_partition_size,
         sample_byte_count,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.SAMPLE_STATISTICS,
+        ),
     )
 
     ch_replay = context.create_channel()
@@ -719,12 +746,20 @@ async def _shuffle_and_reassemble(
         comm.nranks,
         return_shuffle_collective_id,
         partition_assignment=PartitionAssignment.CONTIGUOUS,
+        reservation_context=reservation_context(
+            ir_context.actor_bound_quent_ir_execution_state,
+            ReservationSite.SHUFFLE_RETURN,
+        ),
     ) as return_shuffle:
         async with ShuffleManager(
             context,
             comm,
             forward_modulus,
             forward_shuffle_collective_id,
+            reservation_context=reservation_context(
+                ir_context.actor_bound_quent_ir_execution_state,
+                ReservationSite.SHUFFLE_FORWARD,
+            ),
         ) as forward_shuffle:
             sequence_numbers, _ = await gather_in_task_group(
                 _distribute_by_group(

@@ -10,6 +10,7 @@ import itertools
 import math
 import operator
 import struct
+from bisect import bisect_left
 from collections import deque
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, replace
@@ -45,6 +46,7 @@ from cudf_polars.streaming.actor_graph.tracing import (
     send_chunk,
 )
 from cudf_polars.streaming.utils import _concat
+from cudf_polars.utils.cuda_stream import stream_ordered_after
 from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
@@ -432,6 +434,52 @@ def _make_hash_shuffle_metadata(
     )
 
 
+def _column_buffer_ranges(column: plc.Column) -> Iterator[tuple[int, int]]:
+    for buffer in (column.data(), column.null_mask()):
+        if buffer is not None and buffer.ptr and buffer.size:
+            yield buffer.ptr, buffer.ptr + buffer.size
+    for child in column.children():
+        yield from _column_buffer_ranges(child)
+
+
+def _copy_shared_output_columns(df: DataFrame, source: DataFrame) -> plc.Table:
+    """Give spillable results independent ownership of their input buffers."""
+    source_ranges = sorted(
+        interval
+        for column in source.table.columns()
+        for interval in _column_buffer_ranges(column)
+    )
+    if not source_ranges:
+        return df.table
+
+    starts, ends = zip(*source_ranges, strict=True)
+    max_ends = tuple(itertools.accumulate(ends, max))
+
+    def shares_input(column: plc.Column) -> bool:
+        for start, end in _column_buffer_ranges(column):
+            # Any intersecting source range must start before the output ends.
+            index = bisect_left(starts, end) - 1
+            if index >= 0 and max_ends[index] > start:
+                return True
+        return False
+
+    columns = df.table.columns()
+    shared = [shares_input(column) for column in columns]
+    if not any(shared):
+        return df.table
+
+    # The copy may read an input view on another stream. Keep input
+    # deallocation ordered after that read as well.
+    with stream_ordered_after(lambda: df.stream, upstreams=(source.stream,)) as stream:
+        return plc.Table(
+            [
+                column.copy(stream=stream) if aliases_input else column
+                for column, aliases_input in zip(columns, shared, strict=True)
+            ],
+            num_rows=df.num_rows,
+        )
+
+
 def _evaluate_chunk_sync(
     chunk: TableChunk,
     ir: IR,
@@ -466,8 +514,9 @@ def _evaluate_chunk_sync(
     """
     df_in = chunk_to_frame(chunk, ir.children[0], ordering_metadata=ordering_metadata)
     df = evaluate_ir(ir, df_in, context=ir_context)
+    output = _copy_shared_output_columns(df, df_in)
     return TableChunk.from_pylibcudf_table(
-        df.table, df.stream, exclusive_view=True, br=br
+        output, df.stream, exclusive_view=True, br=br
     )
 
 

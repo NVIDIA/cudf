@@ -43,6 +43,8 @@ elif [[ "$trial" == order-focused-reference ]]; then
 elif [[ "$trial" == order-handoff-*-reference ]]; then
     mode=${trial#order-handoff-}
     trial="signal-order-handoff-${mode%-reference}-dask-datetime"
+elif [[ "$trial" == order-ownership-fix-* ]]; then
+    trial=signal-order-ownership-fix-dask-datetime
 elif [[ "$trial" == order-reduction-reference ]]; then
     trial=signal-order-reduction-dask-datetime
 elif [[ "$trial" == order-datetime-probe-* || "$trial" == order-handoff-* ||

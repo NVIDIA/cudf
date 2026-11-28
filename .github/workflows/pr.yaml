@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-reduction
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-handoff-ownership-fix
   cancel-in-progress: true
 
 jobs:
@@ -20,11 +20,8 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - order-reduction-reference
-          - order-reduction-probe-01
-          - order-reduction-probe-02
-          - order-reduction-probe-03
-          - order-reduction-probe-04
+          - order-ownership-fix-01
+          - order-ownership-fix-02
     permissions:
       actions: read
       contents: read

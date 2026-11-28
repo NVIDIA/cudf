@@ -104,6 +104,11 @@ elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-repeat-* ]]; then
     cp ci/arm64_polars_diagnostics/repeat-spmd-tests.sh replay-source/ci/run_cudf_polars_pytests.sh
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck* ]]; then
     cp ci/arm64_polars_diagnostics/memcheck-pytest.sh replay-source/ci/run_cudf_polars_pytests.sh
+elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-ownership-fix-dask-datetime ]]; then
+    export CUDF_POLARS_OWNERSHIP_UTILS="$PWD/python/cudf_polars/cudf_polars/streaming/actor_graph/utils.py"
+    cp python/cudf_polars/tests/streaming/test_chunk_ownership.py replay-source/python/cudf_polars/tests/streaming/
+    cp ci/arm64_polars_diagnostics/verify-ownership-fix.sh replay-source/ci/run_cudf_polars_pytests.sh
+    chmod +x replay-source/ci/run_cudf_polars_pytests.sh
 elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == signal-order-reduction-dask-datetime ]]; then
     cp ci/arm64_polars_diagnostics/test_chunk_handoff_reduction.py replay-source/python/cudf_polars/
     cat > replay-source/ci/run_cudf_polars_pytests.sh <<'SH'

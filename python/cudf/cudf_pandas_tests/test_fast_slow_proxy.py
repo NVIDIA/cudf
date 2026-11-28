@@ -16,6 +16,7 @@ from cudf.pandas.fast_slow_proxy import (
     _FunctionProxy,
     _setattr_fsproxy_no_mirror,
     _slow_arg,
+    _State,
     _transform_arg,
     _Unusable,
     make_final_proxy_type,
@@ -104,6 +105,30 @@ def function_proxy():
         return "slow_func"
 
     return fast_func, slow_func, _FunctionProxy(fast_func, slow_func)
+
+
+@pytest.mark.parametrize("blocked_first", [False, True])
+def test_cached_method_transfer_state_is_per_instance(
+    final_proxy, blocked_first
+):
+    _, _, blocked = final_proxy
+    unblocked = type(blocked)(2)
+    blocked.force_state(_State.SLOW)
+
+    if blocked_first:
+        blocked_method = blocked.method
+        unblocked_method = unblocked.method
+    else:
+        unblocked_method = unblocked.method
+        blocked_method = blocked.method
+
+    assert blocked_method() == "slow method"
+    assert unblocked_method() == "fast method"
+
+    blocked.unblock_transfers()
+    assert blocked_method() == "fast method"
+    unblocked.force_state(_State.SLOW)
+    assert unblocked_method() == "slow method"
 
 
 def test_repr_no_fast_object():

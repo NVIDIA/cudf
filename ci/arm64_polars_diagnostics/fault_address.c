@@ -1,0 +1,120 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdint.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <ucontext.h>
+#include <unistd.h>
+
+static int report_fd;
+static struct sigaction previous;
+#ifdef STREAM_ORDER_TRACE
+uint64_t stream_trace_position(void);
+uint64_t stream_trace_write_failures(void);
+#endif
+
+static ssize_t write_field(char const* name, uintptr_t value)
+{
+  static char const digits[] = "0123456789abcdef";
+  char text[64];
+  unsigned int offset = 0;
+  while (*name != '\0') {
+    text[offset++] = *name++;
+  }
+  text[offset++] = '=';
+  text[offset++] = '0';
+  text[offset++] = 'x';
+  for (unsigned int i = 2 * sizeof(value); i > 0; --i) {
+    text[offset + i - 1] = digits[value & 15];
+    value >>= 4;
+  }
+  offset += 2 * sizeof(value);
+  text[offset++] = '\n';
+  return write(report_fd, text, offset);
+}
+
+static void report_frame_chain(uintptr_t fp, uintptr_t sp)
+{
+  // Reading via /proc avoids taking another fault when frame pointers are omitted or corrupt.
+  // Retain only return addresses, with bounds on both the number and span of frames.
+  int mem = open("/proc/self/mem", O_RDONLY | O_CLOEXEC);
+  if (mem < 0) { return; }
+  for (unsigned int i = 0; i < 24; ++i) {
+    if (fp < sp || fp - sp > 8 * 1024 * 1024 || fp % sizeof(uintptr_t) != 0) { break; }
+    uintptr_t record[2];
+    if (pread(mem, record, sizeof(record), (off_t)fp) != sizeof(record) || record[1] == 0) {
+      break;
+    }
+    (void)write_field("return_pc", record[1]);
+    if (record[0] <= fp) { break; }
+    fp = record[0];
+  }
+  (void)close(mem);
+}
+
+static void report_segv(int sig, siginfo_t* info, void* context)
+{
+  int saved_errno         = errno;
+  ucontext_t const* frame = context;
+  struct timespec now;
+  if (clock_gettime(CLOCK_REALTIME, &now) == 0) {
+    (void)write_field("epoch_seconds", now.tv_sec);
+    (void)write_field("nanoseconds", now.tv_nsec);
+  }
+  (void)write_field("si_code", (uintptr_t)info->si_code);
+  (void)write_field("address", info->si_code > 0 ? (uintptr_t)info->si_addr : 0);
+#ifdef STREAM_ORDER_TRACE
+  (void)write_field("tid", (uintptr_t)syscall(SYS_gettid));
+  if (clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+    (void)write_field("trace_monotonic_ns", (uintptr_t)now.tv_sec * 1000000000u + now.tv_nsec);
+  }
+  (void)write_field("trace_sequence", stream_trace_position());
+  (void)write_field("trace_write_failures", stream_trace_write_failures());
+#endif
+#if defined(__aarch64__)
+  (void)write_field("pc", frame->uc_mcontext.pc);
+  (void)write_field("lr", frame->uc_mcontext.regs[30]);
+  (void)write_field("x0", frame->uc_mcontext.regs[0]);
+  (void)write_field("x19", frame->uc_mcontext.regs[19]);
+  report_frame_chain(frame->uc_mcontext.regs[29], frame->uc_mcontext.sp);
+#elif defined(__x86_64__)
+  (void)write_field("pc", frame->uc_mcontext.gregs[REG_RIP]);
+  report_frame_chain(frame->uc_mcontext.gregs[REG_RBP], frame->uc_mcontext.gregs[REG_RSP]);
+#else
+#error Unsupported fault context
+#endif
+
+  // Retain the load offsets for symbolization without uploading process memory.
+  int maps = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+  if (maps >= 0) {
+    char buffer[2048];
+    ssize_t bytes;
+    while ((bytes = read(maps, buffer, sizeof(buffer))) > 0) {
+      if (write(report_fd, buffer, bytes) != bytes) { break; }
+    }
+    (void)close(maps);
+  }
+
+  // A synchronous fault repeats on return and reaches Python's handler with
+  // the original signal information. An explicitly raised signal needs replay.
+  if (sigaction(sig, &previous, 0) != 0) { _exit(128 + sig); }
+  if (info->si_code <= 0) { (void)raise(sig); }
+  errno = saved_errno;
+}
+
+int install_fault_report(int fd)
+{
+  struct sigaction action = {0};
+  action.sa_flags         = SA_SIGINFO | SA_ONSTACK;
+  action.sa_sigaction     = report_segv;
+  sigemptyset(&action.sa_mask);
+  report_fd = fd;
+  return sigaction(SIGSEGV, &action, &previous);
+}

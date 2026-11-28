@@ -72,16 +72,18 @@ data_type physical_type_of(data_type type)
     case INT64:
     case UINT64:
     case FLOAT64: return data_type{UINT64};
-    case TIMESTAMP_DAYS: return data_type{type_to_id<timestamp_D::rep>()};
-    case TIMESTAMP_SECONDS: return data_type{type_to_id<timestamp_s::rep>()};
-    case TIMESTAMP_MILLISECONDS: return data_type{type_to_id<timestamp_ms::rep>()};
-    case TIMESTAMP_MICROSECONDS: return data_type{type_to_id<timestamp_us::rep>()};
-    case TIMESTAMP_NANOSECONDS: return data_type{type_to_id<timestamp_ns::rep>()};
-    case DURATION_DAYS: return data_type{type_to_id<duration_D::rep>()};
-    case DURATION_SECONDS: return data_type{type_to_id<duration_s::rep>()};
-    case DURATION_MILLISECONDS: return data_type{type_to_id<duration_ms::rep>()};
-    case DURATION_MICROSECONDS: return data_type{type_to_id<duration_us::rep>()};
-    case DURATION_NANOSECONDS: return data_type{type_to_id<duration_ns::rep>()};
+    case TIMESTAMP_DAYS: return physical_type_of(data_type{type_to_id<timestamp_D::rep>()});
+    case TIMESTAMP_SECONDS: return physical_type_of(data_type{type_to_id<timestamp_s::rep>()});
+    case TIMESTAMP_MILLISECONDS:
+      return physical_type_of(data_type{type_to_id<timestamp_ms::rep>()});
+    case TIMESTAMP_MICROSECONDS:
+      return physical_type_of(data_type{type_to_id<timestamp_us::rep>()});
+    case TIMESTAMP_NANOSECONDS: return physical_type_of(data_type{type_to_id<timestamp_ns::rep>()});
+    case DURATION_DAYS: return physical_type_of(data_type{type_to_id<duration_D::rep>()});
+    case DURATION_SECONDS: return physical_type_of(data_type{type_to_id<duration_s::rep>()});
+    case DURATION_MILLISECONDS: return physical_type_of(data_type{type_to_id<duration_ms::rep>()});
+    case DURATION_MICROSECONDS: return physical_type_of(data_type{type_to_id<duration_us::rep>()});
+    case DURATION_NANOSECONDS: return physical_type_of(data_type{type_to_id<duration_ns::rep>()});
     case DICTIONARY32:
     case STRING:
     case LIST:

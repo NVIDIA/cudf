@@ -26,9 +26,6 @@ std::string reflect_input_element(transform_input_spec const& spec, bool use_phy
 /// @brief Reflects decoded values, using dictionary keys rather than their indices.
 std::string reflect_input_value_type(transform_input_spec const& spec, bool use_physical_type);
 
-/// @brief Reflects the mutable device-view type for an output specification.
-std::string reflect_output_column(transform_output_spec const& spec);
-
 struct transform_reflection {
   std::string input_accessors;
   std::string output_accessors;

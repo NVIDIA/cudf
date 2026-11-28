@@ -1135,3 +1135,13 @@ def test_groupby_scalar_literal_expression(engine: pl.GPUEngine):
     lit = pl.lit(-1.5).abs()
     q = df.group_by("g", maintain_order=True).agg(a=lit, b=lit, c=pl.col("j").sum())
     assert_gpu_result_equal(q, engine=engine)
+
+
+def test_groupby_decimal_literal_expression_with_aggregation(engine: pl.GPUEngine):
+    df = pl.LazyFrame(
+        {"g": [1, 1, 2], "v": pl.Series([2, 4, 10]).cast(pl.Decimal(15, 2))}
+    )
+    q = pl.SQLContext({"t": df}).execute(
+        "SELECT g, (50 / 100.0) * max(v) AS scaled_max FROM t GROUP BY g"
+    )
+    assert_gpu_result_equal(q, engine=engine, check_row_order=False)

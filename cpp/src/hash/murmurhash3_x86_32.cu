@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "murmurhash3_x86_32.cuh"
+#include "runtime/context.hpp"
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -22,8 +23,11 @@
 #include <cub/device/device_for.cuh>
 #include <cuda/stream>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
+#include <string>
 
 namespace cudf {
 namespace hashing {
@@ -87,10 +91,18 @@ std::unique_ptr<column> murmurhash3_x86_32(
 
 std::unique_ptr<column> murmurhash3_x86_32(table_view const& input,
                                            uint32_t seed,
+                                           use_jit jit,
                                            cuda::stream_ref stream,
                                            cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
+  if (jit == use_jit::YES || get_context().use_jit()) {
+    try {
+      return detail::murmurhash3_x86_32_jit(input, seed, stream, mr);
+    } catch (data_type_error const&) {
+      // Unsupported JIT types and layouts use the native implementation.
+    }
+  }
   return detail::murmurhash3_x86_32(input, seed, stream, mr);
 }
 

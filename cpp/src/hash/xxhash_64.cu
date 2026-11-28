@@ -2,6 +2,8 @@
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+#include "runtime/context.hpp"
+
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
 #include <cudf/detail/row_operator/hashing.cuh>
@@ -53,10 +55,18 @@ std::unique_ptr<column> xxhash_64(table_view const& input,
 
 std::unique_ptr<column> xxhash_64(table_view const& input,
                                   uint64_t seed,
+                                  use_jit jit,
                                   cuda::stream_ref stream,
                                   cudf::memory_resources mr)
 {
   CUDF_FUNC_RANGE();
+  if (jit == use_jit::YES || get_context().use_jit()) {
+    try {
+      return detail::xxhash_64_jit(input, seed, stream, mr);
+    } catch (data_type_error const&) {
+      // Unsupported JIT types and layouts use the native implementation.
+    }
+  }
   return detail::xxhash_64(input, seed, stream, mr);
 }
 

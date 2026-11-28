@@ -476,6 +476,11 @@ rtcx_embed_includes(
   cudf/cpp/src/transform/jit INCLUDE_DIRECTORIES cudf/cpp/src
 )
 
+rtcx_embed_includes(
+  cudf_cuda_embed SOURCE_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/row_operator/jit DEST_DIRECTORY
+  cudf/cpp/src/row_operator/jit INCLUDE_DIRECTORIES cudf/cpp/src
+)
+
 get_target_property(LIBCUDACXX_RAW_INCLUDE_DIRS CCCL::libcudacxx INTERFACE_INCLUDE_DIRECTORIES)
 
 foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
@@ -625,6 +630,17 @@ endfunction()
 
 precompile_fixed_width_kernel_fragments()
 precompile_string_kernel_fragments()
+
+# Function-dispatch fragments retain device functions as LTO IR so nvJitLink can optimize the schema
+# wrapper and type-specific leaves together at runtime.
+foreach(category IN ITEMS murmurhash3_x86_32 spark_murmurhash3_x86_32 murmurhash3_x64_128 xxhash_32
+                          xxhash_64 hash_combine
+)
+  add_fragment(
+    cudf_fragments FRAGMENT row_operator_${category}_lto_ir SOURCE
+    src/row_operator/jit/fragments/${category}.cu
+  )
+endforeach()
 
 rtcx_embed(cudf_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 
@@ -1045,6 +1061,8 @@ add_library(
   src/rolling/rolling.cpp
   src/round/round.cu
   src/row_operator/primitive_row_operators.cu
+  src/row_operator/reflection.cpp
+  src/row_operator/row_operator_jit.cu
   src/row_operator/row_operators.cu
   src/runtime/context.cpp
   src/scalar/scalar.cpp

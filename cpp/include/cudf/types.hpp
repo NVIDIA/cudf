@@ -103,6 +103,16 @@ enum class order : bool {
 };
 
 /**
+ * @brief Requests runtime specialization for an operation that supports JIT execution.
+ *
+ * `LIBCUDF_JIT_ENABLED=1` also enables JIT execution, including when `NO` is passed.
+ */
+enum class use_jit : bool {
+  NO,  ///< Use the normal implementation unless JIT is enabled globally
+  YES  ///< Use the JIT implementation
+};
+
+/**
  * @brief Enum to specify whether to include nulls or exclude nulls
  */
 enum class null_policy : bool {

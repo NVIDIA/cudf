@@ -7,11 +7,16 @@
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/table_utilities.hpp>
+#include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/copying.hpp>
+#include <cudf/dictionary/encode.hpp>
 #include <cudf/hashing.hpp>
 
+#include <array>
 #include <limits>
+#include <type_traits>
 
 using NumericTypesNoBools =
   cudf::test::Concat<cudf::test::IntegralTypesNotBool, cudf::test::FloatingPointTypes>;
@@ -19,30 +24,38 @@ using NumericTypesNoBools =
 template <typename T>
 class MurmurHash3_x64_128_TestTyped : public cudf::test::BaseFixture {};
 
-TYPED_TEST_SUITE(MurmurHash3_x64_128_TestTyped, NumericTypesNoBools);
+using NumericParams = cudf::test::CrossProduct<
+  NumericTypesNoBools,
+  cudf::test::Types<std::integral_constant<cudf::use_jit, cudf::use_jit::NO>,
+                    std::integral_constant<cudf::use_jit, cudf::use_jit::YES>>>;
+
+TYPED_TEST_SUITE(MurmurHash3_x64_128_TestTyped, NumericParams);
 
 TYPED_TEST(MurmurHash3_x64_128_TestTyped, TestNumeric)
 {
-  using T   = TypeParam;
-  auto col1 = cudf::test::fixed_width_column_wrapper<T, int32_t>{
+  using T            = cudf::test::GetType<TypeParam, 0>;
+  constexpr auto jit = cudf::test::GetType<TypeParam, 1>::value;
+  auto col1          = cudf::test::fixed_width_column_wrapper<T, int32_t>{
     {-1, -1, 0, 2, 22, 0, 11, 12, 116, 32, 0, 42, 7, 62, 1, -22, 0, 0},
     {1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}};
   auto col2 = cudf::test::fixed_width_column_wrapper<T, int32_t>{
     {-1, -1, 0, 2, 22, 1, 11, 12, 116, 32, 0, 42, 7, 62, 1, -22, 1, -22},
     {1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}};
 
-  auto output1 = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}));
-  auto output2 = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col2}));
+  auto output1 =
+    cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, jit);
+  auto output2 =
+    cudf::hashing::murmurhash3_x64_128(cudf::table_view({col2}), cudf::DEFAULT_HASH_SEED, jit);
   CUDF_TEST_EXPECT_TABLES_EQUAL(output1->view(), output2->view());
 
-  output1 = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}), 7);
-  output2 = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col2}), 7);
+  output1 = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}), 7, jit);
+  output2 = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col2}), 7, jit);
   CUDF_TEST_EXPECT_TABLES_EQUAL(output1->view(), output2->view());
 }
 
-class MurmurHash3_x64_128_Test : public cudf::test::BaseFixture {};
+class MurmurHash3_x64_128_Test : public cudf::test::BaseFixtureWithParam<cudf::use_jit> {};
 
-TEST_F(MurmurHash3_x64_128_Test, StringType)
+TEST_P(MurmurHash3_x64_128_Test, StringType)
 {
   auto col1 = cudf::test::strings_column_wrapper(
     {"The",
@@ -61,7 +74,8 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
      "0123456789",
      "{}|:<>?,./;[]=-"});
 
-  auto output = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}));
+  auto output = cudf::hashing::murmurhash3_x64_128(
+    cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, GetParam());
   // these were generated using the CPU compiled
   // https://github.com/aappleby/smhasher/blob/master/src/MurmurHash3.cpp
   auto expected = cudf::test::fixed_width_column_wrapper<uint64_t>({3481043174314896794ul,
@@ -83,7 +97,7 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
 
   auto const seed = uint64_t{7};
 
-  output   = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}), seed);
+  output   = cudf::hashing::murmurhash3_x64_128(cudf::table_view({col1}), seed, GetParam());
   expected = cudf::test::fixed_width_column_wrapper<uint64_t>({5091211404759866125ul,
                                                                12948345853121693662ul,
                                                                14974420008081159223ul,
@@ -111,7 +125,7 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
                                         "0123456789abcdef0123456789abcdef",
                                         "0123456789abcdef0123456789abcdef0"});
   auto const boundary_output = cudf::hashing::murmurhash3_x64_128(
-    cudf::table_view{{boundary_input}}, uint64_t{0x123456789abcdef0});
+    cudf::table_view{{boundary_input}}, uint64_t{0x123456789abcdef0}, GetParam());
 
   // Reference values from the original cuco MurmurHash3 x64 implementation.
   cudf::test::fixed_width_column_wrapper<uint64_t> const expected_low({12670565569421277103ul,
@@ -134,7 +148,7 @@ TEST_F(MurmurHash3_x64_128_Test, StringType)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(boundary_output->view().column(1), expected_high);
 }
 
-TEST_F(MurmurHash3_x64_128_Test, IntegerType)
+TEST_P(MurmurHash3_x64_128_Test, IntegerType)
 {
   auto constexpr seed = uint64_t{0x123456789abcdef0};
   auto constexpr min  = std::numeric_limits<int32_t>::min();
@@ -142,7 +156,8 @@ TEST_F(MurmurHash3_x64_128_Test, IntegerType)
 
   // Reference values from a CPU implementation of MurmurHash3 x64 128 with a 64-bit seed.
   cudf::test::fixed_width_column_wrapper<int32_t> const int32_input({0, 1, -1, 42, min, max});
-  auto output = cudf::hashing::murmurhash3_x64_128(cudf::table_view{{int32_input}}, seed);
+  auto output =
+    cudf::hashing::murmurhash3_x64_128(cudf::table_view{{int32_input}}, seed, GetParam());
   cudf::test::fixed_width_column_wrapper<uint64_t> const int32_low({16171072276759621859ul,
                                                                     17262603546401455210ul,
                                                                     12711963030754346615ul,
@@ -159,7 +174,7 @@ TEST_F(MurmurHash3_x64_128_Test, IntegerType)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), int32_high);
 
   cudf::test::fixed_width_column_wrapper<int64_t> const int64_input({0, 1, -1, 42, min, max});
-  output = cudf::hashing::murmurhash3_x64_128(cudf::table_view{{int64_input}}, seed);
+  output = cudf::hashing::murmurhash3_x64_128(cudf::table_view{{int64_input}}, seed, GetParam());
   cudf::test::fixed_width_column_wrapper<uint64_t> const int64_low({8446848690776147849ul,
                                                                     2177231992012963529ul,
                                                                     5774400613906242884ul,
@@ -176,10 +191,36 @@ TEST_F(MurmurHash3_x64_128_Test, IntegerType)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), int64_high);
 }
 
-TEST_F(MurmurHash3_x64_128_Test, ZeroColumns)
+TEST_P(MurmurHash3_x64_128_Test, DictionaryIndices)
+{
+  for (bool const has_nulls : {false, true}) {
+    SCOPED_TRACE(has_nulls);
+    auto const validity        = std::array{true, true, true, !has_nulls};
+    auto const parent_validity = std::array{true, true, true, true, !has_nulls};
+    cudf::test::fixed_width_column_wrapper<int64_t> values{{100, 100, 200, 300, 100},
+                                                           parent_validity.begin()};
+    cudf::test::fixed_width_column_wrapper<int32_t> indices{{0, 1, 2, 0}, validity.begin()};
+    for (auto const type :
+         {cudf::type_id::INT8, cudf::type_id::INT16, cudf::type_id::INT32, cudf::type_id::INT64}) {
+      SCOPED_TRACE(static_cast<int>(type));
+      auto const encoded = cudf::dictionary::encode(values, cudf::data_type{type});
+      auto const input   = cudf::slice(encoded->view(), {1, 5}).front();
+      for (uint64_t const seed : {uint64_t{0}, uint64_t{0x123456789abcdef0}}) {
+        SCOPED_TRACE(seed);
+        auto const expected =
+          cudf::hashing::murmurhash3_x64_128(cudf::table_view{{indices}}, seed, cudf::use_jit::NO);
+        auto const result =
+          cudf::hashing::murmurhash3_x64_128(cudf::table_view{{input}}, seed, GetParam());
+        CUDF_TEST_EXPECT_TABLES_EQUAL(expected->view(), result->view());
+      }
+    }
+  }
+}
+
+TEST_P(MurmurHash3_x64_128_Test, ZeroColumns)
 {
   auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
-  auto const output = cudf::hashing::murmurhash3_x64_128(input, 42);
+  auto const output = cudf::hashing::murmurhash3_x64_128(input, 42, GetParam());
 
   // With no columns to hash, every row's 128-bit result is the initial {seed, 0}.
   cudf::test::fixed_width_column_wrapper<uint64_t> const expected1({42, 42, 42, 42, 42});
@@ -187,3 +228,10 @@ TEST_F(MurmurHash3_x64_128_Test, ZeroColumns)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(0), expected1);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view().column(1), expected2);
 }
+
+INSTANTIATE_TEST_SUITE_P(Execution,
+                         MurmurHash3_x64_128_Test,
+                         ::testing::Values(cudf::use_jit::NO, cudf::use_jit::YES),
+                         [](auto const& info) {
+                           return info.param == cudf::use_jit::YES ? "Jit" : "Aot";
+                         });

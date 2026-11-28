@@ -10,13 +10,13 @@
 
 #include <cudf/hashing.hpp>
 
-class XXHash_32_Test : public cudf::test::BaseFixture {};
+class XXHash_32_Test : public cudf::test::BaseFixtureWithParam<cudf::use_jit> {};
 
-TEST_F(XXHash_32_Test, TestInteger)
+TEST_P(XXHash_32_Test, TestInteger)
 {
   auto col1           = cudf::test::fixed_width_column_wrapper<int32_t>{{0, 42, 825}};
   auto constexpr seed = 0u;
-  auto const output   = cudf::hashing::xxhash_32(cudf::table_view({col1}), seed);
+  auto const output   = cudf::hashing::xxhash_32(cudf::table_view({col1}), seed, GetParam());
 
   // Expected results were generated with the reference implementation:
   // https://github.com/Cyan4973/xxHash/blob/dev/xxhash.h
@@ -25,12 +25,12 @@ TEST_F(XXHash_32_Test, TestInteger)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_32_Test, TestDouble)
+TEST_P(XXHash_32_Test, TestDouble)
 {
   auto col1           = cudf::test::fixed_width_column_wrapper<double>{{-8., 25., 90.}};
   auto constexpr seed = 42u;
 
-  auto const output = cudf::hashing::xxhash_32(cudf::table_view({col1}), seed);
+  auto const output = cudf::hashing::xxhash_32(cudf::table_view({col1}), seed, GetParam());
 
   // Expected results were generated with the reference implementation:
   // https://github.com/Cyan4973/xxHash/blob/dev/xxhash.h
@@ -40,12 +40,12 @@ TEST_F(XXHash_32_Test, TestDouble)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_32_Test, StringType)
+TEST_P(XXHash_32_Test, StringType)
 {
   auto col1           = cudf::test::strings_column_wrapper({"I", "am", "AI"});
   auto constexpr seed = 825u;
 
-  auto output = cudf::hashing::xxhash_32(cudf::table_view({col1}), seed);
+  auto output = cudf::hashing::xxhash_32(cudf::table_view({col1}), seed, GetParam());
 
   // Expected results were generated with the reference implementation:
   // https://github.com/Cyan4973/xxHash/blob/dev/xxhash.h
@@ -55,10 +55,17 @@ TEST_F(XXHash_32_Test, StringType)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_32_Test, ZeroColumns)
+TEST_P(XXHash_32_Test, ZeroColumns)
 {
   auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
-  auto const output = cudf::hashing::xxhash_32(input, 42);
+  auto const output = cudf::hashing::xxhash_32(input, 42, GetParam());
   cudf::test::fixed_width_column_wrapper<uint32_t> const expected({42u, 42u, 42u, 42u, 42u});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
+
+INSTANTIATE_TEST_SUITE_P(Execution,
+                         XXHash_32_Test,
+                         ::testing::Values(cudf::use_jit::NO, cudf::use_jit::YES),
+                         [](auto const& info) {
+                           return info.param == cudf::use_jit::YES ? "Jit" : "Aot";
+                         });

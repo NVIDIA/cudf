@@ -6,7 +6,12 @@
 #include <benchmarks/common/generate_input.hpp>
 #include <benchmarks/common/memory_stats.hpp>
 
+#include <cudf/column/column_factories.hpp>
+#include <cudf/dictionary/dictionary_factories.hpp>
+#include <cudf/dictionary/encode.hpp>
+#include <cudf/filling.hpp>
 #include <cudf/hashing.hpp>
+#include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -23,7 +28,18 @@
 
 namespace {
 
-enum class column_type { UNKNOWN, MIXED, INT64, DOUBLE, DECIMAL128, STRING, LIST, STRUCT };
+enum class column_type {
+  UNKNOWN,
+  MIXED,
+  INT64,
+  DOUBLE,
+  DECIMAL128,
+  STRING,
+  LIST,
+  STRUCT,
+  DICTIONARY,
+  DICTIONARY_LIST
+};
 
 constexpr auto column_types = std::to_array<std::pair<column_type, std::string_view>>({
   {column_type::MIXED, "mixed"},
@@ -33,6 +49,8 @@ constexpr auto column_types = std::to_array<std::pair<column_type, std::string_v
   {column_type::STRING, "string"},
   {column_type::LIST, "list"},
   {column_type::STRUCT, "struct"},
+  {column_type::DICTIONARY, "dictionary"},
+  {column_type::DICTIONARY_LIST, "dictionary_list"},
 });
 
 [[nodiscard]] constexpr column_type parse_column_type(std::string_view name)
@@ -64,9 +82,30 @@ constexpr auto column_types = std::to_array<std::pair<column_type, std::string_v
   std::vector<std::string> result;
   result.reserve(column_types.size());
   for (auto const& type : column_types) {
+    // Preserve the existing Spark sweep; dictionary cases belong to MurmurHash benchmarks.
+    if (type.first == column_type::DICTIONARY || type.first == column_type::DICTIONARY_LIST) {
+      continue;
+    }
     result.emplace_back(type.second);
   }
   return result;
+}
+
+template <typename Hash>
+void measure_hash(nvbench::state& state, cuda::stream_ref stream, cudf::use_jit jit, Hash hash)
+{
+  // Keep JIT compilation, linking, and warmup outside timing and allocation statistics.
+  if (jit == cudf::use_jit::YES) {
+    {
+      auto result = hash();
+    }
+    stream.sync();
+  }
+
+  auto const mem_stats_logger = cudf::memory_stats_logger();
+  state.exec(nvbench::exec_tag::sync, [&](nvbench::launch&) { auto result = hash(); });
+  state.add_buffer_size(
+    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
 }  // namespace
@@ -79,7 +118,15 @@ static void bench_hash(nvbench::state& state)
   // disable null bitmask if probability is exactly 0.0
   bool const no_nulls  = nulls == 0.0;
   auto const hash_name = state.get_string("hash_name");
+  auto hash            = std::string_view{hash_name};
+  auto const is_jit    = hash.ends_with("_jit");
+  if (is_jit) { hash.remove_suffix(4); }
+  auto const jit       = is_jit ? cudf::use_jit::YES : cudf::use_jit::NO;
   auto const data_type = parse_column_type(state.get_string("data_type"));
+  if (data_type == column_type::DICTIONARY_LIST && !is_jit) {
+    state.skip("AOT hashing does not support dictionary columns with list keys");
+    return;
+  }
 
   auto builder =
     data_profile_builder().null_probability(no_nulls ? std::nullopt : std::optional<double>{nulls});
@@ -96,7 +143,12 @@ static void bench_hash(nvbench::state& state)
       case column_type::STRING: return cycle_dtypes({cudf::type_id::STRING}, num_cols);
       case column_type::LIST:
         builder.list_depth(1).list_type(cudf::type_id::INT64);
+        if (state.get_benchmark().get_name() == "murmurhash_nested") {
+          builder.distribution(cudf::type_id::LIST, distribution_id::UNIFORM, 0, 8);
+        }
         return cycle_dtypes({cudf::type_id::LIST}, num_cols);
+      case column_type::DICTIONARY:
+      case column_type::DICTIONARY_LIST: return cycle_dtypes({cudf::type_id::INT64}, num_cols);
       case column_type::STRUCT: {
         auto const struct_types =
           std::vector<cudf::type_id>{cudf::type_id::INT64, cudf::type_id::FLOAT64};
@@ -112,7 +164,42 @@ static void bench_hash(nvbench::state& state)
   }
 
   data_profile const profile = builder;
-  auto const data            = create_random_table(types, row_count{num_rows}, profile);
+  auto const data            = [&]() {
+    if (data_type != column_type::DICTIONARY && data_type != column_type::DICTIONARY_LIST) {
+      return create_random_table(types, row_count{num_rows}, profile);
+    }
+    std::vector<std::unique_ptr<cudf::column>> columns;
+    columns.reserve(num_cols);
+    for (cudf::size_type i = 0; i < num_cols; ++i) {
+      if (data_type == column_type::DICTIONARY) {
+        auto values =
+          create_random_column(cudf::type_id::INT64, row_count{num_rows}, profile, i + 1);
+        columns.push_back(
+          cudf::dictionary::encode(values->view(), cudf::data_type{cudf::type_id::INT32}));
+      } else {
+        // Sorted, unique list keys: [0,1,2,3], [4,5,6,7], ... . Indices carry parent nulls.
+        constexpr cudf::size_type num_keys = 2048;
+        constexpr cudf::size_type length   = 4;
+        auto offsets                       = cudf::sequence(
+          num_keys + 1, cudf::numeric_scalar<int32_t>{0}, cudf::numeric_scalar<int32_t>{length});
+        auto elements = cudf::sequence(num_keys * length, cudf::numeric_scalar<int64_t>{0});
+        auto keys =
+          cudf::make_lists_column(num_keys,
+                                  std::move(offsets),
+                                  std::move(elements),
+                                  0,
+                                  cudf::create_null_mask(0, cudf::mask_state::UNALLOCATED));
+        auto index_profile =
+          data_profile_builder()
+            .null_probability(no_nulls ? std::nullopt : std::optional<double>{nulls})
+            .distribution(cudf::type_id::INT32, distribution_id::UNIFORM, 0, num_keys - 1);
+        auto indices =
+          create_random_column(cudf::type_id::INT32, row_count{num_rows}, index_profile, i + 1);
+        columns.push_back(cudf::make_dictionary_column(std::move(keys), std::move(indices)));
+      }
+    }
+    return std::make_unique<cudf::table>(std::move(columns));
+  }();
 
   auto stream = cudf::get_default_stream();
   state.set_cuda_stream(nvbench::make_cuda_stream_view(stream.get()));
@@ -120,65 +207,62 @@ static void bench_hash(nvbench::state& state)
   state.add_global_memory_reads<nvbench::int8_t>(data->alloc_size());
   // memory written depends on used hash
 
-  auto const mem_stats_logger = cudf::memory_stats_logger();
-
-  if (hash_name == "murmurhash3_x86_32") {
+  if (hash == "murmurhash3_x86_32") {
     state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
-
-    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      auto result = cudf::hashing::murmurhash3_x86_32(data->view());
+    measure_hash(state, stream, jit, [&] {
+      return cudf::hashing::murmurhash3_x86_32(data->view(), cudf::DEFAULT_HASH_SEED, jit, stream);
     });
-  } else if (hash_name == "spark_murmurhash3_x86_32") {
+  } else if (hash == "spark_murmurhash3_x86_32") {
     state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
-
-    state.exec(nvbench::exec_tag::sync, [&](nvbench::launch& launch) {
-      auto result = cudf::hashing::spark_murmurhash3_x86_32(data->view());
+    measure_hash(state, stream, jit, [&] {
+      return cudf::hashing::spark_murmurhash3_x86_32(
+        data->view(), cudf::DEFAULT_HASH_SEED, jit, stream);
     });
-  } else if (hash_name == "md5") {
-    // md5 creates a 32-byte string
+  } else if (hash == "murmurhash3_x64_128") {
+    state.add_global_memory_writes<nvbench::uint64_t>(2ULL * num_rows);
+    measure_hash(state, stream, jit, [&] {
+      return cudf::hashing::murmurhash3_x64_128(data->view(), cudf::DEFAULT_HASH_SEED, jit, stream);
+    });
+  } else if (hash == "xxhash_32") {
+    state.add_global_memory_writes<nvbench::uint32_t>(num_rows);
+    measure_hash(state, stream, jit, [&] {
+      return cudf::hashing::xxhash_32(data->view(), cudf::DEFAULT_HASH_SEED, jit, stream);
+    });
+  } else if (hash == "xxhash_64") {
+    state.add_global_memory_writes<nvbench::uint64_t>(num_rows);
+    measure_hash(state, stream, jit, [&] {
+      return cudf::hashing::xxhash_64(data->view(), cudf::DEFAULT_HASH_SEED, jit, stream);
+    });
+  } else if (hash == "md5") {
+    // md5 creates a 32-byte string.
     state.add_global_memory_writes<nvbench::int8_t>(32L * num_rows);
-
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { auto result = cudf::hashing::md5(data->view()); });
-  } else if (hash_name == "sha1") {
-    // sha1 creates a 40-byte string
+    measure_hash(state, stream, jit, [&] { return cudf::hashing::md5(data->view(), stream); });
+  } else if (hash == "sha1") {
+    // sha1 creates a 40-byte string.
     state.add_global_memory_writes<nvbench::int8_t>(40L * num_rows);
-
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { auto result = cudf::hashing::sha1(data->view()); });
-  } else if (hash_name == "sha224") {
-    // sha224 creates a 56-byte string
+    measure_hash(state, stream, jit, [&] { return cudf::hashing::sha1(data->view(), stream); });
+  } else if (hash == "sha224") {
+    // sha224 creates a 56-byte string.
     state.add_global_memory_writes<nvbench::int8_t>(56L * num_rows);
-
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { auto result = cudf::hashing::sha224(data->view()); });
-  } else if (hash_name == "sha256") {
-    // sha256 creates a 64-byte string
+    measure_hash(state, stream, jit, [&] { return cudf::hashing::sha224(data->view(), stream); });
+  } else if (hash == "sha256") {
+    // sha256 creates a 64-byte string.
     state.add_global_memory_writes<nvbench::int8_t>(64L * num_rows);
-
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { auto result = cudf::hashing::sha256(data->view()); });
-  } else if (hash_name == "sha384") {
-    // sha384 creates a 96-byte string
+    measure_hash(state, stream, jit, [&] { return cudf::hashing::sha256(data->view(), stream); });
+  } else if (hash == "sha384") {
+    // sha384 creates a 96-byte string.
     state.add_global_memory_writes<nvbench::int8_t>(96L * num_rows);
-
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { auto result = cudf::hashing::sha384(data->view()); });
-  } else if (hash_name == "sha512") {
-    // sha512 creates a 128-byte string
+    measure_hash(state, stream, jit, [&] { return cudf::hashing::sha384(data->view(), stream); });
+  } else if (hash == "sha512") {
+    // sha512 creates a 128-byte string.
     state.add_global_memory_writes<nvbench::int8_t>(128L * num_rows);
-
-    state.exec(nvbench::exec_tag::sync,
-               [&](nvbench::launch& launch) { auto result = cudf::hashing::sha512(data->view()); });
+    measure_hash(state, stream, jit, [&] { return cudf::hashing::sha512(data->view(), stream); });
   } else {
     state.skip(hash_name + ": unknown hash name");
-    return;
   }
-
-  state.add_buffer_size(
-    mem_stats_logger.peak_memory_usage(), "peak_memory_usage", "peak_memory_usage");
 }
 
+// Leave LIBCUDF_JIT_ENABLED unset when comparing native and JIT execution.
 NVBENCH_BENCH(bench_hash)
   .set_name("hashing")
   .add_int64_axis("num_rows", {65536, 16777216})
@@ -186,14 +270,39 @@ NVBENCH_BENCH(bench_hash)
   .add_int64_axis("num_cols", {2, 64})
   .add_float64_axis("nulls", {0.0, 0.1})
   .add_string_axis("hash_name",
-                   {"murmurhash3_x86_32", "md5", "sha1", "sha224", "sha256", "sha384", "sha512"});
+                   {"murmurhash3_x86_32",
+                    "murmurhash3_x86_32_jit",
+                    "murmurhash3_x64_128",
+                    "murmurhash3_x64_128_jit",
+                    "xxhash_32",
+                    "xxhash_32_jit",
+                    "xxhash_64",
+                    "xxhash_64_jit",
+                    "md5",
+                    "sha1",
+                    "sha224",
+                    "sha256",
+                    "sha384",
+                    "sha512"});
 
 // Register the Spark type sweep separately so the other hashers keep their historical
-// mixed INT64/STRING workload.
+// mixed INT64/STRING workload. STRUCT cases exercise the native fallback for JIT requests.
 NVBENCH_BENCH(bench_hash)
   .set_name("spark_hashing")
   .add_int64_axis("num_rows", {65536, 16777216})
   .add_string_axis("data_type", column_type_names())
   .add_int64_axis("num_cols", {2, 64})
   .add_float64_axis("nulls", {0.0, 0.1})
-  .add_string_axis("hash_name", {"spark_murmurhash3_x86_32"});
+  .add_string_axis("hash_name", {"spark_murmurhash3_x86_32", "spark_murmurhash3_x86_32_jit"});
+
+// INT64 lists (uniform lengths 0..8), dictionary<INT64> with INT32 indices, and
+// dictionary<list<INT64>> with 2,048 four-element keys and INT32 indices.
+NVBENCH_BENCH(bench_hash)
+  .set_name("murmurhash_nested")
+  .add_int64_axis("num_rows", {65536, 16777216})
+  .add_string_axis(
+    "data_type",
+    column_type_names({column_type::LIST, column_type::DICTIONARY, column_type::DICTIONARY_LIST}))
+  .add_int64_axis("num_cols", {2, 16})
+  .add_float64_axis("nulls", {0.0, 0.1})
+  .add_string_axis("hash_name", {"murmurhash3_x86_32", "murmurhash3_x86_32_jit"});

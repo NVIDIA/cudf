@@ -79,7 +79,7 @@ std::unique_ptr<column> sha512(table_view const& input,
                                cudf::memory_resources mr);
 
 std::unique_ptr<column> xxhash_32(table_view const& input,
-                                  uint64_t seed,
+                                  uint32_t seed,
                                   cuda::stream_ref,
                                   cudf::memory_resources mr);
 
@@ -87,6 +87,31 @@ std::unique_ptr<column> xxhash_64(table_view const& input,
                                   uint64_t seed,
                                   cuda::stream_ref,
                                   cudf::memory_resources mr);
+
+std::unique_ptr<column> murmurhash3_x86_32_jit(table_view const& input,
+                                               uint32_t seed,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr);
+
+std::unique_ptr<column> spark_murmurhash3_x86_32_jit(table_view const& input,
+                                                     uint32_t seed,
+                                                     cuda::stream_ref stream,
+                                                     cudf::memory_resources mr);
+
+std::unique_ptr<table> murmurhash3_x64_128_jit(table_view const& input,
+                                               uint64_t seed,
+                                               cuda::stream_ref stream,
+                                               cudf::memory_resources mr);
+
+std::unique_ptr<column> xxhash_32_jit(table_view const& input,
+                                      uint32_t seed,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr);
+
+std::unique_ptr<column> xxhash_64_jit(table_view const& input,
+                                      uint64_t seed,
+                                      cuda::stream_ref stream,
+                                      cudf::memory_resources mr);
 
 /* SPDX-SnippetBegin
  * SPDX-SnippetCopyrightText: Copyright 2005-2014 Daniel James.

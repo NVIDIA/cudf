@@ -16,9 +16,9 @@
 #include <cstdint>
 #include <limits>
 
-class HashTest : public cudf::test::BaseFixture {};
+class HashTest : public cudf::test::BaseFixtureWithParam<cudf::use_jit> {};
 
-TEST_F(HashTest, MultiValue)
+TEST_P(HashTest, MultiValue)
 {
   cudf::test::strings_column_wrapper const strings_col(
     {"",
@@ -44,10 +44,10 @@ TEST_F(HashTest, MultiValue)
   auto const input = cudf::table_view({strings_col, ints_col, bool_col, secs_col});
 
   auto const output = cudf::hashing::murmurhash3_x86_32(
-    input, cudf::DEFAULT_HASH_SEED, cudf::test::get_default_stream());
+    input, cudf::DEFAULT_HASH_SEED, GetParam(), cudf::test::get_default_stream());
 }
 
-TEST_F(HashTest, SparkMurmurMultiValue)
+TEST_P(HashTest, SparkMurmurMultiValue)
 {
   // Covers the types that take a Spark specific path, which the shared `MultiValue` case above
   // does not reach: decimal128, floating point, and nested columns.
@@ -73,7 +73,19 @@ TEST_F(HashTest, SparkMurmurMultiValue)
     cudf::table_view({strings_col, longs_col, doubles_col, decimal128_col, lists_col, structs_col});
 
   auto const output = cudf::hashing::spark_murmurhash3_x86_32(
-    input, cudf::DEFAULT_HASH_SEED, cudf::test::get_default_stream());
+    input, cudf::DEFAULT_HASH_SEED, GetParam(), cudf::test::get_default_stream());
+
+  auto const supported_input =
+    cudf::table_view({strings_col, longs_col, doubles_col, decimal128_col, lists_col});
+  auto const supported_output = cudf::hashing::spark_murmurhash3_x86_32(
+    supported_input, cudf::DEFAULT_HASH_SEED, GetParam(), cudf::test::get_default_stream());
 }
+
+INSTANTIATE_TEST_SUITE_P(Execution,
+                         HashTest,
+                         ::testing::Values(cudf::use_jit::NO, cudf::use_jit::YES),
+                         [](auto const& info) {
+                           return info.param == cudf::use_jit::YES ? "Jit" : "Aot";
+                         });
 
 CUDF_TEST_PROGRAM_MAIN()

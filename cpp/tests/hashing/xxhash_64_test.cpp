@@ -6,42 +6,51 @@
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_utilities.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/type_list_utilities.hpp>
 #include <cudf_test/type_lists.hpp>
 
 #include <cudf/hashing.hpp>
 
+#include <type_traits>
+
 using NumericTypesNoBools =
   cudf::test::Concat<cudf::test::IntegralTypesNotBool, cudf::test::FloatingPointTypes>;
+
+using HashExecutions = cudf::test::Types<std::integral_constant<cudf::use_jit, cudf::use_jit::NO>,
+                                         std::integral_constant<cudf::use_jit, cudf::use_jit::YES>>;
 
 template <typename T>
 class XXHash_64_TestTyped : public cudf::test::BaseFixture {};
 
-TYPED_TEST_SUITE(XXHash_64_TestTyped, NumericTypesNoBools);
+using XXHashNumericParams = cudf::test::CrossProduct<NumericTypesNoBools, HashExecutions>;
+
+TYPED_TEST_SUITE(XXHash_64_TestTyped, XXHashNumericParams);
 
 TYPED_TEST(XXHash_64_TestTyped, TestAllNumeric)
 {
-  using T   = TypeParam;
-  auto col1 = cudf::test::fixed_width_column_wrapper<T, int32_t>{
+  using T            = cudf::test::GetType<TypeParam, 0>;
+  constexpr auto jit = cudf::test::GetType<TypeParam, 1>::value;
+  auto col1          = cudf::test::fixed_width_column_wrapper<T, int32_t>{
     {-1, -1, 0, 2, 22, 0, 11, 12, 116, 32, 0, 42, 7, 62, 1, -22, 0, 0},
     {1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}};
   auto col2 = cudf::test::fixed_width_column_wrapper<T, int32_t>{
     {-1, -1, 0, 2, 22, 1, 11, 12, 116, 32, 0, 42, 7, 62, 1, -22, 1, -22},
     {1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0}};
 
-  auto output1 = cudf::hashing::xxhash_64(cudf::table_view({col1}));
-  auto output2 = cudf::hashing::xxhash_64(cudf::table_view({col2}));
+  auto output1 = cudf::hashing::xxhash_64(cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, jit);
+  auto output2 = cudf::hashing::xxhash_64(cudf::table_view({col2}), cudf::DEFAULT_HASH_SEED, jit);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output1->view(), output2->view());
 
-  constexpr uint64_t seed = 7;
+  constexpr uint64_t seed = 0xfedcba9876543210;
 
-  output1 = cudf::hashing::xxhash_64(cudf::table_view({col1}), seed);
-  output2 = cudf::hashing::xxhash_64(cudf::table_view({col2}), seed);
+  output1 = cudf::hashing::xxhash_64(cudf::table_view({col1}), seed, jit);
+  output2 = cudf::hashing::xxhash_64(cudf::table_view({col2}), seed, jit);
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output1->view(), output2->view());
 }
 
-class XXHash_64_Test : public cudf::test::BaseFixture {};
+class XXHash_64_Test : public cudf::test::BaseFixtureWithParam<cudf::use_jit> {};
 
-TEST_F(XXHash_64_Test, TestInteger)
+TEST_P(XXHash_64_Test, TestInteger)
 {
   auto col1 =
     cudf::test::fixed_width_column_wrapper<int32_t>{{-127,
@@ -53,7 +62,8 @@ TEST_F(XXHash_64_Test, TestInteger)
                                                      std::numeric_limits<int32_t>::min(),
                                                      std::numeric_limits<int32_t>::lowest()}};
 
-  auto const output = cudf::hashing::xxhash_64(cudf::table_view({col1}));
+  auto const output =
+    cudf::hashing::xxhash_64(cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, GetParam());
 
   // these were generated using the CPU compiled version of the cuco xxhash_64 source
   // https://github.com/NVIDIA/cuCollections/blob/dev/include/cuco/detail/hash_functions/xxhash.cuh
@@ -68,7 +78,7 @@ TEST_F(XXHash_64_Test, TestInteger)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_64_Test, TestDouble)
+TEST_P(XXHash_64_Test, TestDouble)
 {
   auto col1 =
     cudf::test::fixed_width_column_wrapper<double>{{-127.,
@@ -83,7 +93,8 @@ TEST_F(XXHash_64_Test, TestDouble)
                                                     std::numeric_limits<double>::min(),
                                                     std::numeric_limits<double>::lowest()}};
 
-  auto const output = cudf::hashing::xxhash_64(cudf::table_view({col1}));
+  auto const output =
+    cudf::hashing::xxhash_64(cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, GetParam());
 
   // these were generated using the CPU compiled version of the cuco xxhash_64 source
   // https://github.com/NVIDIA/cuCollections/blob/dev/include/cuco/detail/hash_functions/xxhash.cuh
@@ -101,7 +112,7 @@ TEST_F(XXHash_64_Test, TestDouble)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_64_Test, StringType)
+TEST_P(XXHash_64_Test, StringType)
 {
   // clang-format off
   auto col1 = cudf::test::strings_column_wrapper(
@@ -122,7 +133,8 @@ TEST_F(XXHash_64_Test, StringType)
      "{}|:<>?,./;[]=-"});
   // clang-format on
 
-  auto output = cudf::hashing::xxhash_64(cudf::table_view({col1}));
+  auto output =
+    cudf::hashing::xxhash_64(cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, GetParam());
 
   // these were generated using the CPU compiled version of the cuco xxhash_64 source
   // https://github.com/NVIDIA/cuCollections/blob/dev/include/cuco/detail/hash_functions/xxhash.cuh
@@ -145,11 +157,12 @@ TEST_F(XXHash_64_Test, StringType)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_64_Test, TestFixedPoint)
+TEST_P(XXHash_64_Test, TestFixedPoint)
 {
   auto const col1 = cudf::test::fixed_point_column_wrapper<int32_t>(
     {0, 100, -100, -999999999, 999999999}, numeric::scale_type{-3});
-  auto const output = cudf::hashing::xxhash_64(cudf::table_view({col1}));
+  auto const output =
+    cudf::hashing::xxhash_64(cudf::table_view({col1}), cudf::DEFAULT_HASH_SEED, GetParam());
 
   // these were generated using the CPU compiled version of the cuco xxhash_64 source
   // https://github.com/NVIDIA/cuCollections/blob/dev/include/cuco/detail/hash_functions/xxhash.cuh
@@ -162,10 +175,17 @@ TEST_F(XXHash_64_Test, TestFixedPoint)
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
 
-TEST_F(XXHash_64_Test, ZeroColumns)
+TEST_P(XXHash_64_Test, ZeroColumns)
 {
   auto const input  = cudf::table_view{std::vector<cudf::column_view>{}, 5};
-  auto const output = cudf::hashing::xxhash_64(input, 42);
+  auto const output = cudf::hashing::xxhash_64(input, 42, GetParam());
   cudf::test::fixed_width_column_wrapper<uint64_t> const expected({42ul, 42ul, 42ul, 42ul, 42ul});
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(output->view(), expected);
 }
+
+INSTANTIATE_TEST_SUITE_P(Execution,
+                         XXHash_64_Test,
+                         ::testing::Values(cudf::use_jit::NO, cudf::use_jit::YES),
+                         [](auto const& info) {
+                           return info.param == cudf::use_jit::YES ? "Jit" : "Aot";
+                         });

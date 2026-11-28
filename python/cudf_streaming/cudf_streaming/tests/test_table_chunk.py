@@ -21,6 +21,7 @@ from rapidsmpf.cuda_stream import is_equal_streams
 from rapidsmpf.memory.buffer import MemoryType
 from rapidsmpf.memory.content_description import ContentDescription
 from rapidsmpf.memory.packed_data import PackedData
+from rapidsmpf.memory.reservation_events import ReservationContextCreator
 from rapidsmpf.streaming.core.actor import define_actor, run_actor_network
 from rapidsmpf.streaming.core.message import Message
 from rapidsmpf.streaming.core.spillable_messages import SpillableMessages
@@ -347,6 +348,92 @@ def test_make_available_or_wait_from_host(
 
     run_actor_network(context, actors=[test_actor(context)])
     assert_eq(expect, result_holder[0].table_view())
+
+
+def _host_chunk(
+    context: Context, stream: Stream
+) -> tuple[plc.Table, TableChunk]:
+    """Return a table and a TableChunk holding a copy of it in host memory."""
+    expect = random_table(1024)
+    device_chunk = TableChunk.from_pylibcudf_table(
+        expect, stream, exclusive_view=True, br=context.br()
+    )
+    res, _ = context.br().reserve(
+        MemoryType.HOST,
+        device_chunk.data_alloc_size(MemoryType.DEVICE),
+        allow_overbooking=True,
+    )
+    return expect, device_chunk.copy(res)
+
+
+@pytest.mark.parametrize("with_context", [True, False])
+def test_make_available_and_spill_reservation_context(
+    context: Context, stream: Stream, *, with_context: bool
+) -> None:
+    """The device reservation carries the given reservation context."""
+    br = context.br()
+    reservation_context = ReservationContextCreator().create()
+    expect, host_chunk = _host_chunk(context, stream)
+
+    br.start_reservation_event_recording()
+    result = host_chunk.make_available_and_spill(
+        br,
+        allow_overbooking=True,
+        reservation_context=reservation_context if with_context else None,
+    )
+    events = br.stop_reservation_event_recording().events
+
+    assert_eq(expect, result.table_view())
+    assert events
+    if with_context:
+        assert any(
+            event.reservation_context == reservation_context
+            and event.memory_type == MemoryType.DEVICE
+            and event.byte_delta > 0
+            for event in events
+        )
+    else:
+        assert not any(
+            event.reservation_context.is_attributed for event in events
+        )
+
+
+@pytest.mark.parametrize("with_context", [True, False])
+def test_make_available_or_wait_reservation_context(
+    context: Context, stream: Stream, *, with_context: bool
+) -> None:
+    """The device reservation carries the given reservation context."""
+    br = context.br()
+    reservation_context = ReservationContextCreator().create()
+    expect, host_chunk = _host_chunk(context, stream)
+    result_holder: list[TableChunk] = []
+
+    @define_actor()
+    async def test_actor(ctx: Context) -> None:
+        result = await host_chunk.make_available_or_wait(
+            ctx,
+            net_memory_delta=0,
+            reservation_context=reservation_context if with_context else None,
+        )
+        result_holder.append(result)
+
+    br.start_reservation_event_recording()
+    run_actor_network(context, actors=[test_actor(context)])
+    events = br.stop_reservation_event_recording().events
+
+    assert_eq(expect, result_holder[0].table_view())
+    assert events
+    if with_context:
+        assert any(
+            event.reservation_context == reservation_context
+            and event.memory_type == MemoryType.DEVICE
+            and event.byte_delta > 0
+            for event in events
+        )
+    else:
+        assert not any(
+            event.reservation_context.is_attributed for event in events
+        )
 
 
 def test_data_alloc_size(context: Context, stream: Stream) -> None:

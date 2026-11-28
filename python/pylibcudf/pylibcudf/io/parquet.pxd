@@ -143,6 +143,8 @@ cdef class ChunkedParquetWriterOptionsBuilder:
 
     cpdef ChunkedParquetWriterOptionsBuilder max_dictionary_size(self, size_t val)
 
+    cpdef ChunkedParquetWriterOptionsBuilder utc_timestamps(self, bool enabled)
+
     cpdef ChunkedParquetWriterOptionsBuilder write_arrow_schema(self, bool enabled)
 
     cpdef ChunkedParquetWriterOptions build(self)

@@ -1858,6 +1858,12 @@ class ParquetWriter:
     store_schema : bool, default False
         If ``True``, enable computing and writing arrow schema to Parquet
         file footer's key-value metadata section for faithful round-tripping.
+    utc_timestamps : bool, default True
+        Value of ``isAdjustedToUTC`` in the Parquet logical type of
+        timestamp columns, and of duration columns written as ``TIME``
+        (with ``store_schema=True``, durations other than days are written
+        as unannotated ``INT64`` and are unaffected). The values themselves
+        are not shifted. Set to ``False`` to match ``DataFrame.to_parquet``.
 
     See Also
     --------
@@ -1877,6 +1883,7 @@ class ParquetWriter:
         max_dictionary_size: int = 1048576,
         use_dictionary: bool = True,
         store_schema: bool = False,
+        utc_timestamps: bool = True,
     ):
         filepaths_or_buffers = (
             list(filepath_or_buffer)
@@ -1895,6 +1902,7 @@ class ParquetWriter:
         self.max_dictionary_size = max_dictionary_size
         self.use_dictionary = use_dictionary
         self.write_arrow_schema = store_schema
+        self.utc_timestamps = utc_timestamps
 
     def write_table(self, table, partitions_info=None) -> None:
         """Writes a single table to the file"""
@@ -2001,6 +2009,7 @@ class ParquetWriter:
             .max_page_size_rows(self.max_page_size_rows)
             .max_dictionary_size(self.max_dictionary_size)
             .write_arrow_schema(self.write_arrow_schema)
+            .utc_timestamps(self.utc_timestamps)
             .build()
         )
         options.set_dictionary_policy(dict_policy)

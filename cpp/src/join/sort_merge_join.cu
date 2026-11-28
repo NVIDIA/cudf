@@ -1225,12 +1225,9 @@ sort_merge_join::partitioned_inner_join(cudf::join_partition_context const& cont
   CUDF_EXPECTS(context.left_table_context != nullptr,
                "join_partition_context is missing left_table_context",
                std::invalid_argument);
-  auto const* state = join_match_state::get<sort_merge_join_match_state>(
-    *context.left_table_context, this, join_kind::INNER_JOIN);
-  CUDF_EXPECTS(state != nullptr,
-               "join_match_context was not created by inner_join_match_context()",
-               std::invalid_argument);
-  auto const& preprocessed_left = state->preprocessed_left;
+  auto const& preprocessed_left = join_match_state::get<sort_merge_join_match_state>(
+                                    *context.left_table_context, this, join_kind::INNER_JOIN)
+                                    .preprocessed_left;
 
   auto const left_partition_start_idx = context.left_start_idx;
   auto const left_partition_end_idx   = context.left_end_idx;

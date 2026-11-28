@@ -94,27 +94,6 @@ constexpr size_type JoinNoMatch = cuda::std::numeric_limits<size_type>::min();
  * join object and left table must outlive it.
  */
 struct join_match_context {
-  /// @deprecated Since 26.12. Use left_table(); this field will be removed in 27.02.
-  [[deprecated("Use left_table(); _left_table will be removed in 27.02.")]]
-  table_view _left_table;
-
-  /// @deprecated Since 26.12. Use match_counts(); this field will be removed in 27.02.
-  [[deprecated("Use match_counts(); _match_counts will be removed in 27.02.")]]
-  std::unique_ptr<rmm::device_uvector<size_type>> _match_counts;
-
-  /**
-   * @brief Construct a join_match_context
-   *
-   * @deprecated Since 26.12. Use a join object's `*_join_match_context()` factory; this
-   * constructor will be removed in 27.02.
-   *
-   * @param left_table View of the left table involved in the join operation
-   * @param match_counts Device vector containing the count of matching rows in the right table
-   *                     for each row in the left table
-   */
-  [[deprecated("Use a *_join_match_context() factory; this constructor will be removed in 27.02.")]]
-  join_match_context(table_view const& left_table,
-                     std::unique_ptr<rmm::device_uvector<size_type>> match_counts);
   join_match_context(join_match_context const&)            = delete;
   join_match_context& operator=(join_match_context const&) = delete;
   join_match_context(join_match_context&&) noexcept;  ///< Move constructor
@@ -163,7 +142,9 @@ struct join_match_context {
                      std::unique_ptr<rmm::device_uvector<size_type>> match_counts,
                      std::unique_ptr<detail::join_match_state> state);
 
-  std::unique_ptr<detail::join_match_state> _state;  ///< Join-specific cached state
+  table_view _left_table;                                         ///< Left table of the join
+  std::unique_ptr<rmm::device_uvector<size_type>> _match_counts;  ///< Per-row match counts
+  std::unique_ptr<detail::join_match_state> _state;               ///< Join-specific cached state
 };
 
 /**

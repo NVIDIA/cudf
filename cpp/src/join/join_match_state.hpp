@@ -30,19 +30,21 @@ struct join_match_state {
   }
 
   /**
-   * @brief Returns the state cached in `context`, or nullptr if the context was constructed
-   * without one
+   * @brief Returns the state cached in `context`
    *
-   * @throw std::invalid_argument If the state was created by another join object or join kind
+   * @throw std::invalid_argument If `context` has no state or its state was created by another
+   * join object or join kind
    */
   template <typename State>
-  static State const* get(join_match_context const& context, void const* owner, join_kind kind)
+  static State const& get(join_match_context const& context, void const* owner, join_kind kind)
   {
     auto const* state = context._state.get();
-    CUDF_EXPECTS(state == nullptr || (state->owner == owner && state->kind == kind),
+    CUDF_EXPECTS(
+      state != nullptr, "join_match_context is missing its join state", std::invalid_argument);
+    CUDF_EXPECTS(state->owner == owner && state->kind == kind,
                  "Match context belongs to a different join object or join kind",
                  std::invalid_argument);
-    return static_cast<State const*>(state);
+    return static_cast<State const&>(*state);
   }
 
   void const* owner;  ///< Join object that created the context

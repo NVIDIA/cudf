@@ -16,8 +16,6 @@
 
 #include <rmm/device_uvector.hpp>
 
-#include <cuda/buffer>
-
 namespace cudf::detail {
 
 template <typename Hasher>
@@ -42,7 +40,7 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
   auto const left_start_idx = context.left_start_idx;
   auto const left_end_idx   = context.left_end_idx;
   auto const match_counts   = match_ctx.match_counts();
-  auto const* state         = join_match_state::get<hash_join_match_state>(match_ctx, this, join);
+  auto const& state         = join_match_state::get<hash_join_match_state>(match_ctx, this, join);
 
   CUDF_EXPECTS(left_start_idx >= 0 && left_end_idx >= left_start_idx &&
                  left_end_idx <= match_ctx.left_table().num_rows(),
@@ -72,22 +70,8 @@ hash_join<Hasher>::partitioned_join_retrieve(join_kind join,
       mr);
   }
 
-  // Contexts created by a factory cache the matching groups; others probe the partition again.
-  // TODO: Remove the probe when the deprecated join_match_context constructor is removed in 27.02
-  // (#20958).
-  cuda::device_buffer<size_type> probed_groups(stream,
-                                               cudf::get_current_device_resource_ref(),
-                                               state == nullptr ? partition_size : 0,
-                                               cuda::no_init);
-  if (state == nullptr) {
-    auto const left_partition =
-      cudf::slice(match_ctx.left_table(), {left_start_idx, left_end_idx})[0];
-    validate_hash_join_probe(_right, left_partition, _has_nulls);
-    probe(join, left_partition, probed_groups, {}, nullptr, {}, nullptr, stream);
-  }
-  auto const probe_groups = state == nullptr ? device_span<size_type const>{probed_groups}
-                                             : device_span<size_type const>{state->groups}.subspan(
-                                                 left_start_idx, partition_size);
+  auto const probe_groups =
+    device_span<size_type const>{state.groups}.subspan(left_start_idx, partition_size);
 
   auto const [offsets, output_size] =
     hash_csr_match_offsets(match_counts.subspan(left_start_idx, partition_size), stream);

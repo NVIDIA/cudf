@@ -167,6 +167,7 @@ extensions = [
     "sphinx.ext.autosummary",
     "sphinx_copybutton",
     "sphinx_remove_toctrees",
+    "sphinxcontrib.mermaid",
     "sphinx.ext.linkcode",
     "numpydoc",
     "IPython.sphinxext.ipython_console_highlighting",

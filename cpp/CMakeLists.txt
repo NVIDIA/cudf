@@ -36,6 +36,7 @@ rapids_cmake_write_version_file(include/cudf/version_config.hpp)
 # * build options ---------------------------------------------------------------------------------
 option(USE_NVTX "Build with NVTX support" ON)
 option(BUILD_TESTS "Configure CMake to build tests" ON)
+option(BUILD_DOCS_TESTS "Build tests for documentation examples" OFF)
 option(BUILD_BENCHMARKS "Configure CMake to build benchmarks" OFF)
 option(BUILD_SHARED_LIBS "Build cuDF shared libraries" ON)
 option(CUDF_BUILD_TESTUTIL "Whether to build the test utilities contained in libcudf" ON)
@@ -486,6 +487,20 @@ foreach(INC_DIR IN LISTS LIBCUDACXX_RAW_INCLUDE_DIRS)
     INCLUDE_DIRECTORIES CCCL/libcudacxx/${INC_DIR_NAME}
   )
 endforeach()
+
+if(BUILD_TESTS AND BUILD_DOCS_TESTS)
+  rtcx_embed_includes(
+    cudf_cuda_embed
+    SOURCE_DIRECTORY
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/docs/fragments"
+    DEST_DIRECTORY
+    cudf/cpp/src/sample_ternary_op_kernel/jit
+    INCLUDE_DIRECTORIES
+    cudf/cpp/src
+    FILES
+    ternary_op_kernel.cu
+  )
+endif()
 
 rtcx_embed(cudf_cuda_embed COMPRESSION zstd OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embed")
 

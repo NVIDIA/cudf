@@ -1039,6 +1039,7 @@ dependencies:
           - sphinx>=8.1.0
           - sphinx-copybutton
           - sphinx-remove-toctrees
+          - sphinxcontrib-mermaid
           - pip:
               - nvidia-sphinx-theme
   notebooks:

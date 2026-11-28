@@ -15,12 +15,14 @@
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/strings/detail/utilities.hpp>
 #include <cudf/strings/strings_column_view.hpp>
+#include <cudf/utilities/error.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/prefetch.hpp>
 
 #include <cub/device/device_memcpy.cuh>
 #include <cuda/functional>
 #include <cuda/iterator>
+#include <cuda/std/bit>
 #include <cuda/std/execution>
 #include <cuda/std/iterator>
 #include <cuda/stream>
@@ -28,6 +30,8 @@
 #include <thrust/execution_policy.h>
 
 #include <cstddef>
+#include <iterator>
+#include <memory>
 
 namespace cudf {
 namespace strings {
@@ -53,6 +57,57 @@ __forceinline__ __device__ uint4 load_uint4(char const* ptr)
 }
 
 /**
+ * @brief Cooperatively copy one string with a full warp, using aligned 16-byte stores.
+ *
+ * The byte copies at either end keep unaligned loads within the input string. All warp lanes
+ * participate, including when the string is too short for vectorized copies.
+ *
+ * @param in_start First character of the input string
+ * @param out_chars Output character buffer
+ * @param out_start First output byte for this string
+ * @param out_end One past the last output byte for this string
+ * @param alignment_offset Output buffer address modulo `sizeof(uint4)`
+ * @param warp_lane Lane within the warp
+ */
+__forceinline__ __device__ void copy_string_warp(char const* in_start,
+                                                 char* out_chars,
+                                                 int64_t out_start,
+                                                 int64_t out_end,
+                                                 std::size_t alignment_offset,
+                                                 std::size_t warp_lane)
+{
+  constexpr size_t out_datatype_size = sizeof(uint4);
+  constexpr size_t in_datatype_size  = sizeof(uint);
+
+  // Reserve four bytes at each end so load_uint4 cannot read beyond the input string.
+  int64_t const out_start_aligned =
+    (out_start + in_datatype_size + alignment_offset + out_datatype_size - 1) / out_datatype_size *
+      out_datatype_size -
+    alignment_offset;
+  int64_t const out_end_aligned =
+    (out_end - in_datatype_size + alignment_offset) / out_datatype_size * out_datatype_size -
+    alignment_offset;
+
+  for (int64_t ichar = out_start_aligned + warp_lane * out_datatype_size; ichar < out_end_aligned;
+       ichar += cudf::detail::warp_size * out_datatype_size) {
+    // The bounds already align out_chars + ichar; avoid converting back to a uint4 index.
+    *cuda::std::bit_cast<uint4*>(out_chars + ichar) = load_uint4(in_start + (ichar - out_start));
+  }
+
+  if (out_end_aligned <= out_start_aligned) {
+    for (auto ichar = out_start + warp_lane; ichar < out_end; ichar += cudf::detail::warp_size) {
+      out_chars[ichar] = in_start[ichar - out_start];
+    }
+  } else {
+    if (out_start + warp_lane < out_start_aligned) {
+      out_chars[out_start + warp_lane] = in_start[warp_lane];
+    }
+    auto const ichar = out_end_aligned + warp_lane;
+    if (ichar < out_end) { out_chars[ichar] = in_start[ichar - out_start]; }
+  }
+}
+
+/**
  * @brief Gather characters from the input iterator, with string parallel strategy.
  *
  * This strategy assigns strings to warps so that each warp can cooperatively copy from the input
@@ -75,16 +130,12 @@ CUDF_KERNEL void gather_chars_fn_string_parallel(StringIterator strings_begin,
                                                  MapIterator string_indices,
                                                  size_type total_out_strings)
 {
-  constexpr size_t out_datatype_size = sizeof(uint4);
-  constexpr size_t in_datatype_size  = sizeof(uint);
-
   auto const global_thread_id = cudf::detail::grid_1d::global_thread_id();
   auto const global_warp_id   = global_thread_id / cudf::detail::warp_size;
   auto const warp_lane        = global_thread_id % cudf::detail::warp_size;
   auto const nwarps           = cudf::detail::grid_1d::grid_stride() / cudf::detail::warp_size;
 
-  auto const alignment_offset = reinterpret_cast<std::uintptr_t>(out_chars) % out_datatype_size;
-  uint4* out_chars_aligned    = reinterpret_cast<uint4*>(out_chars - alignment_offset);
+  auto const alignment_offset = cuda::std::bit_cast<std::uintptr_t>(out_chars) % sizeof(uint4);
 
   for (auto istring = global_warp_id; istring < total_out_strings; istring += nwarps) {
     auto const out_start = out_offsets[istring];
@@ -93,44 +144,12 @@ CUDF_KERNEL void gather_chars_fn_string_parallel(StringIterator strings_begin,
     // This check is necessary because string_indices[istring] may be out of bound.
     if (out_start == out_end) continue;
 
-    char const* in_start = strings_begin[string_indices[istring]].data();
-
-    // Both `out_start_aligned` and `out_end_aligned` are indices into `out_chars`.
-    // `out_start_aligned` is the first 16B aligned memory location after `out_start + 4`.
-    // `out_end_aligned` is the last 16B aligned memory location before `out_end - 4`. Characters
-    // between `[out_start_aligned, out_end_aligned)` will be copied using uint4.
-    // `out_start + 4` and `out_end - 4` are used instead of `out_start` and `out_end` to avoid
-    // `load_uint4` reading beyond string boundaries.
-    int64_t const out_start_aligned =
-      (out_start + in_datatype_size + alignment_offset + out_datatype_size - 1) /
-        out_datatype_size * out_datatype_size -
-      alignment_offset;
-    int64_t const out_end_aligned =
-      (out_end - in_datatype_size + alignment_offset) / out_datatype_size * out_datatype_size -
-      alignment_offset;
-
-    for (int64_t ichar = out_start_aligned + warp_lane * out_datatype_size; ichar < out_end_aligned;
-         ichar += cudf::detail::warp_size * out_datatype_size) {
-      *(out_chars_aligned + (ichar + alignment_offset) / out_datatype_size) =
-        load_uint4(in_start + ichar - out_start);
-    }
-
-    // Copy characters of the current string outside [out_start_aligned, out_end_aligned)
-    if (out_end_aligned <= out_start_aligned) {
-      // In this case, `[out_start_aligned, out_end_aligned)` is an empty set, and we copy the
-      // entire string.
-      for (auto ichar = out_start + warp_lane; ichar < out_end; ichar += cudf::detail::warp_size) {
-        out_chars[ichar] = in_start[ichar - out_start];
-      }
-    } else {
-      // Copy characters in range `[out_start, out_start_aligned)`.
-      if (out_start + warp_lane < out_start_aligned) {
-        out_chars[out_start + warp_lane] = in_start[warp_lane];
-      }
-      // Copy characters in range `[out_end_aligned, out_end)`.
-      auto const ichar = out_end_aligned + warp_lane;
-      if (ichar < out_end) { out_chars[ichar] = in_start[ichar - out_start]; }
-    }
+    copy_string_warp(strings_begin[string_indices[istring]].data(),
+                     out_chars,
+                     out_start,
+                     out_end,
+                     alignment_offset,
+                     warp_lane);
   }
 }
 

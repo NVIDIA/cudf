@@ -485,11 +485,11 @@ public class CompiledExpressionTest extends CudfTestBase {
   }
 
   @Test
-  void testJitCompiledExpressionDoesNotExposeRegularHandle() {
+  void testJitCompiledExpressionExposesNativeHandle() {
     AstExpression expr = new BinaryOperation(BinaryOperator.ADD,
         new ColumnReference(0), Literal.ofInt(1));
     try (CompiledExpression compiled = expr.compileJit()) {
-      Assertions.assertThrows(IllegalStateException.class, compiled::getNativeHandle);
+      Assertions.assertNotEquals(0, compiled.getNativeHandle());
     }
   }
 

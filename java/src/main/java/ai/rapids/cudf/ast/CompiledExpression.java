@@ -194,17 +194,10 @@ public class CompiledExpression implements AutoCloseable {
   }
 
   /**
-   * Returns the native address of a default-compatible compiled expression.
+   * Returns the native address of this compiled expression.
    * Intended for internal cudf use only.
-   *
-   * @throws IllegalStateException if this expression was produced by
-   *         {@link AstExpression#compileJit()}
    */
   public long getNativeHandle() {
-    if (mode == CompilationMode.JIT) {
-      throw new IllegalStateException(
-          "JIT-compiled expressions cannot be used by a default AST consumer");
-    }
     return cleaner.nativeHandle;
   }
 

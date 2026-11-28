@@ -152,6 +152,19 @@ public class HybridScanReaderTest extends CudfTestBase {
     }
   }
 
+  @Test
+  void testSetFilterJitUnsupported(@TempDir Path tmp) throws IOException {
+    AstExpression expr = new BinaryOperation(BinaryOperator.GREATER,
+        new ColumnNameReference("zip_code"), Literal.ofInt(150000));
+    try (OpenReader open = OpenReader.standard(tmp);
+         CompiledExpression jitFilter = expr.compileJit()) {
+      CudfException e = assertThrows(CudfException.class,
+          () -> open.reader.setFilter(jitFilter));
+      assertEquals("JIT-compiled expressions cannot be used by a default AST consumer",
+          e.getMessage());
+    }
+  }
+
   // --------------------------------------------------------------------
   // Tests: pageIndexByteRange()
   // --------------------------------------------------------------------

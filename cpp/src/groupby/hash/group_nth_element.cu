@@ -9,11 +9,10 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/functional>
@@ -43,16 +42,14 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
 
   auto nth_index =
     cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
-  thrust::uninitialized_fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-                               nth_index.begin(),
-                               num_groups,
-                               values.size());
+  thrust::uninitialized_fill_n(
+    cudf::detail::exec_policy_nosync(stream, mr), nth_index.begin(), num_groups, values.size());
 
   // nulls_policy::INCLUDE (equivalent to pandas nth(dropna=None) but return nulls for n
   if (null_handling == null_policy::INCLUDE || !values.has_nulls()) {
     // Returns index of nth value.
     thrust::transform_if(
-      rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      cudf::detail::exec_policy_nosync(stream, mr),
       group_sizes.begin<size_type>(),
       group_sizes.end<size_type>(),
       group_offsets.begin(),
@@ -83,7 +80,7 @@ std::unique_ptr<column> group_nth_element(column_view const& values,
         auto const nth   = n < 0 ? group_sizes[group] + n : n;
         if (bitmask_iterator[i] && intra == nth) { nth_index[group] = static_cast<size_type>(i); }
       }};
-    thrust::exclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    thrust::exclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                   group_labels.begin(),
                                   group_labels.end(),
                                   bitmask_iterator,

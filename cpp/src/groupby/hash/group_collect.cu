@@ -9,6 +9,7 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/aggregation/aggregation.hpp>
 #include <cudf/detail/copy_if.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/memory_resource.hpp>
@@ -62,7 +63,7 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
     stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
 
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{num_groups},
     null_purged_sizes.begin(),

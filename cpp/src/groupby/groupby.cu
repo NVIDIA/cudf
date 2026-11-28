@@ -213,9 +213,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 
   verify_valid_requests(requests);
 
-  if (_keys.num_rows() == 0) {
-    return {empty_like(_keys), empty_results(requests, stream, mr.get_output_mr())};
-  }
+  if (_keys.num_rows() == 0) { return {empty_like(_keys), empty_results(requests, stream, mr)}; }
 
   return detail::hash::groupby(requests, helper(), stream, mr);
 }
@@ -234,7 +232,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
   verify_valid_requests(requests);
 
   if (_keys.num_rows() == 0) {
-    return std::pair(empty_like(_keys), empty_results(requests, stream, mr.get_output_mr()));
+    return std::pair(empty_like(_keys), empty_results(requests, stream, mr));
   }
 
   return scan_grouped(requests, stream, mr);
@@ -343,7 +341,7 @@ std::pair<std::unique_ptr<table>, std::unique_ptr<table>> groupby::shift(
                      offsets[i],
                      fill_values[i].get(),
                      stream,
-                     mr.get_output_mr());
+                     mr);
                  });
 
   return std::pair(helper().grouped_keys(stream, mr),

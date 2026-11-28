@@ -9,9 +9,10 @@ namespace cudf::groupby::detail {
 
 size_type compute_nested_group_offsets(table_view const& keys,
                                        device_span<size_type> group_offsets,
-                                       cuda::stream_ref stream)
+                                       cuda::stream_ref stream,
+                                       cudf::memory_resources mr)
 {
-  return compute_group_offsets<true>(keys, group_offsets, stream);
+  return compute_group_offsets<true>(keys, group_offsets, stream, mr);
 }
 
 }  // namespace cudf::groupby::detail

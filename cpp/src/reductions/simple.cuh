@@ -10,6 +10,7 @@
 #include <cudf/detail/copy.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
 #include <cudf/detail/utilities/cuda.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
 #include <cudf/dictionary/dictionary_column_view.hpp>
 #include <cudf/reduction/detail/reduction.cuh>
@@ -308,13 +309,12 @@ struct same_element_type_dispatcher {
     cudf::memory_resources mrs(mr);
     auto const binop_generator = cudf::reduction::detail::arg_minmax_binop_generator::create<Op>(
       input, stream, mrs.as_temporary());
-    auto const binary_op = cudf::detail::cast_functor<size_type>(binop_generator.binop());
-    auto const minmax_idx =
-      thrust::reduce(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-                     cuda::counting_iterator<cudf::size_type>{0},
-                     cuda::counting_iterator{input.size()},
-                     size_type{0},
-                     binary_op);
+    auto const binary_op  = cudf::detail::cast_functor<size_type>(binop_generator.binop());
+    auto const minmax_idx = thrust::reduce(cudf::detail::exec_policy_nosync(stream, mr),
+                                           cuda::counting_iterator<cudf::size_type>{0},
+                                           cuda::counting_iterator{input.size()},
+                                           size_type{0},
+                                           binary_op);
 
     return cudf::detail::get_element(input, minmax_idx, stream, mr);
   }

@@ -73,8 +73,7 @@ struct bitwise_group_reduction_functor {
     }
 
     if (values.has_nulls()) {
-      cuda::device_buffer<bool> validity(
-        stream, cudf::get_current_device_resource_ref(), num_groups, cuda::no_init);
+      cuda::device_buffer<bool> validity(stream, mr.get_temporary_mr(), num_groups, cuda::no_init);
       do_reduction(cudf::detail::make_validity_iterator(*d_values_ptr),
                    validity.begin(),
                    cuda::std::logical_or{});

@@ -117,13 +117,12 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> make_range_windows(
   if (group_keys.num_columns() > 0) {
     using cudf::groupby::detail::groupby_helper;
     groupby_helper helper{group_keys, null_policy::INCLUDE, sorted::YES};
-    auto const& labels  = helper.group_labels(stream, cudf::get_current_device_resource_ref());
-    auto const& offsets = helper.group_offsets(stream, cudf::get_current_device_resource_ref());
+    auto const& labels  = helper.group_labels(stream, mr);
+    auto const& offsets = helper.group_offsets(stream, mr);
     auto per_group_nulls =
       orderby.has_nulls()
-        ? nulls_per_group(orderby, offsets, stream, cudf::get_current_device_resource_ref())
-        : cuda::device_buffer<size_type>{
-            stream, cudf::get_current_device_resource_ref(), 0, cuda::no_init};
+        ? nulls_per_group(orderby, offsets, stream, mr.as_temporary())
+        : cuda::device_buffer<size_type>{stream, mr.get_temporary_mr(), 0, cuda::no_init};
     auto grouping = detail::rolling::preprocessed_group_info{labels, offsets, per_group_nulls};
     return {
       make_range_window(

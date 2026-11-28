@@ -210,7 +210,7 @@ std::unique_ptr<column> group_rank_to_percentage(rank_method const method,
 std::unique_ptr<column> scatter_rank(column_view const& rank,
                                      column_view const& scatter_map,
                                      cuda::stream_ref stream,
-                                     rmm::device_async_resource_ref mr);
+                                     cudf::memory_resources mr);
 
 }  // namespace detail
 }  // namespace groupby

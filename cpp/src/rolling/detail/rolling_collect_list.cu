@@ -9,6 +9,7 @@
 #include <cudf/detail/algorithms/reduce.cuh>
 #include <cudf/detail/get_value.cuh>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <rmm/device_uvector.hpp>
@@ -49,13 +50,11 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
                                                  stream,
                                                  mr.get_output_mr());
   auto per_row_mapping_begin = per_row_mapping->mutable_view().template begin<size_type>();
-  thrust::fill_n(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
-                 per_row_mapping_begin,
-                 num_child_rows,
-                 0);
+  thrust::fill_n(
+    cudf::detail::exec_policy_nosync(stream, mr), per_row_mapping_begin, num_child_rows, 0);
 
   auto const begin = cuda::counting_iterator<size_type>{0};
-  thrust::scatter_if(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::scatter_if(cudf::detail::exec_policy_nosync(stream, mr),
                      begin,
                      begin + offsets.size() - 1,
                      offsets.begin<int32_t>(),
@@ -73,7 +72,7 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
   // For the case with an empty list at index 2:
   //   scatter result == [0, 0, 1, 0, 0, 3, 0, 0, 4, 0, 0, 5, 0]
   //   inclusive_scan == [0, 0, 1, 1, 1, 3, 3, 3, 4, 4, 4, 5, 5]
-  thrust::inclusive_scan(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::inclusive_scan(cudf::detail::exec_policy_nosync(stream, mr),
                          per_row_mapping_begin,
                          per_row_mapping_begin + num_child_rows,
                          per_row_mapping_begin,
@@ -86,10 +85,10 @@ std::unique_ptr<column> get_list_child_to_list_row_mapping(cudf::column_view con
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            cuda::stream_ref stream)
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr)
 {
-  cudf::memory_resources mr = cudf::get_current_device_resource_ref();
-  auto input_device_view    = column_device_view::create(input, stream);
+  auto input_device_view = column_device_view::create(input, stream);
 
   auto input_row_is_null = [d_input = *input_device_view] __device__(auto i) {
     return d_input.is_null_nocheck(i);
@@ -138,9 +137,9 @@ std::pair<std::unique_ptr<column>, std::unique_ptr<column>> purge_null_entries(
                                            input.size(),
                                            mask_state::UNALLOCATED,
                                            stream,
-                                           cudf::get_current_device_resource_ref());
+                                           mrs.as_temporary());
 
-  thrust::tabulate(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::tabulate(cudf::detail::exec_policy_nosync(stream, mr),
                    new_sizes->mutable_view().template begin<size_type>(),
                    new_sizes->mutable_view().template end<size_type>(),
                    [d_gather_map  = gather_map.template begin<size_type>(),

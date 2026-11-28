@@ -56,39 +56,20 @@ std::unique_ptr<column> compound_segmented_reduction(column_view const& col,
   auto out_itr = result->mutable_view().template begin<ResultType>();
 
   // Compute counts
-  cuda::device_buffer<size_type> counts =
-    cudf::reduction::detail::segmented_counts(col.null_mask(),
-                                              col.has_nulls(),
-                                              offsets,
-                                              null_handling,
-                                              stream,
-                                              cudf::get_current_device_resource_ref());
+  cuda::device_buffer<size_type> counts = cudf::reduction::detail::segmented_counts(
+    col.null_mask(), col.has_nulls(), offsets, null_handling, stream, mr.as_temporary());
 
   // Run segmented reduction
   if (col.has_nulls()) {
     auto nrt = compound_op.template get_null_replacing_element_transformer<ResultType>();
     auto itr = cuda::transform_iterator(d_col->pair_begin<InputType, true>(), nrt);
-    cudf::reduction::detail::segmented_reduce(itr,
-                                              offsets.begin(),
-                                              offsets.end(),
-                                              out_itr,
-                                              compound_op,
-                                              ddof,
-                                              counts.data(),
-                                              stream,
-                                              cudf::get_current_device_resource_ref());
+    cudf::reduction::detail::segmented_reduce(
+      itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream, mr);
   } else {
     auto et  = compound_op.template get_element_transformer<ResultType>();
     auto itr = cuda::transform_iterator(d_col->begin<InputType>(), et);
-    cudf::reduction::detail::segmented_reduce(itr,
-                                              offsets.begin(),
-                                              offsets.end(),
-                                              out_itr,
-                                              compound_op,
-                                              ddof,
-                                              counts.data(),
-                                              stream,
-                                              cudf::get_current_device_resource_ref());
+    cudf::reduction::detail::segmented_reduce(
+      itr, offsets.begin(), offsets.end(), out_itr, compound_op, ddof, counts.data(), stream, mr);
   }
 
   // Compute the output null mask

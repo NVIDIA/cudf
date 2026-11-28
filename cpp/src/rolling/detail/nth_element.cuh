@@ -9,10 +9,9 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/detail/gather.hpp>
 #include <cudf/detail/iterator.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/bit.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -147,9 +146,9 @@ std::unique_ptr<column> nth_element(size_type n,
     gather_index_calculator<null_handling, PrecedingIter, FollowingIter>{
       n, input, preceding, following, min_periods, stream});
 
-  auto gather_map = cuda::device_buffer<size_type>(
-    stream, cudf::get_current_device_resource_ref(), input.size(), cuda::no_init);
-  thrust::copy(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  auto gather_map =
+    cuda::device_buffer<size_type>(stream, mr.get_temporary_mr(), input.size(), cuda::no_init);
+  thrust::copy(cudf::detail::exec_policy_nosync(stream, mr),
                gather_iter,
                gather_iter + input.size(),
                gather_map.begin());

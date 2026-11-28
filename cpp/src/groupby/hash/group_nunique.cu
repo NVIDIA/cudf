@@ -78,7 +78,7 @@ std::unique_ptr<column> group_nunique(column_view const& values,
 
   if (num_groups == 0) { return result; }
 
-  auto temp_mr           = cudf::get_current_device_resource_ref();
+  auto temp_mr           = mr.get_temporary_mr();
   auto const values_view = table_view{{values}};
   auto const comparator =
     cudf::detail::row::equality::self_comparator{values_view, stream, temp_mr};

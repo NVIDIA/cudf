@@ -8,8 +8,7 @@
 
 #include <cudf/aggregation.hpp>
 #include <cudf/column/column_view.hpp>
-
-#include <rmm/exec_policy.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 
 #include <cuda/iterator>
 #include <cuda/std/functional>
@@ -27,7 +26,7 @@ void scan_struct_argminmax(column_view const& values,
   using generator       = cudf::reduction::detail::arg_minmax_binop_generator;
   auto const comparator = is_min ? generator::create<aggregation::MIN>(values, stream, mr)
                                  : generator::create<aggregation::MAX>(values, stream, mr);
-  thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+  thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                 group_labels.begin(),
                                 group_labels.end(),
                                 cuda::counting_iterator<size_type>{0},

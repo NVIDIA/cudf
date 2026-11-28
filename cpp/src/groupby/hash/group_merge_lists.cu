@@ -4,11 +4,10 @@
  */
 
 #include <cudf/column/column_factories.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/lists/lists_column_view.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 #include <cudf/utilities/span.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -41,7 +40,7 @@ std::unique_ptr<column> group_merge_lists(column_view const& values,
   //
   //   then, the output offsets_column is [0, 5, 8].
   //
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     group_offsets.begin(),
                     group_offsets.end(),
                     offsets_column->mutable_view().template begin<int32_t>(),

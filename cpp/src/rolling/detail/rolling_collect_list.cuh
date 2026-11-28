@@ -8,11 +8,10 @@
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/gather.hpp>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/detail/valid_if.cuh>
 #include <cudf/strings/detail/strings_children.cuh>
 #include <cudf/utilities/memory_resource.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/functional>
 #include <cuda/iterator>
@@ -42,12 +41,9 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
 {
   // Materialize offsets column.
   auto static constexpr size_data_type = data_type{type_to_id<size_type>()};
-  auto sizes                           = make_fixed_width_column(size_data_type,
-                                       input_size,
-                                       mask_state::UNALLOCATED,
-                                       stream,
-                                       cudf::get_current_device_resource_ref());
-  auto mutable_sizes                   = sizes->mutable_view();
+  auto sizes                           = make_fixed_width_column(
+    size_data_type, input_size, mask_state::UNALLOCATED, stream, mr.as_temporary());
+  auto mutable_sizes = sizes->mutable_view();
 
   // Consider the following preceding/following values:
   //    preceding = [1,2,2,2,2]
@@ -59,7 +55,7 @@ std::unique_ptr<column> create_collect_offsets(size_type input_size,
   // But if min_periods=3, rows at indices 0 and 4 have too few observations, and must return
   // null. The sizes at these positions must be 0, i.e.
   //  prec + foll = [0,3,3,3,0]
-  thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
+  thrust::transform(cudf::detail::exec_policy_nosync(stream, mr),
                     preceding_begin,
                     preceding_begin + input_size,
                     following_begin,
@@ -110,7 +106,7 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
                                             stream,
                                             mr.get_output_mr());
   thrust::transform(
-    rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+    cudf::detail::exec_policy_nosync(stream, mr),
     cuda::counting_iterator<size_type>{0},
     cuda::counting_iterator<size_type>{per_row_mapping.size()},
     gather_map->mutable_view().template begin<size_type>(),
@@ -134,7 +130,8 @@ std::unique_ptr<column> create_collect_gather_map(column_view const& child_offse
  */
 size_type count_child_nulls(column_view const& input,
                             std::unique_ptr<column> const& gather_map,
-                            cuda::stream_ref stream);
+                            cuda::stream_ref stream,
+                            cudf::memory_resources mr);
 
 /**
  * @brief Purge entries for null inputs from gather_map, and adjust offsets.
@@ -168,20 +165,17 @@ std::unique_ptr<column> rolling_collect_list(column_view const& input,
 
   // Map each element of the collect() result's child column
   // to the index where it appears in the input.
-  auto per_row_mapping = get_list_child_to_list_row_mapping(
-    offsets->view(), stream, cudf::get_current_device_resource_ref());
+  auto per_row_mapping =
+    get_list_child_to_list_row_mapping(offsets->view(), stream, mr.as_temporary());
 
   // Generate gather map to produce the collect() result's child column.
-  auto gather_map = create_collect_gather_map(offsets->view(),
-                                              per_row_mapping->view(),
-                                              preceding_begin,
-                                              stream,
-                                              cudf::get_current_device_resource_ref());
+  auto gather_map = create_collect_gather_map(
+    offsets->view(), per_row_mapping->view(), preceding_begin, stream, mr.as_temporary());
 
   // If gather_map collects null elements, and null_policy == EXCLUDE,
   // those elements must be filtered out, and offsets recomputed.
   if (null_handling == null_policy::EXCLUDE && input.has_nulls()) {
-    auto num_child_nulls = count_child_nulls(input, gather_map, stream);
+    auto num_child_nulls = count_child_nulls(input, gather_map, stream, mr);
     if (num_child_nulls != 0) {
       std::tie(gather_map, offsets) =
         purge_null_entries(input, *gather_map, *offsets, num_child_nulls, stream, mr);

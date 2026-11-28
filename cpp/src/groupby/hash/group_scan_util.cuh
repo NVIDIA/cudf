@@ -19,6 +19,7 @@
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/structs/utilities.hpp>
 #include <cudf/detail/utilities/cast_functor.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/strings/string_view.cuh>
 #include <cudf/structs/struct_view.hpp>
 #include <cudf/structs/structs_column_view.hpp>
@@ -30,8 +31,6 @@
 #include <cudf/utilities/span.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
-
-#include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
 #include <cuda/iterator>
@@ -114,7 +113,7 @@ struct group_scan_functor<K, T> {
 
     // Perform segmented scan.
     auto const do_scan = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                     group_labels.begin(),
                                     group_labels.end(),
                                     inp_iter,
@@ -158,7 +157,7 @@ struct group_scan_functor<K, cudf::string_view> {
 
     // Perform segmented scan.
     auto const do_scan = [&](auto const& inp_iter, auto const& out_iter, auto const& binop) {
-      thrust::inclusive_scan_by_key(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+      thrust::inclusive_scan_by_key(cudf::detail::exec_policy_nosync(stream, mr),
                                     group_labels.begin(),
                                     group_labels.end(),
                                     inp_iter,
@@ -218,11 +217,11 @@ struct group_scan_functor<K, cudf::struct_view> {
 
     // After gathering the children elements, we need to push down nulls from the root structs
     // column to them. The copied null mask starts at the first row of a sliced view.
-    auto null_mask = cudf::detail::copy_bitmask(values, stream, mr.get_output_mr());
+    auto null_mask = cudf::detail::copy_bitmask(values, stream, mr);
     if (values.has_nulls()) {
       for (std::unique_ptr<column>& child : scanned_children) {
         child = structs::detail::superimpose_and_sanitize_nulls(
-          null_mask.data(), values.null_count(), std::move(child), stream, mr.get_output_mr());
+          null_mask.data(), values.null_count(), std::move(child), stream, mr);
       }
     }
 
@@ -231,7 +230,7 @@ struct group_scan_functor<K, cudf::struct_view> {
                                     values.null_count(),
                                     std::move(null_mask),
                                     stream,
-                                    mr.get_output_mr());
+                                    mr);
   }
 };
 

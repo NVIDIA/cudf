@@ -6,6 +6,7 @@
 #include "counts.hpp"
 
 #include <cudf/detail/null_mask.cuh>
+#include <cudf/detail/utilities/execution_env.hpp>
 #include <cudf/utilities/memory_resource.hpp>
 
 #include <cuda/buffer>
@@ -36,11 +37,10 @@ cuda::device_buffer<size_type> segmented_counts(bitmask_type const* null_mask,
 
   cuda::device_buffer<size_type> valid_counts(
     stream, mr.get_output_mr(), num_segments, cuda::no_init);
-  thrust::adjacent_difference(
-    rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
-    offsets.begin() + 1,
-    offsets.end(),
-    valid_counts.begin());
+  thrust::adjacent_difference(cudf::detail::exec_policy_nosync(stream, mr),
+                              offsets.begin() + 1,
+                              offsets.end(),
+                              valid_counts.begin());
   return valid_counts;
 }
 

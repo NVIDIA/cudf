@@ -53,8 +53,7 @@ void scan_result_functor::operator()<aggregation::SUM>(aggregation const& agg)
   cache.add_result(
     values,
     agg,
-    detail::sum_scan(
-      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
+    detail::sum_scan(get_grouped_values(), helper.group_labels(stream, mr), stream, mr));
 }
 
 template <>
@@ -65,8 +64,7 @@ void scan_result_functor::operator()<aggregation::PRODUCT>(aggregation const& ag
   cache.add_result(
     values,
     agg,
-    detail::product_scan(
-      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
+    detail::product_scan(get_grouped_values(), helper.group_labels(stream, mr), stream, mr));
 }
 
 template <>
@@ -77,8 +75,7 @@ void scan_result_functor::operator()<aggregation::MIN>(aggregation const& agg)
   cache.add_result(
     values,
     agg,
-    detail::min_scan(
-      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
+    detail::min_scan(get_grouped_values(), helper.group_labels(stream, mr), stream, mr));
 }
 
 template <>
@@ -89,8 +86,7 @@ void scan_result_functor::operator()<aggregation::MAX>(aggregation const& agg)
   cache.add_result(
     values,
     agg,
-    detail::max_scan(
-      get_grouped_values(), helper.group_labels(stream, mr), stream, mr.get_output_mr()));
+    detail::max_scan(get_grouped_values(), helper.group_labels(stream, mr), stream, mr));
 }
 
 template <>
@@ -101,8 +97,7 @@ void scan_result_functor::operator()<aggregation::COUNT_ALL>(aggregation const& 
   cache.add_result(
     values,
     agg,
-    detail::count_scan(
-      values, null_policy::INCLUDE, helper.group_labels(stream, mr), stream, mr.get_output_mr()));
+    detail::count_scan(values, null_policy::INCLUDE, helper.group_labels(stream, mr), stream, mr));
 }
 
 template <>
@@ -110,13 +105,11 @@ void scan_result_functor::operator()<aggregation::COUNT_VALID>(aggregation const
 {
   if (cache.has_result(values, agg)) return;
 
-  cache.add_result(values,
-                   agg,
-                   detail::count_scan(get_grouped_values(),
-                                      null_policy::EXCLUDE,
-                                      helper.group_labels(stream, mr),
-                                      stream,
-                                      mr.get_output_mr()));
+  cache.add_result(
+    values,
+    agg,
+    detail::count_scan(
+      get_grouped_values(), null_policy::EXCLUDE, helper.group_labels(stream, mr), stream, mr));
 }
 
 template <>
@@ -179,9 +172,9 @@ void scan_result_functor::operator()<aggregation::RANK>(aggregation const& agg)
                                               helper.group_labels(stream, mr),
                                               helper.group_offsets(stream, mr),
                                               stream,
-                                              mr.get_temporary_mr());
+                                              mr.as_temporary());
   }
-  result = detail::scatter_rank(*result, *gather_map, stream, mr.get_output_mr());
+  result = detail::scatter_rank(*result, *gather_map, stream, mr);
   if (rank_agg._null_handling == null_policy::EXCLUDE) {
     auto const values = get_grouped_values();
     result->set_null_mask(cudf::detail::copy_bitmask(values, stream, mr), values.null_count());
@@ -210,7 +203,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
     }
   }
 
-  auto results = detail::extract_results(requests, cache, stream, mr.get_output_mr());
+  auto results = detail::extract_results(requests, cache, stream, mr);
 
   return std::pair(helper().grouped_keys(stream, mr), std::move(results));
 }

@@ -14,8 +14,12 @@ from typing import TYPE_CHECKING
 import duckdb
 import pytest
 
-from cudf_polars.streaming.benchmarks.pdsds import PDSDSPolarsQueries
+from cudf_polars.streaming.benchmarks.pdsds import (
+    PDSDSDuckDBQueries,
+    PDSDSPolarsQueries,
+)
 from cudf_polars.streaming.benchmarks.utils import (
+    PDSDS_TABLE_NAMES,
     FailedRecord,
     RunConfig,
     check_input_data_type,
@@ -24,7 +28,11 @@ from cudf_polars.streaming.benchmarks.utils import (
 from cudf_polars.testing.engine_utils import warns_on_spmd
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from pytest_subtests import SubTests
+
+    import polars as pl
 
     from cudf_polars.engine.spmd import SPMDEngine
     from cudf_polars.streaming.benchmarks.utils import RunOptions, ValidationMethod
@@ -49,6 +57,34 @@ EXPECTED_WARNINGS: dict[int, str] = {
 # require it.
 OPTIONAL_WARNINGS: dict[int, str] = {
     24: CONDITIONAL_JOIN_NOT_SUPPORTED,
+}
+
+DECIMAL_DIVISOR = "`decimal_div` with an integer divisor, #25396"
+DECIMAL_SCALE = (
+    "Comparing Decimals whose common scale does not fit in 38 digits, #25395"
+)
+DATE_STRING_COMPARISON = (
+    "Polars SQL cannot compare a Date to a string, so the CPU fails too"
+)
+INT_RANGE = "RangeFunction.IntRange is not supported, #25397"
+
+# The DuckDB-dialect SQL queries, run with Polars SQL, that do not yet run on the GPU, with the reason. The
+# tests are strict: fixing one fails its test until the entry is removed.
+EXPECTED_SQL_FAILURES: dict[int, str] = {
+    4: DECIMAL_DIVISOR,
+    16: DATE_STRING_COMPARISON,
+    23: f"{DECIMAL_SCALE}; broadcasting aggregated expressions in groupby, #20565",
+    45: "ListFunction.Contains and ListFunction.Length are not supported, #25398",
+    47: INT_RANGE,
+    51: "fill_null over(...) of a non-pointwise expression other than cum_sum, #23606",
+    54: DECIMAL_DIVISOR,
+    57: INT_RANGE,
+    58: f"{DECIMAL_DIVISOR}; {DECIMAL_SCALE}",
+    66: DECIMAL_DIVISOR,
+    72: "Adding an integer number of days to a Date is not supported, #25400",
+    78: DECIMAL_DIVISOR,
+    94: DATE_STRING_COMPARISON,
+    95: DATE_STRING_COMPARISON,
 }
 
 
@@ -173,3 +209,18 @@ def test_tpcds_query(
                     and record.validation_result.status == "Failed"
                 ):
                     pytest.fail(record.validation_result.message or "Validation failed")
+
+
+def test_tpcds_sql_query(
+    request: pytest.FixtureRequest,
+    q_id: int,
+    tpcds_run_config: RunConfig,
+    tpc_sql_frame: Callable[..., pl.LazyFrame],
+    tpc_assert_sql_matches_cpu: Callable[[pl.LazyFrame], None],
+) -> None:
+    reason = EXPECTED_SQL_FAILURES.get(q_id)
+    if reason is not None:
+        request.applymarker(pytest.mark.xfail(reason=reason))
+
+    frame = tpc_sql_frame(PDSDSDuckDBQueries, PDSDS_TABLE_NAMES, q_id, tpcds_run_config)
+    tpc_assert_sql_matches_cpu(frame)

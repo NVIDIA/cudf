@@ -16,7 +16,7 @@ import functools
 import operator
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 import polars as pl
 import polars.selectors as cs
@@ -32,6 +32,9 @@ from cudf_polars.utils.config import RankLocalCPUComputeMode
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from polars._typing import JoinStrategy
+
+    from cudf_polars.containers import DataType
     from cudf_polars.dsl.ir import IR, IRExecutionContext
     from cudf_polars.typing import Schema
 
@@ -295,7 +298,7 @@ def _conform(df: pl.LazyFrame, schema: Schema) -> pl.LazyFrame:
 
 
 @functools.singledispatch
-def _cpu_plan(node: IR) -> Callable[..., pl.LazyFrame]:  # pragma: no cover
+def _ir_to_polars(node: IR) -> Callable[..., pl.LazyFrame]:  # pragma: no cover
     """
     Return a function that evaluates ``node`` on Polars lazy frames.
 
@@ -306,45 +309,45 @@ def _cpu_plan(node: IR) -> Callable[..., pl.LazyFrame]:  # pragma: no cover
     raise NotImplementedError(f"No Polars evaluation for {type(node).__name__}")
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.Select) -> Callable[..., pl.LazyFrame]:
     exprs = _named(node.exprs)
     return lambda df: _select(df, exprs)
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.HStack) -> Callable[..., pl.LazyFrame]:
     exprs = _named(node.columns)
     return lambda df: df.with_columns(exprs)
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.Filter) -> Callable[..., pl.LazyFrame]:
     mask = expr_to_polars(node.mask.value)
     return lambda df: df.filter(mask)
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.Projection) -> Callable[..., pl.LazyFrame]:
     columns = [_col(name) for name in node.schema]
     return lambda df: _select(df, columns)
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.GroupBy) -> Callable[..., pl.LazyFrame]:
     keys = _named(node.keys)
     aggs = _named(node.agg_requests)
     maintain_order = node.maintain_order
     zlice = node.zlice
 
-    def plan(df: pl.LazyFrame) -> pl.LazyFrame:
+    def apply(df: pl.LazyFrame) -> pl.LazyFrame:
         result = df.group_by(keys, maintain_order=maintain_order).agg(aggs)
         return result if zlice is None else result.slice(*zlice)
 
-    return plan
+    return apply
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.Sort) -> Callable[..., pl.LazyFrame]:
     by = [expr_to_polars(ne.value) for ne in node.by]
     descending = [o == plc.types.Order.DESCENDING for o in node.order]
@@ -356,16 +359,16 @@ def _(node: ir.Sort) -> Callable[..., pl.LazyFrame]:
     stable = node.stable
     zlice = node.zlice
 
-    def plan(df: pl.LazyFrame) -> pl.LazyFrame:
+    def apply(df: pl.LazyFrame) -> pl.LazyFrame:
         result = df.sort(
             by, descending=descending, nulls_last=nulls_last, maintain_order=stable
         )
         return result if zlice is None else result.slice(*zlice)
 
-    return plan
+    return apply
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.Distinct) -> Callable[..., pl.LazyFrame]:
     subset = None if node.subset is None else sorted(node.subset)
     # The Polars name of the keep option, the inverse of Distinct._KEEP_MAP.
@@ -373,34 +376,174 @@ def _(node: ir.Distinct) -> Callable[..., pl.LazyFrame]:
     stable = node.stable
     zlice = node.zlice
 
-    def plan(df: pl.LazyFrame) -> pl.LazyFrame:
+    def apply(df: pl.LazyFrame) -> pl.LazyFrame:
         result = df.unique(subset=subset, keep=keep, maintain_order=stable)  # type: ignore[arg-type]
         return result if zlice is None else result.slice(*zlice)
 
-    return plan
+    return apply
 
 
-@_cpu_plan.register
+@_ir_to_polars.register
 def _(node: ir.Slice) -> Callable[..., pl.LazyFrame]:
     offset, length = node.offset, node.length
     return lambda df: df.slice(offset, length)
 
 
-def _cpu_plan_or_none(node: IR) -> Callable[..., pl.LazyFrame] | None:
+def _convert_colrefs_to_column_exprs(
+    node: expr.Expr,
+    names: dict[plc.expressions.TableReference, dict[str, str]],
+    casts: dict[plc.expressions.TableReference, dict[str, DataType]],
+) -> expr.Expr:
     """
-    Return the Polars plan of ``node``, or None if it cannot be converted.
+    Convert the column references of a join predicate to column expressions.
 
-    The plan is not cached, since a cache keyed on the node would keep the
+    The predicate of a ``ConditionalJoin`` refers to columns of the left and
+    right inputs with ``ColRef``, which have no Polars conversion. This
+    replaces each ``ColRef`` by a ``Col`` named as the column is named in the
+    result of the Polars cross join, so the predicate converts to a regular
+    Polars predicate that can filter that result.
+
+    Parameters
+    ----------
+    node
+        The predicate, or a subexpression of it.
+    names
+        For each table, a map from a column name to its name in the joined
+        frame. Columns not in the map keep their name.
+    casts
+        For each table, a map from a column name to the type that
+        ``do_evaluate`` casts it to before evaluating the predicate.
+
+    Returns
+    -------
+    The predicate with each column reference replaced by a column of the
+    joined frame, cast if the column is in ``casts``.
+    """
+    if isinstance(node, expr.ColRef):
+        (col,) = node.children
+        assert isinstance(col, expr.Col)
+        result: expr.Expr = expr.Col(
+            col.dtype, names[node.table_ref].get(col.name, col.name)
+        )
+        target = casts[node.table_ref].get(col.name)
+        if target is not None:
+            result = expr.Cast(target, True, result)  # noqa: FBT003
+        return result
+    if not node.children:
+        return node
+    return node.reconstruct(
+        [
+            _convert_colrefs_to_column_exprs(child, names, casts)
+            for child in node.children
+        ]
+    )
+
+
+def _polars_join(
+    node: ir.Join | ir.ConditionalJoin,
+    how: JoinStrategy,
+    left_on: list[pl.Expr],
+    right_on: list[pl.Expr],
+    mask: pl.Expr | None,
+) -> Callable[..., pl.LazyFrame]:
+    """
+    Return a function that evaluates a join with Polars.
+
+    Parameters
+    ----------
+    node
+        The join node. Its options give the null equality, slice, suffix,
+        coalescing and row order of the join.
+    how
+        The Polars join type.
+    left_on
+        The keys of the left input. Empty for a cross join.
+    right_on
+        The keys of the right input. Empty for a cross join.
+    mask
+        A condition over the output columns of the join, or None to keep all
+        joined rows.
+
+    Returns
+    -------
+    A function from the left and right lazy frames to the result of the join.
+    """
+    _, nulls_equal, zlice, suffix, coalesce, maintain_order = node.options
+
+    def apply(left: pl.LazyFrame, right: pl.LazyFrame) -> pl.LazyFrame:
+        if how == "cross":
+            joined = left.join(
+                right, how="cross", suffix=suffix, maintain_order=maintain_order
+            )
+        else:
+            joined = left.join(
+                right,
+                how=how,
+                left_on=left_on,
+                right_on=right_on,
+                suffix=suffix,
+                coalesce=coalesce,
+                nulls_equal=nulls_equal,
+                maintain_order=maintain_order,
+            )
+        if mask is not None:
+            joined = joined.filter(mask)
+        return joined if zlice is None else joined.slice(*zlice)
+
+    return apply
+
+
+@_ir_to_polars.register
+def _(node: ir.Join) -> Callable[..., pl.LazyFrame]:
+    return _polars_join(
+        node,
+        cast("JoinStrategy", node.options[0].lower()),
+        [expr_to_polars(ne.value) for ne in node.left_on],
+        [expr_to_polars(ne.value) for ne in node.right_on],
+        None if node.predicate is None else expr_to_polars(node.predicate.mask),
+    )
+
+
+@_ir_to_polars.register
+def _(node: ir.ConditionalJoin) -> Callable[..., pl.LazyFrame]:
+    # A cross join followed by a filter, which Polars turns into a nonequi
+    # join. The right columns that clash with left ones get the suffix.
+    suffix = node.options[3]
+    left_names = set(node.children[0].schema)
+    left_casts, right_casts = ir._collect_decimal_binop_casts(node.predicate)
+    mask = _convert_colrefs_to_column_exprs(
+        node.predicate,
+        {
+            plc.expressions.TableReference.LEFT: {},
+            plc.expressions.TableReference.RIGHT: {
+                name: f"{name}{suffix}"
+                for name in node.children[1].schema
+                if name in left_names
+            },
+        },
+        {
+            plc.expressions.TableReference.LEFT: left_casts,
+            plc.expressions.TableReference.RIGHT: right_casts,
+        },
+    )
+    return _polars_join(node, "cross", [], [], expr_to_polars(mask))
+
+
+def _ir_to_polars_or_none(node: IR) -> Callable[..., pl.LazyFrame] | None:
+    """
+    Convert ``node`` with :func:`_ir_to_polars`, or return None if it cannot be converted.
+
+    The function is not cached, since a cache keyed on the node would keep the
     node and its children, including their data, alive after the query.
     """
     # Exact type match, streaming specific subclasses are not supported.
-    if type(node) not in _cpu_plan.registry:
+    if type(node) not in _ir_to_polars.registry:
         return None
     if any(isinstance(dtype.polars_type, pl.Time) for dtype in node.schema.values()):
         # DataFrame.from_polars does not import Time columns.
         return None
     try:
-        return _cpu_plan(node)
+        return _ir_to_polars(node)
     except NotImplementedError:
         return None
 
@@ -418,7 +561,7 @@ def is_cpu_capable(node: IR) -> bool:
     -------
     True if :func:`cpu_evaluate` supports ``node`` and all its expressions.
     """
-    return _cpu_plan_or_none(node) is not None
+    return _ir_to_polars_or_none(node) is not None
 
 
 def cpu_evaluate(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataFrame:
@@ -441,11 +584,11 @@ def cpu_evaluate(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> Data
     -------
     The result, on a stream from ``context``.
     """
-    plan = _cpu_plan_or_none(node)
-    if plan is None:
+    apply = _ir_to_polars_or_none(node)
+    if apply is None:
         raise ValueError(f"{type(node).__name__} is not CPU capable")
     inputs = [df.to_polars().lazy() for df in dfs]
-    result = _conform(plan(*inputs), node.schema).collect(engine="in-memory")
+    result = _conform(apply(*inputs), node.schema).collect(engine="in-memory")
     return DataFrame.from_polars(result, stream=context.get_cuda_stream())
 
 
@@ -486,8 +629,8 @@ def evaluate_ir(node: IR, *dfs: DataFrame, context: IRExecutionContext) -> DataF
     The result of evaluating ``node``.
     """
     mode = context.rank_local_cpu_compute
-    # is_cpu_capable and cpu_evaluate each build the Polars plan. That is
-    # cheap compared to copying the data to the host and back.
+    # is_cpu_capable and cpu_evaluate each convert the node to Polars. That
+    # is cheap compared to copying the data to the host and back.
     gpu_error: str | None = None
     if mode == RankLocalCPUComputeMode.ON_OOM:
         try:

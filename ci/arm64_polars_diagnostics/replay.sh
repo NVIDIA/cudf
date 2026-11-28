@@ -89,6 +89,9 @@ rapids-mamba-retry() {
         if [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-native-aggregation &&
             "$entry" == */libcudf-streaming-*.conda ]]; then
             printf '%s\n' "${entry/\/libcudf-streaming-/\/libcudf-streaming-tests-}"
+        elif [[ "$CUDF_POLARS_DIAGNOSTICS_TRIAL" == memcheck-packed-native-dask-datetime &&
+                "$entry" == */libcudf-[0-9]*.conda ]]; then
+            printf '%s\n' "${entry/\/libcudf-/\/libcudf-tests-}"
         fi
     done < "$CUDF_POLARS_EXPLICIT_ENV" > "$spec"
     conda create --yes --no-default-packages --name test --file "$spec"

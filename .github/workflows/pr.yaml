@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-packed-full-path
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-packed-native
   cancel-in-progress: true
 
 jobs:
@@ -20,8 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - sanitizer-packed-polars-fixed
-          - sanitizer-packed-polars-old
+          - sanitizer-packed-native
     permissions:
       actions: read
       contents: read

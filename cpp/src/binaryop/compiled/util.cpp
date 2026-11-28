@@ -7,14 +7,48 @@
 
 #include <cudf/binaryop.hpp>
 #include <cudf/column/column_device_view.cuh>
+#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 #include <cudf/utilities/type_dispatcher.hpp>
 
+#include <cuda/std/concepts>
+#include <cuda/std/type_traits>
+
 #include <optional>
+#include <type_traits>
 
 namespace cudf::binops::compiled {
 
 namespace {
+
+/// Binary operation common type default
+template <typename L, typename R>
+struct binary_op_common_type {};
+
+template <typename L, typename R>
+  requires(has_common_type_v<L, R>)
+struct binary_op_common_type<L, R> {
+  using type = cuda::std::common_type_t<L, R>;
+};
+
+template <cudf::concepts::fixed_point L, cuda::std::floating_point R>
+struct binary_op_common_type<L, R> {
+  using type = L;
+};
+
+template <cuda::std::floating_point L, cudf::concepts::fixed_point R>
+struct binary_op_common_type<L, R> {
+  using type = R;
+};
+
+/// Binary operation common type helper
+template <typename L, typename R>
+using binary_op_common_type_t = typename binary_op_common_type<L, R>::type;
+
+/// Checks if binary operation types have a common type
+template <typename L, typename R>
+constexpr inline bool binary_op_has_common_type_v =
+  requires { typename binary_op_common_type_t<L, R>; };
 
 struct common_type_functor {
   template <typename TypeLhs, typename TypeRhs>

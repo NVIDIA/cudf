@@ -8,15 +8,11 @@
 #include <cudf/column/column.hpp>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/types.hpp>
-#include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/default_stream.hpp>
 #include <cudf/utilities/export.hpp>
 #include <cudf/utilities/memory_resource.hpp>
-#include <cudf/utilities/traits.hpp>
 
 #include <cuda/buffer>
-#include <cuda/std/concepts>
-#include <cuda/std/type_traits>
 #include <cuda/stream>
 
 #include <memory>
@@ -104,48 +100,6 @@ enum class binary_operator : int32_t {
   MOD_OVERFLOW,      ///< Modulo with divide-by-zero detection
   INVALID_BINARY     ///< invalid operation
 };
-
-/**
- * @brief Binary operation common type default
- *
- * The third template parameter is unused. It is deprecated and will be removed in a future
- * release.
- */
-template <typename L, typename R, typename = void>
-struct binary_op_common_type {};
-
-/// @cond
-// Doxygen merges partial specializations that share an argument list, which breaks the Sphinx build
-template <typename L, typename R>
-  requires(has_common_type_v<L, R>)
-struct binary_op_common_type<L, R> {
-  using type = cuda::std::common_type_t<L, R>;
-};
-
-template <cudf::concepts::fixed_point L, cuda::std::floating_point R>
-struct binary_op_common_type<L, R> {
-  using type = L;
-};
-
-template <cuda::std::floating_point L, cudf::concepts::fixed_point R>
-struct binary_op_common_type<L, R> {
-  using type = R;
-};
-/// @endcond
-
-/// Binary operation common type helper
-template <typename L, typename R>
-using binary_op_common_type_t = typename binary_op_common_type<L, R>::type;
-
-namespace detail {
-// Keeps the requires expression out of the documented declaration, which Sphinx cannot parse
-template <typename L, typename R>
-concept binary_op_has_common_type_impl = requires { typename binary_op_common_type_t<L, R>; };
-}  // namespace detail
-
-/// Checks if binary operation types have a common type
-template <typename L, typename R>
-constexpr inline bool binary_op_has_common_type_v = detail::binary_op_has_common_type_impl<L, R>;
 
 /**
  * @brief Performs a binary operation between a scalar and a column.

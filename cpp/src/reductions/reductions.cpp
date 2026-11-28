@@ -438,8 +438,7 @@ struct reduction_function<Source, cudf::aggregation::HOST_UDF> : public base_red
     auto const udf_ptr = dynamic_cast<reduce_host_udf const*>(udf_base_ptr.get());
     CUDF_EXPECTS(
       udf_ptr != nullptr, "Invalid HOST_UDF instance for reduction.", std::invalid_argument);
-    return (*udf_ptr)(
-      params.col, params.output_dtype, params.init, params.stream, params.mr.get_output_mr());
+    return (*udf_ptr)(params.col, params.output_dtype, params.init, params.stream, params.mr);
   }
 };
 

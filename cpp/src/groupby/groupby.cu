@@ -129,7 +129,7 @@ struct empty_column_constructor {
         dynamic_cast<cudf::detail::host_udf_aggregation const&>(agg).udf_ptr;
       auto const udf_ptr = dynamic_cast<groupby_host_udf const*>(udf_base_ptr.get());
       CUDF_EXPECTS(udf_ptr != nullptr, "Invalid HOST_UDF instance for groupby aggregation.");
-      return udf_ptr->get_empty_output(stream, mr.get_output_mr());
+      return udf_ptr->get_empty_output(stream, mr);
     }
 
     return make_empty_column(target_type(values.type(), k));
@@ -213,9 +213,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::aggr
 
   verify_valid_requests(requests);
 
-  if (_keys.num_rows() == 0) {
-    return {empty_like(_keys), empty_results(requests, stream, mr.get_output_mr())};
-  }
+  if (_keys.num_rows() == 0) { return {empty_like(_keys), empty_results(requests, stream, mr)}; }
 
   return detail::hash::groupby(requests, helper(), stream, mr);
 }
@@ -234,7 +232,7 @@ std::pair<std::unique_ptr<table>, std::vector<aggregation_result>> groupby::scan
   verify_valid_requests(requests);
 
   if (_keys.num_rows() == 0) {
-    return std::pair(empty_like(_keys), empty_results(requests, stream, mr.get_output_mr()));
+    return std::pair(empty_like(_keys), empty_results(requests, stream, mr));
   }
 
   return scan_grouped(requests, stream, mr);

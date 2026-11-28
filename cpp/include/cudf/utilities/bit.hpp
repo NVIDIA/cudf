@@ -7,7 +7,6 @@
 
 #include <cudf/types.hpp>
 
-#include <cuda/bit>
 #include <cuda/std/climits>
 
 #include <cassert>
@@ -120,42 +119,6 @@ CUDF_HOST_DEVICE inline bool bit_value_or(bitmask_type const* bitmask,
                                           bool default_value)
 {
   return bitmask != nullptr ? bit_is_set(bitmask, bit_index) : default_value;
-}
-
-/**
- * @brief Returns a bitmask word with the `n` least significant bits set.
- *
- * @deprecated Use `cuda::bitmask<bitmask_type>(0, n)` from `<cuda/bit>` instead.
- *
- * Behavior is undefined if `n < 0` or if `n >= size_in_bits<bitmask_type>()`
- *
- * @param n The number of least significant bits to set
- * @return A bitmask word with `n` least significant bits set
- */
-[[deprecated("Use cuda::bitmask<bitmask_type>(0, n) from <cuda/bit> instead.")]]
-constexpr CUDF_HOST_DEVICE inline bitmask_type set_least_significant_bits(size_type n)
-{
-  assert(0 <= n && n < static_cast<size_type>(detail::size_in_bits<bitmask_type>()));
-  return cuda::bitmask<bitmask_type>(0, n);
-}
-
-/**
- * @brief Returns a bitmask word with the `n` most significant bits set.
- *
- * @deprecated Use `cuda::bitmask<bitmask_type>(word_size - n, n)` from `<cuda/bit>` instead.
- * Here, `word_size` is the number of bits in `bitmask_type`.
- *
- * Behavior is undefined if `n < 0` or if `n >= size_in_bits<bitmask_type>()`
- *
- * @param n The number of most significant bits to set
- * @return A bitmask word with `n` most significant bits set
- */
-[[deprecated("Use cuda::bitmask<bitmask_type>(word_size - n, n) from <cuda/bit> instead.")]]
-constexpr CUDF_HOST_DEVICE inline bitmask_type set_most_significant_bits(size_type n)
-{
-  constexpr size_type word_size{detail::size_in_bits<bitmask_type>()};
-  assert(0 <= n && n < word_size);
-  return cuda::bitmask<bitmask_type>(word_size - n, n);
 }
 
 #ifdef __CUDACC__

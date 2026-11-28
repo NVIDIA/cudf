@@ -10,6 +10,7 @@ __pycache__
 .vscode
 *.swp
 *.pytest_cache
+devcontainer-lock.json
 DartConfiguration.tcl
 .DS_Store
 *.manifest

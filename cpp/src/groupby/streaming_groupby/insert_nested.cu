@@ -8,6 +8,9 @@
 namespace cudf::groupby {
 
 template cuda::device_buffer<size_type> streaming_groupby::impl::probe_and_insert_impl<true>(
-  table_view const& batch_keys, bool use_partials, cuda::stream_ref stream);
+  table_view const& batch_keys,
+  bool use_partials,
+  cuda::stream_ref stream,
+  cudf::memory_resources mr);
 
 }  // namespace cudf::groupby

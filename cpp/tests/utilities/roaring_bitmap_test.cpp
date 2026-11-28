@@ -7,6 +7,7 @@
 
 #include <cudf_test/base_fixture.hpp>
 #include <cudf_test/column_wrapper.hpp>
+#include <cudf_test/memory_resource_utilities.hpp>
 #include <cudf_test/testing_main.hpp>
 #include <cudf_test/type_lists.hpp>
 
@@ -78,6 +79,51 @@ TYPED_TEST(RoaringBitmapTest, Basics)
     EXPECT_TRUE(std::equal(results.begin(), results.end(), is_even));
   }
 }
+TYPED_TEST(RoaringBitmapTest, MemoryResources)
+{
+  using Key                  = TypeParam;
+  auto constexpr num_keys    = 1'000;
+  auto constexpr bitmap_type = std::is_same_v<Key, cuda::std::uint64_t>
+                                 ? cudf::roaring_bitmap_type::BITS_64
+                                 : cudf::roaring_bitmap_type::BITS_32;
+
+  auto harness                  = cudf::test::memory_resource_test_harness{};
+  cuda::stream_ref const stream = cudf::get_default_stream();
+  auto insert_keys              = std::vector<Key>(num_keys / 2);
+  std::generate(insert_keys.begin(), insert_keys.end(), [k = Key{0}]() mutable {
+    auto const result = k;
+    k += 2;
+    return result;
+  });
+  auto const serialized_bitmap_data = serialize_roaring_bitmap<Key>(insert_keys);
+  auto key_iter                     = cuda::counting_iterator<Key>(0);
+  auto keys_col    = cudf::test::fixed_width_column_wrapper<Key>(key_iter, key_iter + num_keys);
+  auto result_iter = cuda::constant_iterator<bool>(false);
+  auto result_col =
+    cudf::test::fixed_width_column_wrapper<bool>(result_iter, result_iter + num_keys).release();
+  {
+    auto explicit_bitmap = cudf::roaring_bitmap(bitmap_type, serialized_bitmap_data);
+    auto lazy_bitmap     = cudf::roaring_bitmap(bitmap_type, serialized_bitmap_data);
+    {
+      auto current_scope = harness.fail_on_current_device_resource_use();
+      explicit_bitmap.materialize(stream, harness.resources());
+      lazy_bitmap.contains_async(keys_col, result_col->mutable_view(), stream, harness.resources());
+      harness.synchronize(stream);
+    }
+    harness.expect_output_allocations_live(stream);
+    EXPECT_EQ(harness.temporary_mr().get_bytes_counter().total, 0);
+    EXPECT_EQ(explicit_bitmap.size(), insert_keys.size());
+  }
+  harness.expect_no_live_allocations(stream);
+
+  auto const is_even =
+    cudf::detail::make_counting_transform_iterator(0, [](auto const i) { return i % 2 == 0; });
+  auto results = cudf::detail::make_host_vector_async(
+    cudf::device_span<bool const>(result_col->view().template data<bool>(), num_keys), stream);
+  stream.sync();
+  EXPECT_TRUE(std::equal(results.begin(), results.end(), is_even));
+}
+
 struct RoaringBitmapErrorTest : public cudf::test::BaseFixture {};
 
 TEST_F(RoaringBitmapErrorTest, EmptySerializedBitmapData)

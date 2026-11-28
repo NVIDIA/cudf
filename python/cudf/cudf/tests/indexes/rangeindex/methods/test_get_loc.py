@@ -1,6 +1,7 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -31,3 +32,23 @@ def test_get_loc_rangeindex(key):
         got = gi.get_loc(key)
 
         assert_eq(expected, got)
+
+
+@pytest.mark.parametrize(
+    "labels, key",
+    [
+        (range(3, -4, -2), np.uint64(1)),
+        (range(0, 2**54), 2**53 + 1),
+        (range(-(2**63), 2**63), np.uint64(0)),
+    ],
+)
+def test_get_loc_exact_integer_position(labels, key):
+    assert cudf.RangeIndex(labels).get_loc(key) == pd.RangeIndex(
+        labels
+    ).get_loc(key)
+
+
+@pytest.mark.parametrize("labels", [range(0), range(4), range(4, 0, -1)])
+def test_get_loc_excludes_stop(labels):
+    with pytest.raises(KeyError):
+        cudf.RangeIndex(labels).get_loc(labels.stop)

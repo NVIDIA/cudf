@@ -2962,15 +2962,14 @@ class RangeIndex(Index):
     def get_loc(self, key) -> int:
         if not is_scalar(key):
             raise TypeError("Should be a scalar-like")
-        idx = (key - self.start) / self.step
-        idx_int_upper_bound = (self.stop - self.start) // self.step
-        if idx > idx_int_upper_bound or idx < 0:
-            raise KeyError(key)
-
-        idx_int = (key - self.start) // self.step
-        if idx_int != idx:
-            raise KeyError(key)
-        return idx_int
+        if is_integer(key) or (
+            isinstance(key, (float, np.floating)) and key.is_integer()
+        ):
+            try:
+                return self._range.index(int(key))
+            except ValueError:
+                pass
+        raise KeyError(key)
 
     @_performance_tracking
     def _union(self, other, sort=None):

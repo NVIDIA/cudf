@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
 import pylibcudf as plc
@@ -226,6 +227,107 @@ async def count_rows_passthrough(
         else:
             prefilter_statistics.output_rows = row_count
         await ch_out.drain(context)
+
+
+@dataclass(slots=True)
+class PrefilterSampleMeasurement:
+    """
+    Rows and bytes a prefilter keeps from the sampled chunks of its target.
+
+    The join replays its sampled chunks first, and both prefilter methods emit
+    exactly one chunk per input chunk, in order. The sample is therefore the
+    first ``sample_chunks`` chunks of the prefilter's output, which
+    ``measure_prefilter_sample`` counts. Chunks are identified by position:
+    sequence numbers are partition identifiers and may repeat.
+    """
+
+    sample_chunks: int
+    """Number of sampled chunks of the target on this rank."""
+    sample_rows: int
+    """Rows in those chunks."""
+    sample_size: int
+    """Bytes in those chunks."""
+    output_rows: int = 0
+    """Rows the prefilter kept from the sampled chunks."""
+    output_size: int = 0
+    """Bytes the prefilter kept from the sampled chunks."""
+    done: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+async def measure_prefilter_sample(
+    context: Context,
+    ch_in: Channel[TableChunk],
+    ch_out: Channel[TableChunk],
+    measurement: PrefilterSampleMeasurement,
+) -> None:
+    """
+    Forward a prefilter's output once the kept rows of the sample are counted.
+
+    The output for the sampled chunks is buffered (spillably), so that its
+    consumer can be configured from the measurement before it receives
+    anything.
+    """
+    buffered = ChunkStore(context)
+    try:
+        async with shutdown_channels_on_error(context, ch_in, ch_out):
+            metadata = await recv_metadata(ch_in, context)
+            exhausted = False
+            for _ in range(measurement.sample_chunks):
+                if (msg := await ch_in.recv(context)) is None:
+                    exhausted = True
+                    break
+                chunk = TableChunk.from_message(msg, br=context.br())
+                measurement.output_rows += chunk.shape[0]
+                measurement.output_size += chunk.data_alloc_size()
+                buffered.insert(Message(msg.sequence_number, chunk))
+            measurement.done.set()
+            await send_metadata(ch_out, context, metadata)
+            for buffered_msg in buffered:
+                await ch_out.send(context, buffered_msg)
+            if not exhausted:
+                while (msg := await ch_in.recv(context)) is not None:
+                    await ch_out.send(context, msg)
+            await ch_out.drain(context)
+    finally:
+        measurement.done.set()
+        buffered.clear()
+
+
+async def hold_until_measured(
+    context: Context,
+    ch_in: Channel[TableChunk],
+    ch_out: Channel[TableChunk],
+    done: Sequence[asyncio.Event],
+) -> None:
+    """
+    Forward a join input once prefilter measurements are done.
+
+    Its consumer is configured from the measurements, so it cannot receive
+    earlier; buffering (spillably) rather than blocking keeps back-pressure
+    from reaching producers that a measured prefilter may depend on.
+    """
+    buffered = ChunkStore(context)
+    try:
+        async with shutdown_channels_on_error(context, ch_in, ch_out):
+            metadata = await recv_metadata(ch_in, context)
+            exhausted = False
+            while not all(event.is_set() for event in done):
+                msg = await ch_in.recv(context)
+                if msg is None:
+                    exhausted = True
+                    break
+                buffered.insert(msg)
+            for event in done:
+                await event.wait()
+            await send_metadata(ch_out, context, metadata)
+            for buffered_msg in buffered:
+                await ch_out.send(context, buffered_msg)
+            if not exhausted:
+                while (msg := await ch_in.recv(context)) is not None:
+                    await ch_out.send(context, msg)
+            await ch_out.drain(context)
+    finally:
+        buffered.clear()
 
 
 class PrefilterExecution:

@@ -3692,13 +3692,20 @@ Java_ai_rapids_cudf_Table_filterJoinGatherMaps(JNIEnv* env,
     auto const condition   = reinterpret_cast<cudf::jni::ast::compiled_expr const*>(j_condition);
     auto const join_kind   = static_cast<cudf::join_kind>(j_join_kind);
 
-    return cudf::jni::gather_maps_to_java(env,
-                                          cudf::filter_join_indices(*left_table,
-                                                                    *right_table,
-                                                                    left_indices,
-                                                                    right_indices,
-                                                                    condition->get_top_expression(),
-                                                                    join_kind));
+    return cudf::jni::gather_maps_to_java(
+      env,
+      condition->is_jit() ? cudf::filter_join_indices_jit(*left_table,
+                                                          *right_table,
+                                                          left_indices,
+                                                          right_indices,
+                                                          condition->get_jit_top_expression(),
+                                                          join_kind)
+                          : cudf::filter_join_indices(*left_table,
+                                                      *right_table,
+                                                      left_indices,
+                                                      right_indices,
+                                                      condition->get_top_expression(),
+                                                      join_kind));
   }
   JNI_CATCH(env, NULL);
 }

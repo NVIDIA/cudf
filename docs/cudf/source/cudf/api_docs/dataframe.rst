@@ -238,6 +238,8 @@ Time Series-related
 
    DataFrame.shift
    DataFrame.resample
+   DataFrame.first_valid_index
+   DataFrame.last_valid_index
 
 
 Metadata

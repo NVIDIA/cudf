@@ -231,6 +231,8 @@ Time Series-related
 
    Series.shift
    Series.resample
+   Series.first_valid_index
+   Series.last_valid_index
 
 Metadata
 ~~~~~~~~

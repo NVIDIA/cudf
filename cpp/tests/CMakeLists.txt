@@ -744,6 +744,15 @@ add_fragment(
   cudf_test_fragments FRAGMENT ast_udf_callees SOURCE transform/fragments/ast_udf_callees.cu
 )
 
+add_fragment(
+  cudf_test_fragments FRAGMENT join_overflow_filter SOURCE join/fragments/join_overflow_filter.cu
+)
+
+add_fragment(
+  cudf_test_fragments FRAGMENT join_null_aware_filter SOURCE
+  join/fragments/join_null_aware_filter.cu
+)
+
 rtcx_embed(
   cudf_test_fragments COMPRESSION none OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/rtcx_embed"
 )

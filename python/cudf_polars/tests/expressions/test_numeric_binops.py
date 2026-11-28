@@ -184,6 +184,12 @@ def test_sql_decimal_div(engine: pl.GPUEngine):
     assert_gpu_result_equal(q, engine=engine)
 
 
+def test_sql_decimal_div_integer_divisor(engine: pl.GPUEngine):
+    df = pl.LazyFrame({"a": [10, 20, None], "b": [4, 8, 3]})
+    q = df.sql("SELECT (a * 1.000) / b AS r FROM self")
+    assert_gpu_result_equal(q, engine=engine)
+
+
 @pytest.mark.parametrize("scales", [(2, 2), (2, 4), (4, 2)])
 def test_sql_decimal_div_rounding_nulls(engine: pl.GPUEngine, scales):
     left_scale, right_scale = scales

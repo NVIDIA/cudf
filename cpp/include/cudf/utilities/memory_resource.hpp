@@ -59,7 +59,7 @@ class memory_resources {
   template <typename Resource>
   memory_resources(Resource&& output_mr)
 #ifndef DOXYGEN_SHOULD_SKIP_THIS
-    requires std::constructible_from<rmm::device_async_resource_ref, Resource&&>
+    requires std::constructible_from<cuda::mr::device_resource_ref, Resource&&>
 #endif
     : _output_mr{std::forward<Resource>(output_mr)},
       _temporary_mr{cudf::get_current_device_resource_ref()}
@@ -79,8 +79,8 @@ class memory_resources {
   template <typename OutputResource, typename TemporaryResource>
   memory_resources(OutputResource&& output_mr, TemporaryResource&& temporary_mr)
 #ifndef DOXYGEN_SHOULD_SKIP_THIS
-    requires(std::constructible_from<rmm::device_async_resource_ref, OutputResource &&> and
-             std::constructible_from<rmm::device_async_resource_ref, TemporaryResource &&>)
+    requires(std::constructible_from<cuda::mr::device_resource_ref, OutputResource &&> and
+             std::constructible_from<cuda::mr::device_resource_ref, TemporaryResource &&>)
 #endif
     : _output_mr{std::forward<OutputResource>(output_mr)},
       _temporary_mr{std::forward<TemporaryResource>(temporary_mr)}
@@ -92,14 +92,14 @@ class memory_resources {
    *
    * @return Output device memory resource reference
    */
-  [[nodiscard]] rmm::device_async_resource_ref get_output_mr() const noexcept { return _output_mr; }
+  [[nodiscard]] cuda::mr::device_resource_ref get_output_mr() const noexcept { return _output_mr; }
 
   /**
    * @brief Return the resource used for intermediate allocations.
    *
    * @return Temporary device memory resource reference
    */
-  [[nodiscard]] rmm::device_async_resource_ref get_temporary_mr() const noexcept
+  [[nodiscard]] cuda::mr::device_resource_ref get_temporary_mr() const noexcept
   {
     return _temporary_mr;
   }
@@ -117,8 +117,8 @@ class memory_resources {
   }
 
  private:
-  rmm::device_async_resource_ref _output_mr;
-  rmm::device_async_resource_ref _temporary_mr;
+  cuda::mr::device_resource_ref _output_mr;
+  cuda::mr::device_resource_ref _temporary_mr;
 };
 
 /**

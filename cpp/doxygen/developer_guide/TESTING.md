@@ -413,6 +413,27 @@ cudf::test::structs_column_wrapper wrapper{
 auto struct_col {wrapper.release()};
 ```
 
+### Explicit memory resource control
+
+Reusable test utilities that allocate device memory accept a trailing `cudf::memory_resources`. Its output resource allocates device memory owned by the returned object, while its temporary resource allocates device scratch that is released before the utility returns. The argument defaults to a one-resource construction from `cudf::get_current_device_resource_ref()`, so calls that omit the argument and existing calls that pass one resource keep their behavior.
+
+```c++
+auto upstream = cudf::get_current_device_resource_ref();
+auto output_mr = rmm::mr::statistics_resource_adaptor(upstream);
+auto temporary_mr = rmm::mr::statistics_resource_adaptor(upstream);
+auto resources = cudf::memory_resources{output_mr, temporary_mr};
+
+cudf::test::fixed_width_column_wrapper<int32_t> expected({1, 2, 3}, resources);
+cudf::test::fixed_width_column_wrapper<int32_t> actual({1, 2, 3}, resources);
+
+CUDF_TEST_EXPECT_COLUMNS_EQUAL(
+  expected, actual, cudf::test::debug_output_level::FIRST_ERROR, resources);
+```
+
+Utilities that adopt existing child columns preserve those children's resource provenance; the output resource applies only to allocations the utility creates for the returned object. Comparison, host-conversion, and debug utilities return no device-owned memory, so they use only the temporary resource. Metadata-only utilities that do not touch device memory do not accept resources.
+
+A test utility can route resources only through parameters exposed by the production APIs it calls. Hidden temporaries in production operations that do not yet accept a temporary resource continue to use the current device resource. Keep an allocation-failing current-resource guard scoped to the migrated API call rather than test setup, generic comparisons, or diagnostic formatting until those transitive dependencies are migrated.
+
 ### Column Comparison Utilities
 
 A common operation in testing is verifying that two columns are equal, or equivalent, or that they

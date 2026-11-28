@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from libc.stdint cimport int32_t
 from libcpp.memory cimport unique_ptr
@@ -11,7 +11,7 @@ from pylibcudf.libcudf.scalar.scalar cimport (
     timestamp_scalar,
 )
 from pylibcudf.libcudf.table.table_view cimport table_view
-from pylibcudf.libcudf.types cimport size_type
+from pylibcudf.libcudf.types cimport nan_semantics, size_type
 
 
 cdef extern from "cudf/ast/expressions.hpp" namespace "cudf::ast" nogil:
@@ -67,7 +67,8 @@ cdef extern from "cudf/ast/expressions.hpp" namespace "cudf::ast" nogil:
         NOT
 
     cdef cppclass expression:
-        pass
+        void set_nan_semantics(nan_semantics) noexcept
+        nan_semantics get_nan_semantics() noexcept
 
     cpdef enum class table_reference(int32_t):
         LEFT

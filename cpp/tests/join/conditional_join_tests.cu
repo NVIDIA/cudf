@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <random>
 #include <stdexcept>
@@ -927,3 +928,45 @@ TYPED_TEST(ConditionalLeftAntiJoinTest, TestCompareRandomToHashNulls)
   auto [left, right] = gen_random_nullable_repeated_columns<TypeParam>();
   this->compare_to_hash_join_nulls({left}, {right});
 };
+
+namespace {
+/// Returns the (left, right) index pairs of a join result, sorted
+std::vector<std::pair<cudf::size_type, cudf::size_type>> sorted_index_pairs(
+  std::pair<std::unique_ptr<rmm::device_uvector<cudf::size_type>>,
+            std::unique_ptr<rmm::device_uvector<cudf::size_type>>> const& result)
+{
+  auto const stream = cudf::get_default_stream();
+  auto const left   = cudf::detail::make_std_vector(*result.first, stream);
+  auto const right  = cudf::detail::make_std_vector(*result.second, stream);
+  std::vector<std::pair<cudf::size_type, cudf::size_type>> pairs;
+  for (std::size_t i = 0; i < left.size(); ++i) {
+    pairs.emplace_back(left[i], right[i]);
+  }
+  std::sort(pairs.begin(), pairs.end());
+  return pairs;
+}
+}  // namespace
+
+struct ConditionalJoinNanSemanticsTest : public cudf::test::BaseFixture {};
+
+TEST_F(ConditionalJoinNanSemanticsTest, InnerJoinLessEqual)
+{
+  auto constexpr NaN = std::numeric_limits<double>::quiet_NaN();
+  auto left_col      = cudf::test::fixed_width_column_wrapper<double>{NaN, 1.0, 2.0};
+  auto right_col     = cudf::test::fixed_width_column_wrapper<double>{NaN, 3.0};
+  auto left          = cudf::table_view{{left_col}};
+  auto right         = cudf::table_view{{right_col}};
+
+  auto left_ref  = cudf::ast::column_reference(0, cudf::ast::table_reference::LEFT);
+  auto right_ref = cudf::ast::column_reference(0, cudf::ast::table_reference::RIGHT);
+  auto predicate = cudf::ast::operation(cudf::ast::ast_operator::LESS_EQUAL, left_ref, right_ref);
+
+  using pairs = std::vector<std::pair<cudf::size_type, cudf::size_type>>;
+  EXPECT_EQ(sorted_index_pairs(cudf::conditional_inner_join(left, right, predicate)),
+            (pairs{{1, 1}, {2, 1}}));
+
+  // With TOTALLY_ORDERED, NaN equals NaN and every other value is less than NaN
+  predicate.set_nan_semantics(cudf::nan_semantics::TOTALLY_ORDERED);
+  EXPECT_EQ(sorted_index_pairs(cudf::conditional_inner_join(left, right, predicate)),
+            (pairs{{0, 0}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}));
+}

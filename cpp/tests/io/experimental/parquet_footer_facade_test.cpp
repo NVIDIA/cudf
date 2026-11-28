@@ -9,6 +9,7 @@
 #include <cudf_test/testing_main.hpp>
 
 #include <cudf/io/datasource.hpp>
+#include <cudf/io/experimental/hybrid_scan.hpp>
 #include <cudf/io/experimental/parquet_footer.hpp>
 #include <cudf/io/parquet.hpp>
 #include <cudf/io/parquet_metadata.hpp>
@@ -24,6 +25,7 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace cudf::io::parquet;
@@ -1193,6 +1195,46 @@ TEST_F(ParquetFooterFacadeTest, LogicalTypeFieldWithWrongWireTypeIsSkipped)
   EXPECT_FALSE(parsed.schema[0].logical_type.has_value());
   EXPECT_FALSE(parsed.schema[0].logical_type_payload.variant_type.has_value());
   EXPECT_THROW((void)experimental::read_parquet_footer_bytes(footer), cudf::logic_error);
+}
+
+// Unrecognized logical/physical combinations drop the logical annotation (the column is read as
+// plain physical data); valid combinations keep it. Only a footer is needed, no data pages.
+TEST_F(ParquetFooterFacadeTest, UnsupportedLogicalPhysicalCombinationDropsAnnotation)
+{
+  auto const make_leaf = [](std::string name, Type type, LogicalType logical_type) {
+    SchemaElement leaf;
+    leaf.name         = std::move(name);
+    leaf.type         = type;
+    leaf.logical_type = logical_type;
+    return leaf;
+  };
+
+  FileMetaData meta;
+  meta.version  = 2;
+  meta.num_rows = 0;
+  SchemaElement root;
+  root.name         = "schema";
+  root.num_children = 6;
+  meta.schema       = {root,
+                       make_leaf("decimal_on_bool", Type::BOOLEAN, LogicalType{DecimalType{2, 9}}),
+                       make_leaf("int32_on_int64", Type::INT64, LogicalType{IntType{32, true}}),
+                       make_leaf("decimal_on_int64", Type::INT64, LogicalType{DecimalType{2, 18}}),
+                       make_leaf("date_on_int32", Type::INT32, LogicalType{LogicalType::DATE}),
+                       make_leaf("string_on_binary", Type::BYTE_ARRAY, LogicalType{LogicalType::STRING}),
+                       make_leaf("file_on_binary", Type::BYTE_ARRAY, LogicalType{LogicalType::FILE})};
+
+  auto const bytes = experimental::write_parquet_footer_bytes(meta);
+  cudf::io::parquet::experimental::hybrid_scan_reader reader(bytes,
+                                                             cudf::io::parquet_reader_options{});
+  auto const schema = reader.parquet_metadata().schema;
+  ASSERT_EQ(schema.size(), 7);
+
+  EXPECT_FALSE(schema[1].logical_type.has_value());  // DECIMAL on BOOLEAN
+  EXPECT_FALSE(schema[2].logical_type.has_value());  // INTEGER(32) on INT64
+  EXPECT_TRUE(schema[3].logical_type.has_value());   // DECIMAL on INT64
+  EXPECT_TRUE(schema[4].logical_type.has_value());   // DATE on INT32
+  EXPECT_TRUE(schema[5].logical_type.has_value());   // STRING on BYTE_ARRAY
+  EXPECT_FALSE(schema[6].logical_type.has_value());  // FILE annotates groups, not leaves
 }
 
 CUDF_TEST_PROGRAM_MAIN()

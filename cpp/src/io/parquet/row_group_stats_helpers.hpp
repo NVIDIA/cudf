@@ -133,7 +133,10 @@ struct row_group_stats_caster : public stats_caster_base {
             auto const ignore_inexact_min_max =
               (stats.is_min_value_exact == false or stats.is_max_value_exact == false) and
               min_value->has_value() and *min_value == *max_value;
-            if (ignore_int96_min_max or ignore_inexact_min_max) {
+            // Min/max of columns whose unsupported logical type was dropped can't be interpreted
+            auto const ignore_unsupported_logical =
+              source_metadata.stats_ignored(mapped_schema_idx);
+            if (ignore_int96_min_max or ignore_inexact_min_max or ignore_unsupported_logical) {
               host_column<T>::set_min_max(
                 min, max, stats_idx, std::nullopt, std::nullopt, false, {});
             } else {

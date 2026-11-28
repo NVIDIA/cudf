@@ -111,7 +111,12 @@ struct contains_scalar_dispatch {
     auto const check_nulls      = haystack.has_nulls();
     auto const haystack_cdv_ptr = column_device_view::create(haystack, stream, temp_mr);
 
-    auto const d_comp = comparator.equal_to<true>(nullate::DYNAMIC{has_nulls});
+    // have_same_types() above includes the scales of nested decimal leaves.
+    using physical_comparator =
+      cudf::detail::row::equality::equal_scale_physical_equality_comparator<
+        cudf::detail::row::equality::nan_equal_physical_equality_comparator>;
+    auto const d_comp = comparator.equal_to<true>(
+      nullate::DYNAMIC{has_nulls}, null_equality::EQUAL, physical_comparator{});
 
     // Using a temporary buffer for intermediate transform results from the lambda containing
     // the comparator speeds up compile-time significantly without much degradation in

@@ -50,6 +50,24 @@ namespace detail::row::lexicographic {
 
 using optional_dremel_view = cuda::std::optional<detail::dremel_device_view const>;
 
+// Validated corresponding decimal leaves have identical scales, so their
+// representations preserve ordering without general scale adjustment.
+template <typename PhysicalElementComparator>
+struct equal_scale_physical_element_comparator {
+  template <typename Element>
+  __device__ constexpr cudf::detail::weak_ordering operator()(Element const lhs,
+                                                              Element const rhs) const noexcept
+  {
+    if constexpr (cudf::is_fixed_point<Element>()) {
+      return comparator(lhs.value(), rhs.value());
+    } else {
+      return comparator(lhs, rhs);
+    }
+  }
+
+  PhysicalElementComparator comparator;
+};
+
 // The has_nested_columns template parameter of the device_row_comparator is
 // necessary to help the compiler optimize our code. Without it, the list and
 // struct view specializations are present in the code paths used for primitive
@@ -745,8 +763,12 @@ struct preprocessed_table {
   template <typename PhysicalElementComparator>
   void check_physical_element_comparator()
   {
+    // The equal-scale adapter preserves the built-in ordering of preprocessed integer ranks.
     if constexpr (!cuda::std::is_same_v<PhysicalElementComparator,
-                                        sorting_physical_element_comparator>) {
+                                        sorting_physical_element_comparator> &&
+                  !cuda::std::is_same_v<
+                    PhysicalElementComparator,
+                    equal_scale_physical_element_comparator<sorting_physical_element_comparator>>) {
       CUDF_EXPECTS(!_has_ranked_children,
                    "The input table has nested type children and they were transformed using a "
                    "different type of physical element comparator.");

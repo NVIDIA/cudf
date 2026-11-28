@@ -88,6 +88,23 @@ struct nan_equal_physical_equality_comparator {
   }
 };
 
+// Selected callers validate identical scales for corresponding decimal leaves,
+// so rescaling cannot affect equality; other value semantics must stay intact.
+template <typename PhysicalEqualityComparator>
+struct equal_scale_physical_equality_comparator {
+  template <typename Element>
+  __device__ constexpr bool operator()(Element const lhs, Element const rhs) const noexcept
+  {
+    if constexpr (cudf::is_fixed_point<Element>()) {
+      return comparator(lhs.value(), rhs.value());
+    } else {
+      return comparator(lhs, rhs);
+    }
+  }
+
+  PhysicalEqualityComparator comparator;
+};
+
 /**
  * @brief Computes the equality comparison between 2 rows.
  *

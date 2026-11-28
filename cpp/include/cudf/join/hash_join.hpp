@@ -81,13 +81,15 @@ class hash_join {
    * @param right The right table, from which the hash table is built
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   * live as long as the join object, such as the hash table; the temporary resource backs scratch
+   * used during construction. Both are non-owning references, so the resources they refer to must
+   * outlive the join object.
    */
   hash_join(cudf::table_view const& right,
             null_equality compare_nulls,
-            cuda::stream_ref stream = cudf::get_default_stream(),
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-              cudf::get_current_device_resource_ref());
+            cuda::stream_ref stream   = cudf::get_default_stream(),
+            cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Construct a hash join object for subsequent probe calls.
@@ -105,15 +107,17 @@ class hash_join {
    * @param load_factor The hash table occupancy ratio in (0,1]. A value of 0.5 means 50% desired
    * occupancy.
    * @param stream CUDA stream used for device memory operations and kernel launches
-   * @param mr Device memory resource used to allocate the internal hash table
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   * live as long as the join object, such as the hash table; the temporary resource backs scratch
+   * used during construction. Both are non-owning references, so the resources they refer to must
+   * outlive the join object.
    */
   hash_join(cudf::table_view const& right,
             nullable_join has_nulls,
             null_equality compare_nulls,
             double load_factor,
-            cuda::stream_ref stream = cudf::get_default_stream(),
-            cuda::mr::any_resource<cuda::mr::device_accessible> mr =
-              cudf::get_current_device_resource_ref());
+            cuda::stream_ref stream   = cudf::get_default_stream(),
+            cudf::memory_resources mr = cudf::get_current_device_resource_ref());
 
   /**
    * Returns the row indices that can be used to construct the result of performing
@@ -211,12 +215,15 @@ class hash_join {
    *
    * @param left The left table, from which the tuples are probed
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return The exact number of output when performing an inner join between two tables with
    * `left` and `right` as the join keys .
    */
   [[nodiscard]] std::size_t inner_join_size(
-    cudf::table_view const& left, cuda::stream_ref stream = cudf::get_default_stream()) const;
+    cudf::table_view const& left,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the exact number of matches (rows) when performing a left join with the specified left
@@ -227,12 +234,15 @@ class hash_join {
    *
    * @param left The left table, from which the tuples are probed
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    *
    * @return The exact number of output when performing a left join between two tables with `left`
    * and `right` as the join keys .
    */
   [[nodiscard]] std::size_t left_join_size(
-    cudf::table_view const& left, cuda::stream_ref stream = cudf::get_default_stream()) const;
+    cudf::table_view const& left,
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
   /**
    * Returns the exact number of matches (rows) when performing a full join with the specified left

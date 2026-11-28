@@ -152,9 +152,12 @@ struct join_match_context {
    * @throw std::invalid_argument If the context has no match counts
    *
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used for temporary allocations
    * @return Number of row index pairs
    */
-  [[nodiscard]] std::size_t output_size(cuda::stream_ref stream = cudf::get_default_stream()) const;
+  [[nodiscard]] std::size_t output_size(
+    cuda::stream_ref stream   = cudf::get_default_stream(),
+    cudf::memory_resources mr = cudf::get_current_device_resource_ref()) const;
 
  private:
   friend struct detail::join_match_state;

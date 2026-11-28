@@ -63,11 +63,16 @@ class sort_merge_join {
    * @param is_right_sorted Enum to indicate if right table is pre-sorted
    * @param compare_nulls Controls whether null join-key values should match or not
    * @param stream CUDA stream used for device memory operations and kernel launches
+   * @param mr Memory resources used by the join object. The output resource backs allocations that
+   * live as long as the join object, such as the preprocessed right table; the temporary resource
+   * backs scratch used during construction. Both are non-owning references, so the resources they
+   * refer to must outlive the join object.
    */
   sort_merge_join(table_view const& right,
                   sorted is_right_sorted,
                   null_equality compare_nulls = null_equality::EQUAL,
-                  cuda::stream_ref stream     = cudf::get_default_stream());
+                  cuda::stream_ref stream     = cudf::get_default_stream(),
+                  cudf::memory_resources mr   = cudf::get_current_device_resource_ref());
 
   /**
    * @brief Returns the row indices that can be used to construct the result of performing

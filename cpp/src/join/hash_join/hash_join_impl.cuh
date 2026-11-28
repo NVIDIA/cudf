@@ -25,11 +25,10 @@ struct hash_join<Hasher>::impl {
   impl(cuda::std::uint32_t capacity,
        size_type rows,
        cuda::stream_ref stream,
-       cuda::mr::any_resource<cuda::mr::device_accessible> mr)
-    : _mr(std::move(mr)),
-      _slots(stream, _mr, capacity, cuda::no_init),
-      _offsets(stream, _mr, static_cast<std::size_t>(rows) + 1, cuda::no_init),
-      _values(stream, _mr, 0, cuda::no_init),
+       rmm::device_async_resource_ref mr)
+    : _slots(stream, mr, capacity, cuda::no_init),
+      _offsets(stream, mr, static_cast<std::size_t>(rows) + 1, cuda::no_init),
+      _values(stream, mr, 0, cuda::no_init),
       _capacity(capacity),
       _row_mask(
         (cuda::std::uint32_t{1} << cuda::std::bit_width(static_cast<cuda::std::uint32_t>(rows))) -
@@ -44,7 +43,6 @@ struct hash_join<Hasher>::impl {
 
   csr_ref csr() const { return {_offsets.data(), _values.data()}; }
 
-  cuda::mr::any_resource<cuda::mr::device_accessible> _mr;
   cuda::device_buffer<hash_table_slot_type> _slots;
   cuda::device_buffer<size_type> _offsets;
   cuda::device_buffer<size_type> _values;

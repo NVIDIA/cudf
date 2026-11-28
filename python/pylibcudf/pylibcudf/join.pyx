@@ -32,7 +32,6 @@ from pylibcudf.libcudf.asof_join import (
 )
 from pylibcudf.libcudf.join import nullable_join as NullableJoin  # no-cython-lint
 
-from rmm.librmm.memory_resource cimport any_resource, device_accessible
 from rmm.pylibrmm.stream cimport Stream
 from rmm.pylibrmm.memory_resource cimport DeviceMemoryResource
 
@@ -421,7 +420,7 @@ cpdef Column left_semi_join(
                 c_right_keys,
                 nulls_equal,
                 _cs,
-                any_resource[device_accessible](mr.get_mr()),
+                mr.get_mr(),
             )
         )
         c_result = join_obj.get()[0].semi_join(
@@ -473,7 +472,7 @@ cpdef Column left_anti_join(
                 c_right_keys,
                 nulls_equal,
                 _cs,
-                any_resource[device_accessible](mr.get_mr()),
+                mr.get_mr(),
             )
         )
         c_result = join_obj.get()[0].anti_join(
@@ -1113,7 +1112,7 @@ cdef class FilteredJoin:
         cdef Stream _stream = _get_stream(stream)
         cdef cudaStream_t _cs = _stream.view().get()
         cdef table_view c_right = right.view()
-        mr = _get_memory_resource(mr)
+        self.mr = _get_memory_resource(mr)  # keep resource alive
         self.right = right  # keep filter table alive
         with nogil:
             self.c_obj.reset(
@@ -1122,7 +1121,7 @@ cdef class FilteredJoin:
                     compare_nulls,
                     load_factor,
                     _cs,
-                    any_resource[device_accessible](mr.get_mr()),
+                    self.mr.get_mr(),
                 )
             )
 
@@ -1259,7 +1258,7 @@ cdef class HashJoin:
         cdef cudaStream_t _cs = _stream.view().get()
         cdef table_view c_right = right.view()
         self.right = right  # keep table alive
-        mr = _get_memory_resource(mr)
+        self.mr = _get_memory_resource(mr)  # keep resource alive
         with nogil:
             self.c_obj.reset(
                 new cpp_join.hash_join(
@@ -1268,7 +1267,7 @@ cdef class HashJoin:
                     compare_nulls,
                     load_factor,
                     _cs,
-                    any_resource[device_accessible](mr.get_mr())
+                    self.mr.get_mr()
                 )
             )
 

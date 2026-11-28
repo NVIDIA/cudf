@@ -5,8 +5,36 @@
 # cmake-format: on
 # =============================================================================
 
-# Use CPM to find or clone xxHash
+# Keep JIT cache-key behavior consistent when using installed xxHash headers.
 function(find_and_configure_xxhash)
+
+  if(NOT TARGET xxhash
+     AND NOT CPM_DOWNLOAD_ALL
+     AND NOT CPM_DOWNLOAD_xxhash
+     AND NOT CPM_xxhash_SOURCE
+  )
+    find_path(xxhash_package_include_dir NAMES xxhash.h NO_CACHE)
+    if(xxhash_package_include_dir AND EXISTS "${xxhash_package_include_dir}/xxh3.h")
+      file(STRINGS "${xxhash_package_include_dir}/xxhash.h" version_parts
+           REGEX "^#define XXH_VERSION_(MAJOR|MINOR|RELEASE) +[0-9]+$"
+      )
+      list(TRANSFORM version_parts REPLACE "^.* +([0-9]+)$" "\\1")
+      list(JOIN version_parts "." header_version)
+      if(header_version VERSION_EQUAL "0.8.3")
+        message(STATUS "Using packaged xxHash headers: ${xxhash_package_include_dir}")
+        # cuDF and RTCX use the header-only API, so do not link the packaged library.
+        add_library(xxhash INTERFACE IMPORTED GLOBAL)
+        set_target_properties(
+          xxhash PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${xxhash_package_include_dir}"
+        )
+        set(XXHASH_INCLUDE_DIR
+            "${xxhash_package_include_dir}"
+            PARENT_SCOPE
+        )
+        return()
+      endif()
+    endif()
+  endif()
 
   include(${rapids-cmake-dir}/find/generate_module.cmake)
   rapids_find_generate_module(xxhash HEADER_NAMES xxhash.h xxh3.h)

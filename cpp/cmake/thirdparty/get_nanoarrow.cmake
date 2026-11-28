@@ -11,9 +11,10 @@ function(find_and_configure_nanoarrow BUILD_SHARED EXCLUDE_FROM_ALL)
     nanoarrow 0.8.0
     GLOBAL_TARGETS nanoarrow_static nanoarrow_shared
     CPM_ARGS
-    GIT_REPOSITORY https://github.com/apache/arrow-nanoarrow.git
-    GIT_TAG apache-arrow-nanoarrow-0.8.0
-    GIT_SHALLOW TRUE
+      URL
+      https://github.com/apache/arrow-nanoarrow/archive/refs/tags/apache-arrow-nanoarrow-0.8.0.tar.gz
+      URL_HASH
+      SHA256=1c5136edf5c1e9cd8c47c4e31dfe07d0e09c25f27be20c8d6e78a0f4a4ed3fae
     OPTIONS "BUILD_SHARED_LIBS ${BUILD_SHARED}" "NANOARROW_NAMESPACE cudf"
     EXCLUDE_FROM_ALL ${EXCLUDE_FROM_ALL}
   )

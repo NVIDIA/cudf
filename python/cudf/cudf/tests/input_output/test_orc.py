@@ -250,6 +250,7 @@ def test_orc_read_statistics(datadir):
         (("int1", "==", 1), 5000),
         (("int1", "<=", 2), 10000),
         (("int1", "==", -1), 0),
+        (("int1", "!=", 1), 6000),
         (("int1", "in", range(3)), 10000),
         (("int1", "in", {1, 3}), 6000),
         (("int1", "not in", {1, 3}), 5000),
@@ -264,6 +265,29 @@ def test_orc_read_filtered(datadir, engine, predicate, expected_len):
         pytest.skip(".orc file is not found: %s" % e)
 
     # Assert # of rows after filtering
+    assert len(df_filtered) == expected_len
+
+
+@pytest.mark.filterwarnings("ignore:Using CPU")
+@pytest.mark.parametrize(
+    "data,predicate,expected_len",
+    [
+        ([True, False], ("x", "!=", True), 2),
+        ([True, True], ("x", "!=", True), 0),
+        ([False, False], ("x", "!=", False), 0),
+        ([False, False], ("x", "!=", True), 2),
+        ([True, True], ("x", "!=", False), 2),
+        ([None, None], ("x", "!=", True), 2),
+    ],
+)
+def test_orc_read_filtered_bool_not_equal(
+    engine, data, predicate, expected_len
+):
+    buffer = BytesIO()
+    orc.write_table(pa.table({"x": pa.array(data, type=pa.bool_())}), buffer)
+
+    df_filtered = cudf.read_orc(buffer, engine=engine, filters=[[predicate]])
+
     assert len(df_filtered) == expected_len
 
 

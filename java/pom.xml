@@ -187,6 +187,12 @@
             <scope>test</scope>
         </dependency>
         <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-simple</artifactId>
             <version>${slf4j.version}</version>
@@ -233,6 +239,7 @@
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <junit.version>5.4.2</junit.version>
+        <assertj.version>3.27.7</assertj.version>
         <ai.rapids.refcount.debug>false</ai.rapids.refcount.debug>
         <ai.rapids.cudf.nvtx.enabled>false</ai.rapids.cudf.nvtx.enabled>
         <skipNativeCopy>false</skipNativeCopy>

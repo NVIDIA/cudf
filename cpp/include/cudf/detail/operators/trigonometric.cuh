@@ -9,6 +9,7 @@
 
 #include <cuda/std/cmath>
 #include <cuda/std/concepts>
+#include <cuda/std/type_traits>
 
 namespace CUDF_EXPORT cudf {
 namespace detail {
@@ -156,6 +157,21 @@ template <cuda::std::floating_point T>
 __device__ T tanh(T a)
 {
   return cuda::std::tanh(a);
+}
+
+/**
+ * @brief Computes the quadrant-aware inverse tangent of a divided by b, returning double.
+ *
+ * @tparam A Numerator type.
+ * @tparam B Denominator type.
+ * @param a Numerator.
+ * @param b Denominator.
+ */
+template <typename A, typename B>
+__device__ double arctan2(A a, B b)
+  requires(cuda::std::is_convertible_v<A, double> && cuda::std::is_convertible_v<B, double>)
+{
+  return cuda::std::atan2(static_cast<double>(a), static_cast<double>(b));
 }
 
 }  // namespace ops

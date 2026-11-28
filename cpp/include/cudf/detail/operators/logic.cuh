@@ -81,10 +81,10 @@ __device__ cuda::std::optional<bool> null_logical_and(cuda::std::optional<A> a,
   } else if (!a.has_value() && !b.has_value()) {
     return {};
   } else {
-    if (a.has_value() ? *a : *b) {
-      return {};
-    } else {
+    if (a.has_value() ? !*a : !*b) {
       return false;
+    } else {
+      return {};
     }
   }
 }
@@ -114,10 +114,10 @@ __device__ cuda::std::optional<bool> null_logical_or(cuda::std::optional<A> a,
   } else if (!a.has_value() && !b.has_value()) {
     return {};
   } else {
-    if (a.has_value() ? *a : *b) {
-      return true;
-    } else {
+    if (a.has_value() ? !*a : !*b) {
       return {};
+    } else {
+      return true;
     }
   }
 }

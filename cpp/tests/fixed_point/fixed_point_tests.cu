@@ -8,6 +8,7 @@
 #include <cudf_test/column_wrapper.hpp>
 #include <cudf_test/type_lists.hpp>
 
+#include <cudf/detail/operators/logic.cuh>
 #include <cudf/detail/utilities/buffer_factories.hpp>
 #include <cudf/detail/utilities/vector_factories.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
@@ -18,6 +19,9 @@
 #include <rmm/exec_policy.hpp>
 
 #include <cuda/buffer>
+#include <cuda/iterator>
+#include <cuda/std/optional>
+#include <thrust/logical.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/transform.h>
@@ -65,11 +69,41 @@ TYPED_TEST(FixedPointTestAllReps, DecimalXXThrust)
 }
 
 namespace {
+
+struct decimal32_decimal64_null_logic {
+  __device__ bool operator()(int i) const
+  {
+    // Each operand takes the values false, true and null, with different decimal scales.
+    auto const lhs = i / 3 == 2 ? cuda::std::optional<decimal32>{}
+                                : cuda::std::optional{decimal32{i / 3, scale_type{-2}}};
+    auto const rhs = i % 3 == 2 ? cuda::std::optional<decimal64>{}
+                                : cuda::std::optional{decimal64{10 * (i % 3), scale_type{1}}};
+    using cuda::std::nullopt;
+    cuda::std::optional<bool> const expected_and[] = {
+      false, false, false, false, true, nullopt, false, nullopt, nullopt};
+    cuda::std::optional<bool> const expected_or[] = {
+      false, true, nullopt, true, true, true, nullopt, true, nullopt};
+
+    return cudf::detail::ops::null_logical_and(lhs, rhs) == expected_and[i] &&
+           cudf::detail::ops::null_logical_and(rhs, lhs) == expected_and[i] &&
+           cudf::detail::ops::null_logical_or(lhs, rhs) == expected_or[i] &&
+           cudf::detail::ops::null_logical_or(rhs, lhs) == expected_or[i];
+  }
+};
+
 struct cast_to_int32_fn {
   using decimal32 = fixed_point<int32_t, Radix::BASE_10>;
   int32_t __host__ __device__ operator()(decimal32 fp) { return static_cast<int32_t>(fp); }
 };
 }  // namespace
+
+TEST_F(FixedPointTest, ImplicitNullLogicCast)
+{
+  EXPECT_TRUE(thrust::all_of(rmm::exec_policy_nosync(cudf::get_default_stream()),
+                             cuda::counting_iterator<int>{0},
+                             cuda::counting_iterator<int>{9},
+                             decimal32_decimal64_null_logic{}));
+}
 
 TEST_F(FixedPointTest, DecimalXXThrustOnDevice)
 {

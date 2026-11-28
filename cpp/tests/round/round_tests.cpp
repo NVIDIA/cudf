@@ -19,11 +19,15 @@ template <typename T>
 struct RoundTestsIntegerTypes : public cudf::test::BaseFixture {};
 
 template <typename T>
+struct RoundTestsIntegralTypes : public cudf::test::BaseFixture {};
+
+template <typename T>
 struct RoundTestsFixedPointTypes : public cudf::test::BaseFixture {};
 
 using IntegerTypes = cudf::test::Types<int16_t, int32_t, int64_t>;
 
 TYPED_TEST_SUITE(RoundTestsIntegerTypes, IntegerTypes);
+TYPED_TEST_SUITE(RoundTestsIntegralTypes, cudf::test::IntegralTypesNotBool);
 TYPED_TEST_SUITE(RoundTestsFixedPointTypes, cudf::test::FixedPointTypes);
 
 TYPED_TEST(RoundTestsFixedPointTypes, SimpleFixedPointTestHalfUpZero)
@@ -403,6 +407,29 @@ TEST_F(RoundTests, SimpleNegativeIntegerWithUnsignedNumbersHalfUp)
   auto const result   = cudf::round_decimal(input, -2, cudf::rounding_method::HALF_UP);
 
   CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+}
+
+TYPED_TEST(RoundTestsIntegralTypes, UnrepresentableRoundingIncrement)
+{
+  using T          = TypeParam;
+  using fw_wrapper = cudf::test::fixed_width_column_wrapper<T>;
+
+  for (bool has_nulls : {false, true}) {
+    auto const input =
+      has_nulls
+        ? fw_wrapper{{T{100}, std::numeric_limits<T>::max(), std::numeric_limits<T>::min(), T{0}},
+                     {true, true, true, false}}
+        : fw_wrapper{T{100}, std::numeric_limits<T>::max(), std::numeric_limits<T>::min(), T{0}};
+    auto const expected =
+      has_nulls ? fw_wrapper{{0, 0, 0, 0}, {true, true, true, false}} : fw_wrapper{0, 0, 0, 0};
+    for (auto decimal_places :
+         {-(std::numeric_limits<T>::digits10 + 1), -100, std::numeric_limits<int32_t>::min()}) {
+      for (auto method : {cudf::rounding_method::HALF_UP, cudf::rounding_method::HALF_EVEN}) {
+        auto const result = cudf::round_decimal(input, decimal_places, method);
+        CUDF_TEST_EXPECT_COLUMNS_EQUAL(expected, result->view());
+      }
+    }
+  }
 }
 
 TEST_F(RoundTests, SimpleNegativeInt8HalfEven)

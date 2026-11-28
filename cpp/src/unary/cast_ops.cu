@@ -5,13 +5,13 @@
 
 #include <cudf/column/column.hpp>
 #include <cudf/column/column_device_view.cuh>
-#include <cudf/detail/binaryop.hpp>
-#include <cudf/detail/fill.hpp>
+#include <cudf/column/column_factories.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/casts.cuh>
+#include <cudf/detail/operators/math.cuh>
 #include <cudf/detail/unary.hpp>
 #include <cudf/detail/valid_if.cuh>
-#include <cudf/fixed_point/conv.hpp>
 #include <cudf/fixed_point/fixed_point.hpp>
 #include <cudf/null_mask.hpp>
 #include <cudf/scalar/scalar_factories.hpp>
@@ -32,51 +32,12 @@
 namespace cudf {
 namespace detail {
 namespace {  // anonymous namespace
-template <typename _TargetT>
+template <typename TargetT>
 struct unary_cast {
-  template <cudf::concepts::arithmetic SourceT, cudf::concepts::arithmetic TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
+  template <typename SourceT>
+  __device__ TargetT operator()(SourceT element) const
   {
-    return static_cast<TargetT>(element);
-  }
-
-  template <cudf::concepts::timestamp SourceT, cudf::concepts::timestamp TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
-  {
-    // Convert source tick counts into target tick counts without blindly truncating them
-    // by dividing the respective duration time periods (which may not work for time before
-    // UNIX epoch)
-    return TargetT{cuda::std::chrono::floor<TargetT::duration>(element.time_since_epoch())};
-  }
-
-  template <cudf::concepts::duration SourceT, cudf::concepts::duration TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
-  {
-    return TargetT{cuda::std::chrono::floor<TargetT>(element)};
-  }
-
-  template <cudf::concepts::arithmetic SourceT, cudf::concepts::duration TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
-  {
-    return TargetT{static_cast<typename TargetT::rep>(element)};
-  }
-
-  template <cudf::concepts::timestamp SourceT, cudf::concepts::duration TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
-  {
-    return TargetT{cuda::std::chrono::floor<TargetT>(element.time_since_epoch())};
-  }
-
-  template <cudf::concepts::duration SourceT, cudf::concepts::arithmetic TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
-  {
-    return static_cast<TargetT>(element.count());
-  }
-
-  template <cudf::concepts::duration SourceT, cudf::concepts::timestamp TargetT = _TargetT>
-  __device__ inline TargetT operator()(SourceT const element)
-  {
-    return TargetT{cuda::std::chrono::floor<TargetT::duration>(element)};
+    return ops::cast<TargetT>(element);
   }
 };
 
@@ -91,22 +52,14 @@ struct fixed_point_unary_cast {
     requires(cudf::concepts::fixed_point<_SourceT> && cudf::concepts::arithmetic<TargetT>)
   {
     auto const fixed_point = SourceT{numeric::scaled_integer<DeviceT>{element, scale}};
-    if constexpr (cuda::std::is_floating_point_v<TargetT>) {
-      return convert_fixed_to_floating<TargetT>(fixed_point);
-    } else {
-      return static_cast<TargetT>(fixed_point);
-    }
+    return ops::cast<TargetT>(fixed_point);
   }
 
   template <typename SourceT = _SourceT, typename TargetT = _TargetT>
   __device__ inline DeviceT operator()(SourceT const element)
     requires(cudf::concepts::arithmetic<_SourceT> && cudf::concepts::fixed_point<TargetT>)
   {
-    if constexpr (cuda::std::is_floating_point_v<SourceT>) {
-      return convert_floating_to_fixed<TargetT>(element, scale).value();
-    } else {
-      return TargetT{element, scale}.value();
-    }
+    return ops::cast<TargetT>(element, scale).value();
   }
 };
 
@@ -137,7 +90,7 @@ constexpr inline auto is_supported_cast()
 
 template <typename From, typename To>
 struct device_cast {
-  __device__ To operator()(From element) { return static_cast<To>(element); }
+  __device__ To operator()(From element) { return ops::cast<To>(element); }
 };
 
 /**
@@ -161,18 +114,12 @@ std::unique_ptr<column> rescale(column_view input,
   using namespace numeric;
   using RepType = device_storage_type_t<T>;
 
-  auto const temp_mr = mr.get_temporary_mr();
-  auto const type    = cudf::data_type{cudf::type_to_id<T>(), scale};
-  if (input.type().scale() >= scale) {
-    auto const scalar = make_fixed_point_scalar<T>(0, scale_type{scale}, stream, temp_mr);
-    return detail::binary_operation(input, *scalar, binary_operator::ADD, type, stream, mr);
-  } else {
+  auto const type = cudf::data_type{cudf::type_to_id<T>(), scale};
+  if (input.type().scale() < scale) {
     auto const diff = input.type().scale() - scale;
-    // The value of fixed point scalar will overflow if the scale difference is larger than the
-    // max digits of underlying integral type. Under this condition, the output values can be
-    // nothing other than zero value. Therefore, we simply return a zero column.
+    // A larger divisor cannot be represented, and every rescaled value would truncate to zero.
     if (-diff > cuda::std::numeric_limits<RepType>::digits10) {
-      auto const scalar  = make_fixed_point_scalar<T>(0, scale_type{scale}, stream, temp_mr);
+      auto const scalar  = make_fixed_point_scalar<T>(0, scale, stream, mr.get_temporary_mr());
       auto output_column = make_column_from_scalar(*scalar, input.size(), stream, mr);
       if (input.nullable()) {
         auto null_mask = detail::copy_bitmask(input, stream, mr);
@@ -180,15 +127,27 @@ std::unique_ptr<column> rescale(column_view input,
       }
       return output_column;
     }
-
-    RepType scalar_value = 10;
-    for (int i = 1; i < -diff; ++i) {
-      scalar_value *= 10;
-    }
-
-    auto const scalar = make_fixed_point_scalar<T>(scalar_value, scale_type{diff}, stream, temp_mr);
-    return detail::binary_operation(input, *scalar, binary_operator::DIV, type, stream, mr);
   }
+
+  auto output = std::make_unique<column>(
+    type,
+    input.size(),
+    rmm::device_buffer{input.size() * sizeof(RepType), stream, mr.get_output_mr()},
+    detail::copy_bitmask(input, stream, mr),
+    input.null_count());
+  auto output_view       = output->mutable_view();
+  auto const input_scale = scale_type{input.type().scale()};
+
+  thrust::transform(rmm::exec_policy_nosync(stream, mr.get_temporary_mr()),
+                    input.begin<RepType>(),
+                    input.end<RepType>(),
+                    output_view.begin<RepType>(),
+                    [input_scale, scale] __device__(RepType value) -> RepType {
+                      return ops::rescale(T{scaled_integer<RepType>{value, input_scale}},
+                                          static_cast<int32_t>(scale))
+                        .value();
+                    });
+  return output;
 };
 
 /**
@@ -209,7 +168,7 @@ struct is_convertible_floating_point {
 
     if (d_input.is_null(idx)) { return false; }
     auto const value = d_input.element<FloatType>(idx);
-    return std::isfinite(value);
+    return ops::is_finite(value);
   }
 };
 

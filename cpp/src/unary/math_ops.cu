@@ -7,6 +7,11 @@
 #include <cudf/copying.hpp>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/arithmetic.cuh>
+#include <cudf/detail/operators/bitwise.cuh>
+#include <cudf/detail/operators/logic.cuh>
+#include <cudf/detail/operators/math.cuh>
+#include <cudf/detail/operators/trigonometric.cuh>
 #include <cudf/detail/unary.hpp>
 #include <cudf/dictionary/detail/encode.hpp>
 #include <cudf/dictionary/detail/iterator.cuh>
@@ -17,8 +22,6 @@
 
 #include <rmm/exec_policy.hpp>
 
-#include <cuda/std/bit>
-#include <cuda/std/cmath>
 #include <cuda/std/type_traits>
 #include <cuda/stream>
 #include <thrust/transform.h>
@@ -29,270 +32,107 @@ namespace cudf {
 namespace detail {
 namespace {
 
-// trig functions
+// Column unary operations retain the input type, including for integral inputs to scalar math.
+#define CUDF_UNARY_MATH_OPERATOR(Name, Function)         \
+  struct Name {                                          \
+    template <typename T>                                \
+    __device__ T operator()(T data) const                \
+    {                                                    \
+      if constexpr (cuda::std::is_integral_v<T>) {       \
+        return ops::Function(static_cast<double>(data)); \
+      } else {                                           \
+        return ops::Function(data);                      \
+      }                                                  \
+    }                                                    \
+  };
 
-struct DeviceSin {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::sin(data);
-  }
-};
+CUDF_UNARY_MATH_OPERATOR(DeviceSin, sin)
+CUDF_UNARY_MATH_OPERATOR(DeviceCos, cos)
+CUDF_UNARY_MATH_OPERATOR(DeviceTan, tan)
+CUDF_UNARY_MATH_OPERATOR(DeviceArcSin, arcsin)
+CUDF_UNARY_MATH_OPERATOR(DeviceArcCos, arccos)
+CUDF_UNARY_MATH_OPERATOR(DeviceArcTan, arctan)
+CUDF_UNARY_MATH_OPERATOR(DeviceSinH, sinh)
+CUDF_UNARY_MATH_OPERATOR(DeviceCosH, cosh)
+CUDF_UNARY_MATH_OPERATOR(DeviceTanH, tanh)
+CUDF_UNARY_MATH_OPERATOR(DeviceArcSinH, arcsinh)
+CUDF_UNARY_MATH_OPERATOR(DeviceArcCosH, arccosh)
+CUDF_UNARY_MATH_OPERATOR(DeviceArcTanH, arctanh)
+CUDF_UNARY_MATH_OPERATOR(DeviceExp, exp)
+CUDF_UNARY_MATH_OPERATOR(DeviceLog, log)
+CUDF_UNARY_MATH_OPERATOR(DeviceSqrt, sqrt)
+CUDF_UNARY_MATH_OPERATOR(DeviceCbrt, cbrt)
+CUDF_UNARY_MATH_OPERATOR(DeviceCeil, ceil)
+CUDF_UNARY_MATH_OPERATOR(DeviceFloor, floor)
+CUDF_UNARY_MATH_OPERATOR(DeviceRInt, rint)
 
-struct DeviceCos {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::cos(data);
-  }
-};
-
-struct DeviceTan {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::tan(data);
-  }
-};
-
-struct DeviceArcSin {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::asin(data);
-  }
-};
-
-struct DeviceArcCos {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::acos(data);
-  }
-};
-
-struct DeviceArcTan {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::atan(data);
-  }
-};
-
-struct DeviceSinH {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::sinh(data);
-  }
-};
-
-struct DeviceCosH {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::cosh(data);
-  }
-};
-
-struct DeviceTanH {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::tanh(data);
-  }
-};
-
-struct DeviceArcSinH {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::asinh(data);
-  }
-};
-
-struct DeviceArcCosH {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::acosh(data);
-  }
-};
-
-struct DeviceArcTanH {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::atanh(data);
-  }
-};
-
-// exponential functions
-
-struct DeviceExp {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::exp(data);
-  }
-};
-
-struct DeviceLog {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::log(data);
-  }
-};
-
-struct DeviceSqrt {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::sqrt(data);
-  }
-};
-
-struct DeviceCbrt {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::cbrt(data);
-  }
-};
-
-// rounding functions
-
-struct DeviceCeil {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::ceil(data);
-  }
-};
-
-struct DeviceFloor {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::floor(data);
-  }
-};
+#undef CUDF_UNARY_MATH_OPERATOR
 
 struct DeviceAbs {
   template <typename T>
-  T __device__ operator()(T data)
-    requires(cuda::std::is_signed_v<T>)
+  __device__ T operator()(T data) const
   {
-    return cuda::std::abs(data);
-  }
-  template <typename T>
-  T __device__ operator()(T data)
-    requires(!cuda::std::is_signed_v<T>)
-  {
-    return data;
-  }
-};
-
-// round float to int
-
-struct DeviceRInt {
-  template <typename T>
-  __device__ T operator()(T data)
-  {
-    return cuda::std::rint(data);
+    if constexpr (cuda::std::is_same_v<T, bool>) {
+      return data;
+    } else {
+      return ops::abs(data);
+    }
   }
 };
 
 struct DeviceBitCount {
   template <typename T>
-  int32_t __device__ operator()(T data)
+  __device__ int32_t operator()(T data) const
   {
-    if constexpr (cuda::std::is_same_v<T, bool>) {
-      return static_cast<int32_t>(data);
-    } else {
-      using UnsignedT = cuda::std::make_unsigned_t<T>;
-      return cuda::std::popcount(static_cast<UnsignedT>(data));
-    }
+    return ops::bit_count(data);
   }
 };
 
 struct DeviceBitInvert {
   template <typename T>
-  __device__ T operator()(T data)
+  __device__ T operator()(T data) const
   {
-    return ~data;
+    return ops::bitwise_invert(+data);
   }
 };
-
-// logical op
 
 struct DeviceNot {
   template <typename T>
-  __device__ bool operator()(T data)
+  __device__ bool operator()(T data) const
   {
-    return !data;
+    return ops::logical_not(data);
   }
 };
-
-// negation
 
 struct DeviceNegate {
   template <typename T>
-  __device__ T operator()(T data)
+  __device__ T operator()(T data) const
   {
-    return -data;
+    return ops::neg(data);
   }
 };
 
-// fixed_point ops
-
-/*
- * Ceiling is calculated using integer division. When we divide by `n`, we get the integer part of
- * the `fixed_point` number. For a negative number, this is all that is needed since the ceiling
- * operation is defined as the least integer greater than the value. For a positive number, we may
- * need to round up if the `fixed_point` number has a fractional part. This is handled by comparing
- * the truncated value to the original value and if they are not equal, the result needs to be
- * incremented by `n`.
- */
+// Fixed-point rounding operates on the stored representation with a precomputed power of ten.
 template <typename T>
 struct fixed_point_ceil {
-  T n;  // 10^-scale (value required to determine integer part of fixed_point number)
-  __device__ T operator()(T data)
-  {
-    T const a = (data / n) * n;                  // result of integer division
-    return a + (data > 0 && a != data ? n : 0);  // add 1 if positive and not round number
-  }
+  T n;
+  __device__ T operator()(T data) const { return ops::ceil_to_multiple(data, n); }
 };
 
-/*
- * Floor is calculated using integer division. When we divide by `n`, we get the integer part of
- * the `fixed_point` number. For a positive number, this is all that is needed since the floor
- * operation is defined as the greatest integer less than the value. For a negative number, we may
- * need to round down if the `fixed_point` number has a fractional part. This is handled by
- * comparing the truncated value to the original value and if they are not equal, the result needs
- * to be decremented by `n`.
- */
 template <typename T>
 struct fixed_point_floor {
-  T n;  // 10^-scale (value required to determine integer part of fixed_point number)
-  __device__ T operator()(T data)
-  {
-    T const a = (data / n) * n;                  // result of integer division
-    return a - (data < 0 && a != data ? n : 0);  // subtract 1 if negative and not round number
-  }
+  T n;
+  __device__ T operator()(T data) const { return ops::floor_to_multiple(data, n); }
 };
 
 template <typename T>
 struct fixed_point_abs {
-  T n;
-  __device__ T operator()(T data) { return numeric::detail::abs(data); }
+  __device__ T operator()(T data) const { return numeric::detail::abs(data); }
 };
 
 template <typename T>
 struct fixed_point_negate {
-  T n;
-  __device__ T operator()(T data) { return -data; }
+  __device__ T operator()(T data) const { return ops::neg(data); }
 };
 
 template <typename T, template <typename> typename FixedPointFunctor>
@@ -302,11 +142,12 @@ std::unique_ptr<column> unary_op_with(column_view const& input,
 {
   using Type                     = device_storage_type_t<T>;
   using FixedPointUnaryOpFunctor = FixedPointFunctor<Type>;
+  constexpr bool is_rounding =
+    cuda::std::is_same_v<FixedPointUnaryOpFunctor, fixed_point_ceil<Type>> ||
+    cuda::std::is_same_v<FixedPointUnaryOpFunctor, fixed_point_floor<Type>>;
 
   // When scale is >= 0 and unary_operator is CEIL or FLOOR, the unary_operation is a no-op
-  if (input.type().scale() >= 0 &&
-      (std::is_same_v<FixedPointUnaryOpFunctor, fixed_point_ceil<Type>> ||
-       std::is_same_v<FixedPointUnaryOpFunctor, fixed_point_floor<Type>>))
+  if (is_rounding && input.type().scale() >= 0)
     return std::make_unique<cudf::column>(input, stream, mr);
 
   auto result = cudf::make_fixed_width_column(input.type(),
@@ -318,16 +159,16 @@ std::unique_ptr<column> unary_op_with(column_view const& input,
 
   auto out_view = result->mutable_view();
 
-  Type n = 10;
-  for (int i = 1; i < -input.type().scale(); ++i) {
-    n *= 10;
+  FixedPointUnaryOpFunctor op{};
+  if constexpr (is_rounding) {
+    op.n = numeric::detail::ipow<Type, numeric::Radix::BASE_10>(-input.type().scale());
   }
 
   thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                     input.begin<Type>(),
                     input.end<Type>(),
                     out_view.begin<Type>(),
-                    FixedPointUnaryOpFunctor{n});
+                    op);
 
   result->set_null_count(input.null_count());
 

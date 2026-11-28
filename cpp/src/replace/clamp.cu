@@ -11,6 +11,7 @@
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/clamping.cuh>
 #include <cudf/dictionary/detail/search.hpp>
 #include <cudf/dictionary/detail/update_keys.hpp>
 #include <cudf/dictionary/dictionary_column_view.hpp>
@@ -54,17 +55,9 @@ struct clamp_strings_fn {
   {
     if (d_strings.is_null(idx)) { return string_index_pair{nullptr, 0}; }
 
-    auto const element      = d_strings.element<string_view>(idx);
-    auto const d_lo         = (*lo_itr).value_or(element);
-    auto const d_hi         = (*hi_itr).value_or(element);
-    auto const d_lo_replace = *(*lo_replace_itr);
-    auto const d_hi_replace = *(*hi_replace_itr);
-
-    auto d_str = [d_lo, d_lo_replace, d_hi, d_hi_replace, element] {
-      if (element < d_lo) { return d_lo_replace; }
-      if (d_hi < element) { return d_hi_replace; }
-      return element;
-    }();
+    auto const element = d_strings.element<string_view>(idx);
+    auto const d_str =
+      cudf::detail::ops::clamp(element, *lo_itr, *lo_replace_itr, *hi_itr, *hi_replace_itr);
 
     // ensures an empty string is not converted to a null row
     return !d_str.empty() ? string_index_pair{d_str.data(), d_str.size_bytes()}
@@ -111,9 +104,11 @@ struct clamp_dictionary_fn {
     auto const key_index = d_dictionary.element<dictionary32>(idx).value();
     auto const element =
       d_dictionary.child(dictionary_column_view::keys_column_index).element<T>(key_index);
-    if (element < (*lo_itr).value_or(element)) { return *lo_replace_itr; }
-    if ((*hi_itr).value_or(element) < element) { return *hi_replace_itr; }
-    return key_index;
+    switch (cudf::detail::ops::clamp_position(element, *lo_itr, *hi_itr)) {
+      case cudf::detail::ops::clamp_bound::LOWER: return *lo_replace_itr;
+      case cudf::detail::ops::clamp_bound::UPPER: return *hi_replace_itr;
+      default: return key_index;
+    }
   }
 };
 
@@ -212,17 +207,12 @@ std::unique_ptr<cudf::column> clamper(column_view const& input,
 
   auto trans =
     cuda::proclaim_return_type<T>([] __device__(auto element_optional, auto scalar_tuple) {
-      if (element_optional.has_value()) {
-        auto lo_optional = cuda::std::get<0>(scalar_tuple);
-        auto hi_optional = cuda::std::get<2>(scalar_tuple);
-        if (lo_optional.has_value() and (*element_optional < *lo_optional)) {
-          return *(cuda::std::get<1>(scalar_tuple));
-        } else if (hi_optional.has_value() and (*element_optional > *hi_optional)) {
-          return *(cuda::std::get<3>(scalar_tuple));
-        }
-        return *element_optional;
-      }
-      return T{};  // null entry so value is ignored
+      return cudf::detail::ops::clamp(element_optional,
+                                      cuda::std::get<0>(scalar_tuple),
+                                      cuda::std::get<1>(scalar_tuple),
+                                      cuda::std::get<2>(scalar_tuple),
+                                      cuda::std::get<3>(scalar_tuple))
+        .value_or(T{});  // Payload for a null input is ignored.
     });
 
   auto input_pair_iterator =

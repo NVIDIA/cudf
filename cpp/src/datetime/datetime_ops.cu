@@ -9,10 +9,10 @@
 #include <cudf/column/column_view.hpp>
 #include <cudf/datetime.hpp>
 #include <cudf/detail/datetime.hpp>
-#include <cudf/detail/datetime_ops.cuh>
 #include <cudf/detail/indexalator.cuh>
 #include <cudf/detail/null_mask.hpp>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/datetime.cuh>
 #include <cudf/scalar/scalar.hpp>
 #include <cudf/table/table_view.hpp>
 #include <cudf/types.hpp>
@@ -34,201 +34,44 @@ namespace cudf {
 namespace datetime {
 namespace detail {
 
-enum class rounding_function {
-  CEIL,   ///< Rounds up to the next integer multiple of the provided frequency
-  FLOOR,  ///< Rounds down to the next integer multiple of the provided frequency
-  ROUND   ///< Rounds to the nearest integer multiple of the provided frequency
-};
+using rounding_function = cudf::detail::ops::datetime_rounding;
 
 template <datetime_component Component>
 struct extract_component_operator {
   template <typename Timestamp>
-  __device__ inline int16_t operator()(Timestamp const ts) const
+  __device__ int16_t operator()(Timestamp ts) const
   {
-    using namespace cuda::std::chrono;
-
-    auto days_since_epoch = floor<days>(ts);
-
-    auto time_since_midnight = ts - days_since_epoch;
-
-    if (time_since_midnight.count() < 0) { time_since_midnight += days(1); }
-
-    auto const hrs_  = [&] { return duration_cast<hours>(time_since_midnight); };
-    auto const mins_ = [&] { return duration_cast<minutes>(time_since_midnight) - hrs_(); };
-    auto const secs_ = [&] {
-      return duration_cast<seconds>(time_since_midnight) - hrs_() - mins_();
-    };
-    auto const millisecs_ = [&] {
-      return duration_cast<milliseconds>(time_since_midnight) - hrs_() - mins_() - secs_();
-    };
-    auto const microsecs_ = [&] {
-      return duration_cast<microseconds>(time_since_midnight) - hrs_() - mins_() - secs_() -
-             millisecs_();
-    };
-    auto const nanosecs_ = [&] {
-      return duration_cast<nanoseconds>(time_since_midnight) - hrs_() - mins_() - secs_() -
-             millisecs_() - microsecs_();
-    };
-
-    switch (Component) {
-      case datetime_component::YEAR:
-        return static_cast<int>(year_month_day(days_since_epoch).year());
-      case datetime_component::MONTH:
-        return static_cast<unsigned>(year_month_day(days_since_epoch).month());
-      case datetime_component::DAY:
-        return static_cast<unsigned>(year_month_day(days_since_epoch).day());
-      case datetime_component::WEEKDAY:
-        return year_month_weekday(days_since_epoch).weekday().iso_encoding();
-      case datetime_component::HOUR: return hrs_().count();
-      case datetime_component::MINUTE: return mins_().count();
-      case datetime_component::SECOND: return secs_().count();
-      case datetime_component::MILLISECOND: return millisecs_().count();
-      case datetime_component::MICROSECOND: return microsecs_().count();
-      case datetime_component::NANOSECOND: return nanosecs_().count();
-      default: return 0;
-    }
+    return cudf::detail::ops::extract_datetime_component<Component>(ts);
   }
 };
-
-// This functor takes the rounding type as runtime info and dispatches to the ceil/floor/round
-// function.
-template <typename DurationType>
-struct RoundFunctor {
-  template <typename Timestamp>
-  __device__ inline auto operator()(rounding_function round_kind, Timestamp dt)
-  {
-    switch (round_kind) {
-      case rounding_function::CEIL: return cuda::std::chrono::ceil<DurationType>(dt);
-      case rounding_function::FLOOR: return cuda::std::chrono::floor<DurationType>(dt);
-      case rounding_function::ROUND: return cuda::std::chrono::round<DurationType>(dt);
-      default: CUDF_UNREACHABLE("Unsupported rounding kind.");
-    }
-  }
-};
-
-// The minutes, hours, and days since the epoch of a 64-bit timestamp may not fit in the
-// int32_t-based duration_m, duration_h, and duration_D types, so round through 64-bit durations.
-// The cuda::std::chrono minutes and hours are 64-bit but its days are only 32-bit.
-static_assert(sizeof(cuda::std::chrono::minutes::rep) == sizeof(int64_t));
-static_assert(sizeof(cuda::std::chrono::hours::rep) == sizeof(int64_t));
-using days64 = cuda::std::chrono::duration<int64_t, cuda::std::chrono::days::period>;
 
 struct RoundingDispatcher {
   rounding_function round_kind;
   rounding_frequency component;
 
-  RoundingDispatcher(rounding_function round_kind, rounding_frequency component)
-    : round_kind(round_kind), component(component)
-  {
-  }
-
   template <typename Timestamp>
-  __device__ inline Timestamp operator()(Timestamp const ts) const
+  __device__ Timestamp operator()(Timestamp ts) const
   {
-    switch (component) {
-      case rounding_frequency::DAY:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<days64>{}(round_kind, ts));
-      case rounding_frequency::HOUR:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<cuda::std::chrono::hours>{}(round_kind, ts));
-      case rounding_frequency::MINUTE:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<cuda::std::chrono::minutes>{}(round_kind, ts));
-      case rounding_frequency::SECOND:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_s>{}(round_kind, ts));
-      case rounding_frequency::MILLISECOND:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_ms>{}(round_kind, ts));
-      case rounding_frequency::MICROSECOND:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_us>{}(round_kind, ts));
-      case rounding_frequency::NANOSECOND:
-        return time_point_cast<typename Timestamp::duration>(
-          RoundFunctor<duration_ns>{}(round_kind, ts));
-      default: CUDF_UNREACHABLE("Unsupported datetime rounding resolution.");
-    }
+    return cudf::detail::ops::round_datetime(ts, round_kind, component);
   }
 };
 
-// Number of days until month indexed by leap year and month (0-based index)
-static __device__ int16_t const days_until_month[2][13] = {
-  {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365},  // For non leap years
-  {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366}   // For leap years
-};
+#define CUDF_DATETIME_OPERATOR(Name, Function, Result) \
+  struct Name {                                        \
+    template <typename Timestamp>                      \
+    __device__ Result operator()(Timestamp ts) const   \
+    {                                                  \
+      return cudf::detail::ops::Function(ts);          \
+    }                                                  \
+  };
 
-// Round up the date to the last day of the month and return the
-// date only (without the time component)
-struct extract_last_day_of_month {
-  template <typename Timestamp>
-  __device__ inline timestamp_D operator()(Timestamp const ts) const
-  {
-    using namespace cuda::std::chrono;
-    year_month_day const ymd(floor<days>(ts));
-    auto const ymdl = year_month_day_last{ymd.year() / ymd.month() / last};
-    return timestamp_D{sys_days{ymdl}};
-  }
-};
+CUDF_DATETIME_OPERATOR(extract_last_day_of_month, last_day_of_month, timestamp_D)
+CUDF_DATETIME_OPERATOR(days_in_month_op, days_in_month, int16_t)
+CUDF_DATETIME_OPERATOR(extract_day_num_of_year, day_of_year, int16_t)
+CUDF_DATETIME_OPERATOR(extract_quarter_op, extract_quarter, int16_t)
+CUDF_DATETIME_OPERATOR(is_leap_year_op, is_leap_year, bool)
 
-// Extract the number of days of the month
-// A similar operator to `extract_last_day_of_month`, except this returns
-// an integer while the other returns a timestamp.
-struct days_in_month_op {
-  template <typename Timestamp>
-  __device__ inline int16_t operator()(Timestamp const ts) const
-  {
-    using namespace cuda::std::chrono;
-    auto const date = year_month_day(floor<days>(ts));
-    auto const ymdl = year_month_day_last(date.year() / date.month() / last);
-    return static_cast<int16_t>(unsigned{ymdl.day()});
-  }
-};
-
-// Extract the day number of the year present in the timestamp
-struct extract_day_num_of_year {
-  template <typename Timestamp>
-  __device__ inline int16_t operator()(Timestamp const ts) const
-  {
-    using namespace cuda::std::chrono;
-
-    // Only has the days - time component is chopped off, which is what we want
-    auto const days_since_epoch = floor<days>(ts);
-    auto const date             = year_month_day(days_since_epoch);
-
-    return days_until_month[date.year().is_leap()][unsigned{date.month()} - 1] +
-           unsigned{date.day()};
-  }
-};
-
-// Extract the quarter to which the timestamp belongs to
-struct extract_quarter_op {
-  template <typename Timestamp>
-  __device__ inline int16_t operator()(Timestamp const ts) const
-  {
-    using namespace cuda::std::chrono;
-
-    // Only has the days - time component is chopped off, which is what we want
-    auto const days_since_epoch = floor<days>(ts);
-    auto const date             = year_month_day(days_since_epoch);
-    auto const month            = unsigned{date.month()};
-
-    // (x + y - 1) / y = ceil(x/y), where x and y are unsigned. x = month, y = 3
-    return (month + 2) / 3;
-  }
-};
-
-// Returns true if the year is a leap year
-struct is_leap_year_op {
-  template <typename Timestamp>
-  __device__ inline bool operator()(Timestamp const ts) const
-  {
-    using namespace cuda::std::chrono;
-    auto const days_since_epoch = floor<days>(ts);
-    auto const date             = year_month_day(days_since_epoch);
-    return date.year().is_leap();
-  }
-};
+#undef CUDF_DATETIME_OPERATOR
 
 // Specific function for applying ceil/floor/round date ops
 struct dispatch_round {
@@ -356,7 +199,7 @@ struct add_calendrical_months_functor {
                       months_begin,
                       output->mutable_view().begin<Timestamp>(),
                       [] __device__(auto& timestamp, auto& months) {
-                        return add_calendrical_months_with_scale_back(
+                        return cudf::detail::ops::add_calendrical_months(
                           timestamp, cuda::std::chrono::months{months});
                       });
     return output;

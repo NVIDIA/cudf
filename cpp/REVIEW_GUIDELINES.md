@@ -98,6 +98,7 @@ Also apply the root [review guidelines](../REVIEW_GUIDELINES.md), including thei
 
 ### Code Reuse
 - New code that reimplements logic already available in CUB, Thrust, libcu++, cuco, or libcudf (public API, `cudf::detail`, `cudf_test`, or benchmark helpers) without a correctness reason or a measured performance, build-time, or binary-size justification stated in the PR
+- When adding or changing an operator function, check whether its value-level semantics fit the shared operator library (`cpp/include/cudf/detail/operators/`). If they do, implement it there and reuse it across execution APIs to keep behavior and implementation consistent. Keep column dispatch, allocation, and other execution-specific logic in the calling API.
 - New code beyond what the change needs: dead code, unused parameters, template flexibility with a single user, or a second code path for a special case without a measurement
 
 ### Concurrency & Stream Safety

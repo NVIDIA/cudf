@@ -9,6 +9,7 @@
 #include <cudf/column/column_factories.hpp>
 #include <cudf/detail/iterator.cuh>
 #include <cudf/detail/nvtx/ranges.hpp>
+#include <cudf/detail/operators/math.cuh>
 #include <cudf/detail/unary.hpp>
 #include <cudf/types.hpp>
 #include <cudf/utilities/default_stream.hpp>
@@ -63,7 +64,7 @@ std::unique_ptr<column> is_nan(cudf::column_view const& input,
                                cudf::memory_resources mr)
 {
   auto predicate = [] __device__(auto element_validity_pair) {
-    return element_validity_pair.second and std::isnan(element_validity_pair.first);
+    return element_validity_pair.second and ops::is_nan(element_validity_pair.first);
   };
 
   return cudf::type_dispatcher(input.type(), nan_dispatcher{}, input, predicate, stream, mr);
@@ -74,7 +75,7 @@ std::unique_ptr<column> is_not_nan(cudf::column_view const& input,
                                    cudf::memory_resources mr)
 {
   auto predicate = [] __device__(auto element_validity_pair) {
-    return !element_validity_pair.second or !std::isnan(element_validity_pair.first);
+    return !element_validity_pair.second or ops::is_not_nan(element_validity_pair.first);
   };
 
   return cudf::type_dispatcher(input.type(), nan_dispatcher{}, input, predicate, stream, mr);

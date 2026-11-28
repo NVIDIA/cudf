@@ -5,38 +5,50 @@
 
 #pragma once
 
-#include <cudf/detail/integral_math.cuh>
 #include <cudf/detail/operators/arithmetic.cuh>
+#include <cudf/detail/operators/bitwise.cuh>
+#include <cudf/detail/operators/comparison.cuh>
+#include <cudf/detail/operators/logic.cuh>
+#include <cudf/detail/operators/math.cuh>
+#include <cudf/detail/operators/trigonometric.cuh>
 #include <cudf/utilities/concepts.hpp>
 #include <cudf/utilities/traits.hpp>
 
-#include <cuda/std/concepts>
+#include <cuda/std/optional>
 #include <cuda/std/type_traits>
 
-#include <cmath>
+namespace cudf::binops::compiled {
 
-namespace cudf {
-namespace binops {
-namespace compiled {
-
-// All binary operations
+// Callable adapters preserve binary-op result types and its validity-flag interface.
 namespace ops {
 
-struct Add {
-  template <typename T1, typename T2>
-  __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs + rhs)
-  {
-    return lhs + rhs;
-  }
-};
+#define CUDF_BINARY_OPERATOR(Name, Function)                                                  \
+  struct Name {                                                                               \
+    template <typename A, typename B>                                                         \
+    __device__ auto operator()(A a, B b) const -> decltype(cudf::detail::ops::Function(a, b)) \
+    {                                                                                         \
+      return cudf::detail::ops::Function(a, b);                                               \
+    }                                                                                         \
+  };
 
-struct Sub {
-  template <typename T1, typename T2>
-  __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs - rhs)
-  {
-    return lhs - rhs;
-  }
-};
+CUDF_BINARY_OPERATOR(Add, add)
+CUDF_BINARY_OPERATOR(Sub, sub)
+CUDF_BINARY_OPERATOR(TrueDiv, true_div)
+CUDF_BINARY_OPERATOR(PMod, pmod)
+CUDF_BINARY_OPERATOR(IntPow, int_pow)
+CUDF_BINARY_OPERATOR(LogBase, log_base)
+CUDF_BINARY_OPERATOR(ATan2, arctan2)
+CUDF_BINARY_OPERATOR(ShiftRightUnsigned, bitwise_shift_right_unsigned)
+CUDF_BINARY_OPERATOR(LogicalAnd, logical_and)
+CUDF_BINARY_OPERATOR(LogicalOr, logical_or)
+CUDF_BINARY_OPERATOR(Equal, equal)
+CUDF_BINARY_OPERATOR(NotEqual, not_equal)
+CUDF_BINARY_OPERATOR(Less, less)
+CUDF_BINARY_OPERATOR(Greater, greater)
+CUDF_BINARY_OPERATOR(LessEqual, less_equal)
+CUDF_BINARY_OPERATOR(GreaterEqual, greater_equal)
+
+#undef CUDF_BINARY_OPERATOR
 
 struct Mul {
   template <typename TypeLhs, typename TypeRhs>
@@ -56,7 +68,7 @@ struct Mul {
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs * rhs)
     requires(is_supported<T1, T2>())
   {
-    return lhs * rhs;
+    return cudf::detail::ops::mul(lhs, rhs);
   }
 };
 
@@ -75,39 +87,7 @@ struct Div {
   __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs / rhs)
     requires(is_supported<T1, T2>())
   {
-    return lhs / rhs;
-  }
-};
-
-struct TrueDiv {
-  template <typename T1, typename T2>
-  __device__ inline auto operator()(T1 const& lhs, T2 const& rhs)
-    -> decltype((static_cast<double>(lhs) / static_cast<double>(rhs)))
-  {
-    return (static_cast<double>(lhs) / static_cast<double>(rhs));
-  }
-};
-
-struct FloorDiv {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x / y)
-    requires(cuda::std::integral<cuda::std::common_type_t<TypeLhs, TypeRhs>>)
-  {
-    return cudf::detail::integral_floor_div(x, y);
-  }
-
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> float
-    requires(cuda::std::same_as<cuda::std::common_type_t<TypeLhs, TypeRhs>, float>)
-  {
-    return floorf(x / y);
-  }
-
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(cuda::std::same_as<cuda::std::common_type_t<TypeLhs, TypeRhs>, double>)
-  {
-    return floor(x / y);
+    return cudf::detail::ops::div(lhs, rhs);
   }
 };
 
@@ -122,352 +102,121 @@ struct Mod {
            (is_duration<TypeLhs>() and
             (cuda::std::is_integral<TypeRhs>() or is_duration<TypeRhs>()));
   }
-  template <typename T1, typename T2>
-  __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> decltype(lhs % rhs)
-    requires(is_supported<T1, T2>())
+  template <typename A, typename B>
+  __device__ auto operator()(A const& lhs, B const& rhs) const
+    -> decltype(cudf::detail::ops::mod(lhs, rhs))
+    requires(is_supported<A, B>())
   {
-    return lhs % rhs;
-  }
-  template <typename T1, typename T2>
-  __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> float
-    requires(cuda::std::same_as<float, std::common_type_t<T1, T2>>)
-  {
-    return fmodf(static_cast<float>(lhs), static_cast<float>(rhs));
-  }
-  template <typename T1, typename T2>
-  __device__ inline auto operator()(T1 const& lhs, T2 const& rhs) -> double
-    requires(cuda::std::same_as<double, std::common_type_t<T1, T2>>)
-  {
-    return fmod(static_cast<double>(lhs), static_cast<double>(rhs));
+    return cudf::detail::ops::mod(lhs, rhs);
   }
 };
 
-struct PMod {
-  // Ideally, these two specializations - one for integral types and one for non integral
-  // types shouldn't be required, as std::fmod should promote integral types automatically
-  // to double and call the std::fmod overload for doubles. Sadly, doing this in jitified
-  // code does not work - it is having trouble deciding between float/double overloads
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    requires(cuda::std::integral<std::common_type_t<TypeLhs, TypeRhs>>)
-  {
-    using common_t = std::common_type_t<TypeLhs, TypeRhs>;
-    auto xconv     = static_cast<common_t>(x);
-    auto yconv     = static_cast<common_t>(y);
-    auto rem       = xconv % yconv;
-    if constexpr (cuda::std::is_signed_v<decltype(rem)>)
-      if (rem < 0) rem = (rem + yconv) % yconv;
-    return rem;
+// The shared AST bitwise operators exclude bool; binary operations also accept bool operands.
+template <typename T>
+__device__ auto promote_bool(T value)
+  -> cuda::std::conditional_t<cuda::std::is_same_v<T, bool>, int, T>
+{
+  if constexpr (cuda::std::is_same_v<T, bool>) {
+    return static_cast<int>(value);
+  } else {
+    return value;
   }
+}
 
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    requires(cuda::std::floating_point<std::common_type_t<TypeLhs, TypeRhs>>)
-  {
-    using common_t = std::common_type_t<TypeLhs, TypeRhs>;
-    auto xconv     = static_cast<common_t>(x);
-    auto yconv     = static_cast<common_t>(y);
-    auto rem       = std::fmod(xconv, yconv);
-    if (rem < 0) rem = std::fmod(rem + yconv, yconv);
-    return rem;
-  }
+#define CUDF_INTEGRAL_BINARY_OPERATOR(Name, Function)                            \
+  struct Name {                                                                  \
+    template <typename A, typename B>                                            \
+    __device__ auto operator()(A a, B b) const                                   \
+      -> decltype(cudf::detail::ops::Function(promote_bool(a), promote_bool(b))) \
+    {                                                                            \
+      return cudf::detail::ops::Function(promote_bool(a), promote_bool(b));      \
+    }                                                                            \
+  };
 
-  template <cudf::concepts::fixed_point TypeLhs, cuda::std::same_as<TypeLhs> TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y)
+CUDF_INTEGRAL_BINARY_OPERATOR(BitwiseAnd, bitwise_and)
+CUDF_INTEGRAL_BINARY_OPERATOR(BitwiseOr, bitwise_or)
+CUDF_INTEGRAL_BINARY_OPERATOR(BitwiseXor, bitwise_xor)
+CUDF_INTEGRAL_BINARY_OPERATOR(ShiftLeft, bitwise_shift_left)
+CUDF_INTEGRAL_BINARY_OPERATOR(ShiftRight, bitwise_shift_right)
+
+#undef CUDF_INTEGRAL_BINARY_OPERATOR
+
+struct FloorDiv {
+  template <typename A, typename B>
+  __device__ auto operator()(A a, B b) const -> decltype(a / b)
+    requires requires { cudf::detail::ops::floor_div(promote_bool(a), promote_bool(b)); }
   {
-    auto const remainder = x % y;
-    return remainder.value() < 0 ? (remainder + y) % y : remainder;
+    return cudf::detail::ops::floor_div(promote_bool(a), promote_bool(b));
   }
 };
 
 struct PyMod {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
-    requires(cuda::std::integral<std::common_type_t<TypeLhs, TypeRhs>> or
-             (cudf::concepts::fixed_point<TypeLhs> and cuda::std::same_as<TypeLhs, TypeRhs>))
+  template <typename A, typename B>
+  __device__ auto operator()(A a, B b) const -> decltype(cudf::detail::ops::pymod(a, b))
+    requires(cuda::std::integral<cuda::std::common_type_t<A, B>> ||
+             (cudf::concepts::fixed_point<A> && cuda::std::same_as<A, B>) ||
+             cudf::concepts::duration<A>)
   {
-    return ((x % y) + y) % y;
+    return cudf::detail::ops::pymod(a, b);
   }
 
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(cuda::std::floating_point<std::common_type_t<TypeLhs, TypeRhs>>)
+  template <typename A, typename B>
+  __device__ double operator()(A a, B b) const
+    requires(cuda::std::floating_point<cuda::std::common_type_t<A, B>>)
   {
-    return cudf::detail::ops::pymod(static_cast<double>(x), static_cast<double>(y));
-  }
-
-  template <cudf::concepts::duration TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(((x % y) + y) % y)
-  {
-    return ((x % y) + y) % y;
+    return cudf::detail::ops::pymod(static_cast<double>(a), static_cast<double>(b));
   }
 };
 
 struct Pow {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(std::is_convertible_v<TypeLhs, double> and std::is_convertible_v<TypeRhs, double>)
+  template <typename A, typename B>
+  __device__ double operator()(A a, B b) const
+    requires(cuda::std::is_convertible_v<A, double> && cuda::std::is_convertible_v<B, double>)
   {
-    return pow(static_cast<double>(x), static_cast<double>(y));
+    return cudf::detail::ops::pow(static_cast<double>(a), static_cast<double>(b));
   }
 };
 
-struct IntPow {
-  template <cuda::std::integral TypeLhs, cuda::std::integral TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> TypeLhs
-  {
-    return cudf::detail::integral_pow(x, y);
-  }
-};
+template <typename T>
+__device__ auto optional_value(T value, bool valid)
+{
+  return valid ? cuda::std::optional<T>{value} : cuda::std::nullopt;
+}
 
-struct LogBase {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(std::is_convertible_v<TypeLhs, double> and std::is_convertible_v<TypeRhs, double>)
-  {
-    return (std::log(static_cast<double>(x)) / std::log(static_cast<double>(y)));
+template <typename T>
+__device__ auto validity_result(T result, bool& valid)
+{
+  if constexpr (cudf::detail::ops::nullable<T>) {
+    valid = result.has_value();
+    return result.value_or(typename T::value_type{});
+  } else {
+    valid = true;
+    return result;
   }
-};
+}
 
-struct ATan2 {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> double
-    requires(std::is_convertible_v<TypeLhs, double> and std::is_convertible_v<TypeRhs, double>)
-  {
-    return std::atan2(static_cast<double>(x), static_cast<double>(y));
-  }
-};
+#define CUDF_NULL_BINARY_OPERATOR(Name, Function)                                              \
+  struct Name {                                                                                \
+    template <typename A, typename B>                                                          \
+    __device__ auto operator()(A a, B b, bool a_valid, bool b_valid, bool& output_valid) const \
+      -> decltype(cudf::detail::ops::Function(a, b))                                           \
+    {                                                                                          \
+      return validity_result(                                                                  \
+        cudf::detail::ops::Function(optional_value(a, a_valid), optional_value(b, b_valid)),   \
+        output_valid);                                                                         \
+    }                                                                                          \
+    template <typename A, typename B>                                                          \
+    __device__ auto operator()(A a, B b) const -> decltype(cudf::detail::ops::Function(a, b)); \
+  };
 
-struct ShiftLeft {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x << y)
-  {
-    return (x << y);
-  }
-};
+CUDF_NULL_BINARY_OPERATOR(NullEquals, null_equal)
+CUDF_NULL_BINARY_OPERATOR(NullNotEquals, null_not_equal)
+CUDF_NULL_BINARY_OPERATOR(NullMax, null_max)
+CUDF_NULL_BINARY_OPERATOR(NullMin, null_min)
+CUDF_NULL_BINARY_OPERATOR(NullLogicalAnd, null_logical_and)
+CUDF_NULL_BINARY_OPERATOR(NullLogicalOr, null_logical_or)
 
-struct ShiftRight {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x >> y)
-  {
-    return (x >> y);
-  }
-};
-
-struct ShiftRightUnsigned {
-  template <cudf::concepts::integral_not_bool TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    -> decltype(static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y)
-  {
-    return (static_cast<cuda::std::make_unsigned_t<TypeLhs>>(x) >> y);
-  }
-};
-
-struct BitwiseAnd {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x & y)
-  {
-    return (x & y);
-  }
-};
-
-struct BitwiseOr {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x | y)
-  {
-    return (x | y);
-  }
-};
-
-struct BitwiseXor {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x ^ y)
-  {
-    return (x ^ y);
-  }
-};
-
-struct LogicalAnd {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x && y)
-  {
-    return (x && y);
-  }
-};
-
-struct LogicalOr {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x || y)
-  {
-    return (x || y);
-  }
-};
-
-struct Equal {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x == y)
-  {
-    return (x == y);
-  }
-};
-
-struct NotEqual {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x != y)
-  {
-    return (x != y);
-  }
-};
-
-struct Less {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x < y)
-  {
-    return (x < y);
-  }
-};
-
-struct Greater {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x > y)
-  {
-    return (x > y);
-  }
-};
-
-struct LessEqual {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x <= y)
-  {
-    return (x <= y);
-  }
-};
-
-struct GreaterEqual {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x >= y)
-  {
-    return (x >= y);
-  }
-};
-
-struct NullEquals {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(
-    TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x == y)
-  {
-    output_valid = true;
-    if (lhs_valid && rhs_valid) return x == y;
-    return !lhs_valid && !rhs_valid;
-  }
-  // To allow std::is_invocable_v = true
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x == y);
-};
-
-struct NullNotEquals {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(
-    TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x != y)
-  {
-    return !NullEquals{}(x, y, lhs_valid, rhs_valid, output_valid);
-  }
-  // To allow std::is_invocable_v = true
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x != y);
-};
-
-struct NullMax {
-  template <typename TypeLhs,
-            typename TypeRhs,
-            typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
-  __device__ inline auto operator()(
-    TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid)
-    -> decltype(static_cast<common_t>(static_cast<common_t>(x) > static_cast<common_t>(y) ? x : y))
-  {
-    output_valid      = true;
-    auto const x_conv = static_cast<common_t>(x);
-    auto const y_conv = static_cast<common_t>(y);
-    if (!lhs_valid && !rhs_valid) {
-      output_valid = false;
-      return common_t{};
-    } else if (lhs_valid && rhs_valid) {
-      return (x_conv > y_conv) ? x_conv : y_conv;
-    } else if (lhs_valid)
-      return x_conv;
-    else
-      return y_conv;
-  }
-  // To allow std::is_invocable_v = true
-  template <typename TypeLhs,
-            typename TypeRhs,
-            typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    -> decltype(static_cast<common_t>(static_cast<common_t>(x) > static_cast<common_t>(y) ? x : y));
-};
-
-struct NullMin {
-  template <typename TypeLhs,
-            typename TypeRhs,
-            typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
-  __device__ inline auto operator()(
-    TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid)
-    -> decltype(static_cast<common_t>(static_cast<common_t>(x) < static_cast<common_t>(y) ? x : y))
-  {
-    output_valid      = true;
-    auto const x_conv = static_cast<common_t>(x);
-    auto const y_conv = static_cast<common_t>(y);
-    if (!lhs_valid && !rhs_valid) {
-      output_valid = false;
-      return common_t{};
-    } else if (lhs_valid && rhs_valid) {
-      return (x_conv < y_conv) ? x_conv : y_conv;
-    } else if (lhs_valid)
-      return x_conv;
-    else
-      return y_conv;
-  }
-  // To allow std::is_invocable_v = true
-  template <typename TypeLhs,
-            typename TypeRhs,
-            typename common_t = std::common_type_t<TypeLhs, TypeRhs>>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y)
-    -> decltype(static_cast<common_t>(static_cast<common_t>(x) < static_cast<common_t>(y) ? x : y));
-};
-
-struct NullLogicalAnd {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(
-    TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x && y)
-  {
-    bool lhs_false  = lhs_valid && !x;
-    bool rhs_false  = rhs_valid && !y;
-    bool both_valid = lhs_valid && rhs_valid;
-    output_valid    = lhs_false || rhs_false || both_valid;
-    return both_valid && !lhs_false && !rhs_false;
-  }
-  // To allow std::is_invocable_v = true
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x && y);
-};
-
-struct NullLogicalOr {
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(
-    TypeLhs x, TypeRhs y, bool lhs_valid, bool rhs_valid, bool& output_valid) -> decltype(x || y)
-  {
-    bool lhs_true   = lhs_valid && x;
-    bool rhs_true   = rhs_valid && y;
-    bool both_valid = lhs_valid && rhs_valid;
-    output_valid    = lhs_true || rhs_true || both_valid;
-    return lhs_true || rhs_true;
-  }
-  // To allow std::is_invocable_v = true
-  template <typename TypeLhs, typename TypeRhs>
-  __device__ inline auto operator()(TypeLhs x, TypeRhs y) -> decltype(x || y);
-};
+#undef CUDF_NULL_BINARY_OPERATOR
 
 }  // namespace ops
-}  // namespace compiled
-}  // namespace binops
-}  // namespace cudf
+}  // namespace cudf::binops::compiled

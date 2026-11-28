@@ -23,8 +23,6 @@ rapids_cmake_build_type("Release")
 
 # Fetch librtcx and its dependencies
 find_package(CUDAToolkit REQUIRED)
-include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_zstd.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_xxhash.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_nvtx.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/thirdparty/get_rtcx.cmake)
 

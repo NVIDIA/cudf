@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Objects;
 
+import static ai.rapids.cudf.ast.References.reachabilityFence;
+
 /** This class wraps a native compiled AST and must be closed to avoid native memory leaks. */
 public class CompiledExpression implements AutoCloseable {
   enum CompilationMode {
@@ -172,14 +174,6 @@ public class CompiledExpression implements AutoCloseable {
       }
     }
     return new JitExpressionArgs(expressionRefs, nativeHandles);
-  }
-
-  static void reachabilityFence(Object object) {
-    if (object != null) {
-      synchronized (object) {
-        // The monitor operation is a Java 8 reachability fence.
-      }
-    }
   }
 
   @Override

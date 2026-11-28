@@ -22,6 +22,8 @@ import java.math.RoundingMode;
 import java.nio.ByteBuffer;
 import java.util.*;
 
+import static ai.rapids.cudf.References.reachabilityFence;
+
 /**
  * Class to represent a collection of ColumnVectors and operations that can be performed on them
  * collectively.
@@ -2904,12 +2906,20 @@ public final class Table implements AutoCloseable {
     if (leftLength != rightLength) {
       throw new IllegalArgumentException("left and right gather maps must have the same length");
     }
-    long[] gatherMapData = filterJoinGatherMaps(
-        leftGatherMap.getBufferAddress(), leftLength,
-        rightGatherMap.getBufferAddress(), rightLength,
-        leftTable.getNativeView(), rightTable.getNativeView(),
-        condition.getNativeHandle(), joinKind.nativeId);
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData = filterJoinGatherMaps(
+          leftGatherMap.getBufferAddress(), leftLength,
+          rightGatherMap.getBufferAddress(), rightLength,
+          leftTable.getNativeView(), rightTable.getNativeView(),
+          condition.getNativeHandle(), joinKind.nativeId);
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(leftGatherMap);
+      reachabilityFence(rightGatherMap);
+      reachabilityFence(leftTable);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3075,8 +3085,14 @@ public final class Table implements AutoCloseable {
    * @return row count for the join result
    */
   public long conditionalLeftJoinRowCount(Table rightTable, CompiledExpression condition) {
-    return conditionalLeftJoinRowCount(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle());
+    try {
+      return conditionalLeftJoinRowCount(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle());
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3094,10 +3110,16 @@ public final class Table implements AutoCloseable {
    */
   public GatherMap[] conditionalLeftJoinGatherMaps(Table rightTable,
                                                    CompiledExpression condition) {
-    long[] gatherMapData =
-        conditionalLeftJoinGatherMaps(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle());
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalLeftJoinGatherMaps(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle());
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3123,10 +3145,16 @@ public final class Table implements AutoCloseable {
   public GatherMap[] conditionalLeftJoinGatherMaps(Table rightTable,
                                                    CompiledExpression condition,
                                                    long outputRowCount) {
-    long[] gatherMapData =
-        conditionalLeftJoinGatherMapsWithCount(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle(), outputRowCount);
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalLeftJoinGatherMapsWithCount(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle(), outputRowCount);
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3147,14 +3175,22 @@ public final class Table implements AutoCloseable {
                                                 Table leftConditional, Table rightConditional,
                                                 CompiledExpression condition,
                                                 NullEquality nullEquality) {
-    long[] mixedSizeInfo = mixedLeftJoinSize(
-            leftKeys.getNativeView(), rightKeys.getNativeView(),
-            leftConditional.getNativeView(), rightConditional.getNativeView(),
-            condition.getNativeHandle(), nullEquality == NullEquality.EQUAL);
-    assert mixedSizeInfo.length == 2;
-    long outputRowCount = mixedSizeInfo[0];
-    long matchesColumnHandle = mixedSizeInfo[1];
-    return new MixedJoinSize(outputRowCount, new ColumnVector(matchesColumnHandle));
+    try {
+      long[] mixedSizeInfo = mixedLeftJoinSize(
+              leftKeys.getNativeView(), rightKeys.getNativeView(),
+              leftConditional.getNativeView(), rightConditional.getNativeView(),
+              condition.getNativeHandle(), nullEquality == NullEquality.EQUAL);
+      assert mixedSizeInfo.length == 2;
+      long outputRowCount = mixedSizeInfo[0];
+      long matchesColumnHandle = mixedSizeInfo[1];
+      return new MixedJoinSize(outputRowCount, new ColumnVector(matchesColumnHandle));
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3178,12 +3214,20 @@ public final class Table implements AutoCloseable {
                                                     Table leftConditional, Table rightConditional,
                                                     CompiledExpression condition,
                                                     NullEquality nullEquality) {
-    long[] gatherMapData = mixedLeftJoinGatherMaps(
-            leftKeys.getNativeView(), rightKeys.getNativeView(),
-            leftConditional.getNativeView(), rightConditional.getNativeView(),
-            condition.getNativeHandle(),
-            nullEquality == NullEquality.EQUAL);
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData = mixedLeftJoinGatherMaps(
+              leftKeys.getNativeView(), rightKeys.getNativeView(),
+              leftConditional.getNativeView(), rightConditional.getNativeView(),
+              condition.getNativeHandle(),
+              nullEquality == NullEquality.EQUAL);
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3213,13 +3257,22 @@ public final class Table implements AutoCloseable {
                                                     CompiledExpression condition,
                                                     NullEquality nullEquality,
                                                     MixedJoinSize joinSize) {
-    long[] gatherMapData = mixedLeftJoinGatherMapsWithSize(
-            leftKeys.getNativeView(), rightKeys.getNativeView(),
-            leftConditional.getNativeView(), rightConditional.getNativeView(),
-            condition.getNativeHandle(),
-            nullEquality == NullEquality.EQUAL,
-            joinSize.getOutputRowCount(), joinSize.getMatches().getNativeView());
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData = mixedLeftJoinGatherMapsWithSize(
+              leftKeys.getNativeView(), rightKeys.getNativeView(),
+              leftConditional.getNativeView(), rightConditional.getNativeView(),
+              condition.getNativeHandle(),
+              nullEquality == NullEquality.EQUAL,
+              joinSize.getOutputRowCount(), joinSize.getMatches().getNativeView());
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+      reachabilityFence(joinSize);
+    }
   }
 
   /**
@@ -3409,8 +3462,14 @@ public final class Table implements AutoCloseable {
    */
   public long conditionalInnerJoinRowCount(Table rightTable,
                                            CompiledExpression condition) {
-    return conditionalInnerJoinRowCount(getNativeView(), rightTable.getNativeView(),
-        condition.getNativeHandle());
+    try {
+      return conditionalInnerJoinRowCount(getNativeView(), rightTable.getNativeView(),
+          condition.getNativeHandle());
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3428,10 +3487,16 @@ public final class Table implements AutoCloseable {
    */
   public GatherMap[] conditionalInnerJoinGatherMaps(Table rightTable,
                                                     CompiledExpression condition) {
-    long[] gatherMapData =
-        conditionalInnerJoinGatherMaps(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle());
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalInnerJoinGatherMaps(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle());
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3457,10 +3522,16 @@ public final class Table implements AutoCloseable {
   public GatherMap[] conditionalInnerJoinGatherMaps(Table rightTable,
                                                     CompiledExpression condition,
                                                     long outputRowCount) {
-    long[] gatherMapData =
-        conditionalInnerJoinGatherMapsWithCount(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle(), outputRowCount);
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalInnerJoinGatherMapsWithCount(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle(), outputRowCount);
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3481,14 +3552,22 @@ public final class Table implements AutoCloseable {
                                                  Table leftConditional, Table rightConditional,
                                                  CompiledExpression condition,
                                                  NullEquality nullEquality) {
-    long[] mixedSizeInfo = mixedInnerJoinSize(
-        leftKeys.getNativeView(), rightKeys.getNativeView(),
-        leftConditional.getNativeView(), rightConditional.getNativeView(),
-        condition.getNativeHandle(), nullEquality == NullEquality.EQUAL);
-    assert mixedSizeInfo.length == 2;
-    long outputRowCount = mixedSizeInfo[0];
-    long matchesColumnHandle = mixedSizeInfo[1];
-    return new MixedJoinSize(outputRowCount, new ColumnVector(matchesColumnHandle));
+    try {
+      long[] mixedSizeInfo = mixedInnerJoinSize(
+          leftKeys.getNativeView(), rightKeys.getNativeView(),
+          leftConditional.getNativeView(), rightConditional.getNativeView(),
+          condition.getNativeHandle(), nullEquality == NullEquality.EQUAL);
+      assert mixedSizeInfo.length == 2;
+      long outputRowCount = mixedSizeInfo[0];
+      long matchesColumnHandle = mixedSizeInfo[1];
+      return new MixedJoinSize(outputRowCount, new ColumnVector(matchesColumnHandle));
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3512,12 +3591,20 @@ public final class Table implements AutoCloseable {
                                                      Table leftConditional, Table rightConditional,
                                                      CompiledExpression condition,
                                                      NullEquality nullEquality) {
-    long[] gatherMapData = mixedInnerJoinGatherMaps(
-        leftKeys.getNativeView(), rightKeys.getNativeView(),
-        leftConditional.getNativeView(), rightConditional.getNativeView(),
-        condition.getNativeHandle(),
-        nullEquality == NullEquality.EQUAL);
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData = mixedInnerJoinGatherMaps(
+          leftKeys.getNativeView(), rightKeys.getNativeView(),
+          leftConditional.getNativeView(), rightConditional.getNativeView(),
+          condition.getNativeHandle(),
+          nullEquality == NullEquality.EQUAL);
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3547,13 +3634,22 @@ public final class Table implements AutoCloseable {
                                                      CompiledExpression condition,
                                                      NullEquality nullEquality,
                                                      MixedJoinSize joinSize) {
-    long[] gatherMapData = mixedInnerJoinGatherMapsWithSize(
-        leftKeys.getNativeView(), rightKeys.getNativeView(),
-        leftConditional.getNativeView(), rightConditional.getNativeView(),
-        condition.getNativeHandle(),
-        nullEquality == NullEquality.EQUAL,
-        joinSize.getOutputRowCount(), joinSize.getMatches().getNativeView());
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData = mixedInnerJoinGatherMapsWithSize(
+          leftKeys.getNativeView(), rightKeys.getNativeView(),
+          leftConditional.getNativeView(), rightConditional.getNativeView(),
+          condition.getNativeHandle(),
+          nullEquality == NullEquality.EQUAL,
+          joinSize.getOutputRowCount(), joinSize.getMatches().getNativeView());
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+      reachabilityFence(joinSize);
+    }
   }
 
   /**
@@ -3675,10 +3771,16 @@ public final class Table implements AutoCloseable {
    */
   public GatherMap[] conditionalFullJoinGatherMaps(Table rightTable,
                                                    CompiledExpression condition) {
-    long[] gatherMapData =
-        conditionalFullJoinGatherMaps(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle());
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalFullJoinGatherMaps(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle());
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3702,12 +3804,20 @@ public final class Table implements AutoCloseable {
                                                     Table leftConditional, Table rightConditional,
                                                     CompiledExpression condition,
                                                     NullEquality nullEquality) {
-    long[] gatherMapData = mixedFullJoinGatherMaps(
-            leftKeys.getNativeView(), rightKeys.getNativeView(),
-            leftConditional.getNativeView(), rightConditional.getNativeView(),
-            condition.getNativeHandle(),
-            nullEquality == NullEquality.EQUAL);
-    return buildJoinGatherMaps(gatherMapData);
+    try {
+      long[] gatherMapData = mixedFullJoinGatherMaps(
+              leftKeys.getNativeView(), rightKeys.getNativeView(),
+              leftConditional.getNativeView(), rightConditional.getNativeView(),
+              condition.getNativeHandle(),
+              nullEquality == NullEquality.EQUAL);
+      return buildJoinGatherMaps(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   private static GatherMap buildSingleJoinGatherMap(long[] gatherMapData) {
@@ -3768,8 +3878,14 @@ public final class Table implements AutoCloseable {
    */
   public long conditionalLeftSemiJoinRowCount(Table rightTable,
                                               CompiledExpression condition) {
-    return conditionalLeftSemiJoinRowCount(getNativeView(), rightTable.getNativeView(),
-        condition.getNativeHandle());
+    try {
+      return conditionalLeftSemiJoinRowCount(getNativeView(), rightTable.getNativeView(),
+          condition.getNativeHandle());
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3785,10 +3901,16 @@ public final class Table implements AutoCloseable {
    */
   public GatherMap conditionalLeftSemiJoinGatherMap(Table rightTable,
                                                     CompiledExpression condition) {
-    long[] gatherMapData =
-        conditionalLeftSemiJoinGatherMap(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle());
-    return buildSingleJoinGatherMap(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalLeftSemiJoinGatherMap(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle());
+      return buildSingleJoinGatherMap(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3810,10 +3932,16 @@ public final class Table implements AutoCloseable {
   public GatherMap conditionalLeftSemiJoinGatherMap(Table rightTable,
                                                     CompiledExpression condition,
                                                     long outputRowCount) {
-    long[] gatherMapData =
-        conditionalLeftSemiJoinGatherMapWithCount(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle(), outputRowCount);
-    return buildSingleJoinGatherMap(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalLeftSemiJoinGatherMapWithCount(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle(), outputRowCount);
+      return buildSingleJoinGatherMap(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3837,12 +3965,20 @@ public final class Table implements AutoCloseable {
                                                      Table leftConditional, Table rightConditional,
                                                      CompiledExpression condition,
                                                      NullEquality nullEquality) {
-    long[] gatherMapData = mixedLeftSemiJoinGatherMap(
-        leftKeys.getNativeView(), rightKeys.getNativeView(),
-        leftConditional.getNativeView(), rightConditional.getNativeView(),
-        condition.getNativeHandle(),
-        nullEquality == NullEquality.EQUAL);
-    return buildSingleJoinGatherMap(gatherMapData);
+    try {
+      long[] gatherMapData = mixedLeftSemiJoinGatherMap(
+          leftKeys.getNativeView(), rightKeys.getNativeView(),
+          leftConditional.getNativeView(), rightConditional.getNativeView(),
+          condition.getNativeHandle(),
+          nullEquality == NullEquality.EQUAL);
+      return buildSingleJoinGatherMap(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3896,8 +4032,14 @@ public final class Table implements AutoCloseable {
    */
   public long conditionalLeftAntiJoinRowCount(Table rightTable,
                                               CompiledExpression condition) {
-    return conditionalLeftAntiJoinRowCount(getNativeView(), rightTable.getNativeView(),
-        condition.getNativeHandle());
+    try {
+      return conditionalLeftAntiJoinRowCount(getNativeView(), rightTable.getNativeView(),
+          condition.getNativeHandle());
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3913,10 +4055,16 @@ public final class Table implements AutoCloseable {
    */
   public GatherMap conditionalLeftAntiJoinGatherMap(Table rightTable,
                                                     CompiledExpression condition) {
-    long[] gatherMapData =
-        conditionalLeftAntiJoinGatherMap(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle());
-    return buildSingleJoinGatherMap(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalLeftAntiJoinGatherMap(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle());
+      return buildSingleJoinGatherMap(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3938,10 +4086,16 @@ public final class Table implements AutoCloseable {
   public GatherMap conditionalLeftAntiJoinGatherMap(Table rightTable,
                                                     CompiledExpression condition,
                                                     long outputRowCount) {
-    long[] gatherMapData =
-        conditionalLeftAntiJoinGatherMapWithCount(getNativeView(), rightTable.getNativeView(),
-            condition.getNativeHandle(), outputRowCount);
-    return buildSingleJoinGatherMap(gatherMapData);
+    try {
+      long[] gatherMapData =
+          conditionalLeftAntiJoinGatherMapWithCount(getNativeView(), rightTable.getNativeView(),
+              condition.getNativeHandle(), outputRowCount);
+      return buildSingleJoinGatherMap(gatherMapData);
+    } finally {
+      reachabilityFence(this);
+      reachabilityFence(rightTable);
+      reachabilityFence(condition);
+    }
   }
 
   /**
@@ -3965,12 +4119,20 @@ public final class Table implements AutoCloseable {
                                                      Table leftConditional, Table rightConditional,
                                                      CompiledExpression condition,
                                                      NullEquality nullEquality) {
-    long[] gatherMapData = mixedLeftAntiJoinGatherMap(
-        leftKeys.getNativeView(), rightKeys.getNativeView(),
-        leftConditional.getNativeView(), rightConditional.getNativeView(),
-        condition.getNativeHandle(),
-        nullEquality == NullEquality.EQUAL);
-    return buildSingleJoinGatherMap(gatherMapData);
+    try {
+      long[] gatherMapData = mixedLeftAntiJoinGatherMap(
+          leftKeys.getNativeView(), rightKeys.getNativeView(),
+          leftConditional.getNativeView(), rightConditional.getNativeView(),
+          condition.getNativeHandle(),
+          nullEquality == NullEquality.EQUAL);
+      return buildSingleJoinGatherMap(gatherMapData);
+    } finally {
+      reachabilityFence(leftKeys);
+      reachabilityFence(rightKeys);
+      reachabilityFence(leftConditional);
+      reachabilityFence(rightConditional);
+      reachabilityFence(condition);
+    }
   }
 
   /**

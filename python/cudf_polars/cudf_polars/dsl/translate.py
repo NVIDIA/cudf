@@ -2068,9 +2068,8 @@ def _(
 def _(
     node: plrs._expr_nodes.Cast, translator: Translator, dtype: DataType, schema: Schema
 ) -> expr.Expr:
-    # TODO: node.options can be 2 meaning wrap_numerical=True
-    # don't necessarily raise because wrapping isn't always needed, but it's unhandled
     strict = node.options != 1
+    cast_cls = expr.WrappingCast if node.options == 2 else expr.Cast
     # SQL UNION ALL can coerce an untyped NULL branch to String in a projection.
     inner = translator.translate_expr(
         n=node.expr,
@@ -2104,7 +2103,7 @@ def _(
             return expr.LiteralColumn(dtype, pl.Series([None], dtype=dtype.polars_type))
         return inner.astype(dtype)
     else:
-        return expr.Cast(dtype, strict, inner)
+        return cast_cls(dtype, strict, inner)
 
 
 @_translate_expr.register

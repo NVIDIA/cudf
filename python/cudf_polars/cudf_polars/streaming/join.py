@@ -8,7 +8,8 @@ import operator
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from cudf_polars.dsl.ir import ConditionalJoin, Join, Projection, Slice
+from cudf_polars.dsl.expr import Col
+from cudf_polars.dsl.ir import AsofJoin, ConditionalJoin, Join, Projection, Slice
 from cudf_polars.dsl.traversal import traversal
 from cudf_polars.streaming.base import PartitionInfo
 from cudf_polars.streaming.dispatch import lower_ir_node
@@ -155,6 +156,13 @@ def _make_bcast_join(
 def _has_non_pointwise_keys(ir: Join) -> bool:
     keys = [ne.value for keys in (ir.left_on, ir.right_on) for ne in keys]
     return not all(expr.is_pointwise for expr in traversal(keys))
+
+
+def _has_direct_asof_on(ir: AsofJoin) -> bool:
+    return all(
+        isinstance(on.value, Col) and on.name == on.value.name
+        for on in (ir.left_on, ir.right_on)
+    )
 
 
 def is_direct_join_prefilter(ir: IR) -> bool:
@@ -451,3 +459,40 @@ def _(
             left,
             right,
         )
+
+
+@lower_ir_node.register(AsofJoin)
+def _(
+    ir: AsofJoin, rec: LowerIRTransformer
+) -> tuple[IR, MutableMapping[IR, PartitionInfo]]:
+    if (zlice := ir.options[0]) is not None:
+        # TODO: Push this slice into the left input when doing so preserves
+        # global row selection and key evaluation/validation.
+        offset, length = zlice
+        new_join = AsofJoin(
+            ir.schema,
+            ir.left_on,
+            ir.right_on,
+            ir.left_by,
+            ir.right_by,
+            (None, *ir.options[1:]),
+            *ir.children,
+        )
+        return rec(Slice(ir.schema, offset, length, new_join))
+
+    if not _has_direct_asof_on(ir):
+        return _lower_ir_fallback(
+            ir, rec, msg="As-of join on expressions uses single-partition fallback."
+        )
+
+    children, child_partition_info = zip(
+        *(rec(child) for child in ir.children), strict=True
+    )
+    partition_info = reduce(operator.or_, child_partition_info)
+    left = children[0]
+    new_node = ir.reconstruct(children)
+    partition_info[new_node] = PartitionInfo(
+        count=partition_info[left].count,
+        partitioned_on=partition_info[left].partitioned_on,
+    )
+    return new_node, partition_info

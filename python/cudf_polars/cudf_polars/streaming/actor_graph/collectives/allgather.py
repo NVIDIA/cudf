@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from cudf_streaming.partition_utils import unpack_and_concat, unpack_and_concat_cost
-from cudf_streaming.table_chunk import make_table_chunks_available_or_wait
+from cudf_streaming.table_chunk import TableChunk, make_table_chunks_available_or_wait
 from rapidsmpf.streaming.coll.allgather import AllGather
 from rapidsmpf.streaming.core.memory_reserve_or_wait import reserve_memory
 
@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     import pylibcudf as plc
-    from cudf_streaming.table_chunk import TableChunk
     from rapidsmpf.communicator.communicator import Communicator
     from rapidsmpf.streaming.core.context import Context
     from rmm.pylibrmm.stream import Stream
@@ -112,6 +111,14 @@ class AllGatherManager:
     def inserting(self) -> AllGatherManager.Inserter:
         """Return a context manager for the insert phase."""
         return AllGatherManager.Inserter(self)
+
+    async def extract_chunks(self, *, ordered: bool = True) -> list[TableChunk]:
+        """Extract packed chunks, which callers can register for spilling."""
+        partitions = await self.allgather.extract_all(self.context, ordered=ordered)
+        return [
+            TableChunk.from_packed_data(partition, self.context.br())
+            for partition in partitions
+        ]
 
     async def extract_concatenated(
         self, stream: Stream, *, ordered: bool = True, ir_context: IRExecutionContext

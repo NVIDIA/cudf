@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import pickle
+from collections import defaultdict
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,13 +14,17 @@ from polars import GPUEngine
 from polars.testing import assert_frame_equal
 
 from cudf_polars import Translator
-from cudf_polars.dsl.ir import Cache, Join
-from cudf_polars.dsl.traversal import traversal
+from cudf_polars.dsl.ir import AsofJoin, Cache, HConcat, Join, Projection
+from cudf_polars.dsl.traversal import collect_refcount, traversal
 from cudf_polars.engine.options import StreamingOptions
-from cudf_polars.streaming.base import StatsCollector
+from cudf_polars.streaming.actor_graph.core import determine_fanout_nodes
+from cudf_polars.streaming.base import PartitionInfo, StatsCollector
 from cudf_polars.streaming.parallel import optimize_with_stats
 from cudf_polars.testing.asserts import assert_gpu_result_equal
 from cudf_polars.utils.config import ConfigOptions
+
+if TYPE_CHECKING:
+    from cudf_polars.dsl.ir import IR
 
 
 @pytest.mark.parametrize("column", ["a", "b"])
@@ -70,6 +76,39 @@ def test_fallback_on_concat_zlice(spmd_engine_factory) -> None:
         UserWarning, match=r"This slice not supported for multiple partitions."
     ):
         assert_gpu_result_equal(q, engine=streaming_engine)
+
+
+def test_unbounded_fanout_reaches_previously_visited_descendant() -> None:
+    left = pl.LazyFrame({"time": [1], "left": [1]})
+    right = pl.LazyFrame({"time": [1], "right": [1]})
+    query = left.join_asof(right, on="time")
+    translator = Translator(query._ldf.visit(), GPUEngine(executor="streaming"))
+    asof = translator.translate_ir()
+    assert isinstance(asof, AsofJoin)
+    source = asof.children[1]
+    shared = Projection(source.schema, source)
+    peer = Projection({"time": source.schema["time"]}, source)
+    asof = AsofJoin(
+        asof.schema,
+        asof.left_on,
+        asof.right_on,
+        asof.left_by,
+        asof.right_by,
+        asof.options,
+        asof.children[0],
+        shared,
+    )
+    should_broadcast, strict, streaming_safe = False, True, True
+    root: IR = HConcat(
+        asof.schema, should_broadcast, strict, streaming_safe, shared, peer, asof
+    )
+    partition_info: dict[IR, PartitionInfo] = {
+        node: PartitionInfo(2) for node in traversal([root])
+    }
+    refcounts: defaultdict[IR, int] = defaultdict(int, collect_refcount([root]))
+    fanout = determine_fanout_nodes(root, partition_info, refcounts)
+    assert fanout[shared].unbounded
+    assert fanout[source].unbounded
 
 
 # ---------------------------------------------------------------------------

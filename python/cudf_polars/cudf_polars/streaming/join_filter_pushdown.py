@@ -73,6 +73,7 @@ from typing import TYPE_CHECKING, Literal, TypedDict
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
     IR,
+    AsofJoin,
     ConditionalJoin,
     DataFrameScan,
     Distinct,
@@ -365,6 +366,10 @@ def blocks_pushdown(node: IR, facts: PlanFacts) -> bool:
         # Can't push through anything that is sliced.
         or (isinstance(node, (GroupBy, Sort)) and node.zlice is not None)
         or (isinstance(node, (ConditionalJoin, Join)) and node.options[2] is not None)
+        or (
+            isinstance(node, AsofJoin)
+            and (node.options[0] is not None or (node.options[3] and not node.right_by))
+        )
     )
 
 

@@ -434,6 +434,21 @@ def _make_hash_shuffle_metadata(
     )
 
 
+async def run_with_reservation[**P, T](
+    context: Context,
+    ir_context: IRExecutionContext,
+    size: int,
+    func: Callable[P, T],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    """Run one function in a thread under a device-memory reservation."""
+    reservation = await reserve_memory(context, size=size, net_memory_delta=0)
+    with opaque_memory_usage(reservation):
+        return await ir_context.to_thread(func, *args, **kwargs)
+
+
 def _evaluate_chunk_sync(
     chunk: TableChunk,
     ir: IR,

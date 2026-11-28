@@ -12,6 +12,7 @@ import pylibcudf as plc
 from cudf_polars.containers import DataType
 from cudf_polars.dsl import expr
 from cudf_polars.dsl.ir import (
+    AsofJoin,
     DataFrameScan,
     Distinct,
     Filter,
@@ -256,6 +257,33 @@ def test_left_join_binds_only_left_columns() -> None:
     )
 
     assert column_domain_bindings(node) == {"key": ColumnBinding(0, "key")}
+
+
+@pytest.mark.parametrize("coalesce", [False, True])
+def test_asof_join_binds_only_left_columns(*, coalesce: bool) -> None:
+    left = make_scan("time", "left_value")
+    right = make_scan("time", "left_value", "right_value")
+    schema = {
+        **left.schema,
+        **({} if coalesce else {"time_right": I64}),
+        "left_value_right": I64,
+        "right_value": I64,
+    }
+    node = AsofJoin(
+        schema,
+        named_col("time", "time"),
+        named_col("time", "time"),
+        (),
+        (),
+        (None, "_right", coalesce, True),
+        left,
+        right,
+    )
+
+    assert column_domain_bindings(node) == {
+        "time": ColumnBinding(0, "time"),
+        "left_value": ColumnBinding(0, "left_value"),
+    }
 
 
 def test_hconcat_binds_unique_child_columns() -> None:

@@ -13,10 +13,19 @@
 #include <cuda/std/concepts>
 #include <cuda/std/limits>
 #include <cuda/std/type_traits>
-#include <cuda/std/utility>
 
 namespace numeric {
 namespace detail {
+
+/**
+ * @brief An integer significand and its base-2 exponent.
+ * @tparam T Significand representation type
+ */
+template <typename T>
+struct binary_components {
+  T significand{};
+  int exponent = 0;
+};
 
 /**
  * @brief Helper struct for getting and setting the components of a floating-point value
@@ -126,7 +135,7 @@ struct floating_converter {
    * @param integer_rep The bit-casted floating value to extract the exponent from
    * @return The stored base-2 exponent and significand, shifted for denormals
    */
-  CUDF_HOST_DEVICE inline static cuda::std::pair<IntegralType, int> get_significand_and_pow2(
+  CUDF_HOST_DEVICE inline static binary_components<IntegralType> get_significand_and_pow2(
     IntegralType integer_rep)
   {
     // Extract the significand
@@ -567,7 +576,7 @@ struct shifting_constants {
  * @return integer_rep, shifted 1 and ++'d if the conversion to decimal causes truncation
  */
 template <cuda::std::floating_point FloatingType>
-CUDF_HOST_DEVICE cuda::std::pair<typename floating_converter<FloatingType>::IntegralType, int>
+CUDF_HOST_DEVICE binary_components<typename floating_converter<FloatingType>::IntegralType>
 add_half_if_truncates(FloatingType floating,
                       typename floating_converter<FloatingType>::IntegralType integer_rep,
                       int pow2,
@@ -941,7 +950,7 @@ CUDF_HOST_DEVICE inline auto shift_to_binary_pospow(DecimalRep decimal_rep, int 
   }
 
   // Our shifting_rep is now the integer mantissa, return it and the powers of 2
-  return cuda::std::pair{shifting_rep, pow2};
+  return binary_components<ShiftingRep>{shifting_rep, pow2};
 }
 
 /**
@@ -1006,7 +1015,7 @@ CUDF_HOST_DEVICE inline auto shift_to_binary_negpow(DecimalRep decimal_rep, int 
   }
 
   // Our shifting_rep is now the integer mantissa, return it and the powers of 2
-  return cuda::std::pair{shifting_rep, pow2};
+  return binary_components<ShiftingRep>{shifting_rep, pow2};
 }
 
 /**

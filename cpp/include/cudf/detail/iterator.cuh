@@ -242,12 +242,12 @@ auto make_optional_iterator(column_device_view const& column, Nullate has_nulls)
 /**
  * @brief Constructs a pair iterator over a column's values and its validity.
  *
- * Dereferencing the returned iterator returns a `cuda::std::pair<Element, bool>`.
+ * Dereferencing the returned iterator returns a `value_and_validity<Element>`.
  *
  * If an element at position `i` is valid (or `has_nulls == false`), then for `p = *(iter + i)`,
- * `p.first` contains the value of the element at `i` and `p.second == true`.
+ * `p.value` contains the value of the element at `i` and `p.is_valid == true`.
  *
- * Else, if the element at `i` is null, then the value of `p.first` is undefined and `p.second ==
+ * Else, if the element at `i` is null, then the value of `p.value` is undefined and `p.is_valid ==
  * false`. `pair(column[i], validity)`. `validity` is `true` if `has_nulls=false`. `validity` is
  * validity of the element at `i` if `has_nulls=true` and the column is nullable.
  *
@@ -269,14 +269,14 @@ auto make_pair_iterator(column_device_view const& column)
 /**
  * @brief Constructs a pair rep iterator over a column's representative values and its validity.
  *
- * Dereferencing the returned iterator returns a `cuda::std::pair<rep_type, bool>`,
+ * Dereferencing the returned iterator returns a `value_and_validity<rep_type>`,
  * where `rep_type` is `device_storage_type<T>`, the type used to store
  * the value on the device.
  *
  * If an element at position `i` is valid (or `has_nulls == false`), then for `p = *(iter + i)`,
- * `p.first` contains the value of the element at `i` and `p.second == true`.
+ * `p.value` contains the value of the element at `i` and `p.is_valid == true`.
  *
- * Else, if the element at `i` is null, then the value of `p.first` is undefined and `p.second ==
+ * Else, if the element at `i` is null, then the value of `p.value` is undefined and `p.is_valid ==
  * false`. `pair(column[i], validity)`. `validity` is `true` if `has_nulls=false`. `validity` is
  * validity of the element at `i` if `has_nulls=true` and the column is nullable.
  *

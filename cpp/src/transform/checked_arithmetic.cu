@@ -4,6 +4,7 @@
  */
 
 #include "checked_arithmetic.hpp"
+#include "jit/error.hpp"
 
 #include <cudf/column/column_device_view.cuh>
 #include <cudf/column/column_factories.hpp>
@@ -115,7 +116,7 @@ CUDF_KERNEL void checked_binary_kernel(size_type row_size,
                                        column_device_view rhs,
                                        mutable_column_device_view out,
                                        binary_operator op,
-                                       int32_t* max_error)
+                                       packed_evaluation_status* status)
 {
   using input_accessors  = jit::type_list<jit::column_accessor<0, T, LhsIsScalar, 0>,
                                           jit::column_accessor<1, T, RhsIsScalar, 0>>;
@@ -124,7 +125,7 @@ CUDF_KERNEL void checked_binary_kernel(size_type row_size,
   column_device_view_core const inputs[]          = {lhs, rhs};
   mutable_column_device_view_core const outputs[] = {out};
   cudf::detail::transform_kernel<true, input_accessors, output_accessors>(
-    row_size, nullptr, inputs, outputs, max_error, checked_binary_row_operation{op});
+    row_size, nullptr, inputs, outputs, status, checked_binary_row_operation{op});
 }
 
 template <typename T>
@@ -132,7 +133,7 @@ CUDF_KERNEL void checked_unary_kernel(size_type row_size,
                                       column_device_view input,
                                       mutable_column_device_view out,
                                       unary_operator op,
-                                      int32_t* max_error)
+                                      packed_evaluation_status* status)
 {
   using input_accessors  = jit::type_list<jit::column_accessor<0, T, false, 0>>;
   using output_accessors = jit::type_list<jit::column_accessor<0, T, false, 0>>;
@@ -140,15 +141,13 @@ CUDF_KERNEL void checked_unary_kernel(size_type row_size,
   column_device_view_core const inputs[]          = {input};
   mutable_column_device_view_core const outputs[] = {out};
   cudf::detail::transform_kernel<true, input_accessors, output_accessors>(
-    row_size, nullptr, inputs, outputs, max_error, checked_unary_row_operation{op});
+    row_size, nullptr, inputs, outputs, status, checked_unary_row_operation{op});
 }
 
-void throw_if_error(errc error, error_policy policy)
+void handle_status(packed_evaluation_status status, error_policy policy)
 {
-  if (error == errc::SUCCESS || policy == error_policy::NULLIFY) { return; }
-  throw evaluation_error(
-    error,
-    std::string{"Checked arithmetic evaluation failed with error `"} + to_string(error) + "`");
+  if (policy == error_policy::NULLIFY) { return; }
+  handle_evaluation_status(status, {}, "Checked arithmetic evaluation");
 }
 
 template <bool LhsIsScalar, bool RhsIsScalar>
@@ -167,16 +166,15 @@ struct binary_launcher {
       auto lhs_device    = column_device_view::create(lhs, stream, temp_mr);
       auto rhs_device    = column_device_view::create(rhs, stream, temp_mr);
       auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
-      cudf::detail::device_scalar<int32_t> max_error{
-        static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
+      device_scalar<packed_evaluation_status> status{evaluation_status::success, stream, temp_mr};
 
       cudf::detail::grid_1d config(out.size(), 256);
       checked_binary_kernel<T, LhsIsScalar, RhsIsScalar>
         <<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
-          out.size(), *lhs_device, *rhs_device, *out_device, op, max_error.data());
+          out.size(), *lhs_device, *rhs_device, *out_device, op, status.data());
       CUDF_CHECK_CUDA(stream.get());
 
-      throw_if_error(static_cast<errc>(max_error.value(stream)), policy);
+      handle_status(status.value(stream), policy);
     } else {
       CUDF_FAIL("Checked arithmetic requires matching arithmetic or fixed-point types",
                 cudf::data_type_error);
@@ -197,15 +195,14 @@ struct unary_launcher {
       auto const temp_mr = mr.get_temporary_mr();
       auto input_device  = column_device_view::create(input, stream, temp_mr);
       auto out_device    = mutable_column_device_view::create(out, stream, temp_mr);
-      cudf::detail::device_scalar<int32_t> max_error{
-        static_cast<int32_t>(errc::SUCCESS), stream, temp_mr};
+      device_scalar<packed_evaluation_status> status{evaluation_status::success, stream, temp_mr};
 
       cudf::detail::grid_1d config(out.size(), 256);
       checked_unary_kernel<T><<<config.num_blocks, config.num_threads_per_block, 0, stream.get()>>>(
-        out.size(), *input_device, *out_device, op, max_error.data());
+        out.size(), *input_device, *out_device, op, status.data());
       CUDF_CHECK_CUDA(stream.get());
 
-      throw_if_error(static_cast<errc>(max_error.value(stream)), policy);
+      handle_status(status.value(stream), policy);
     } else {
       CUDF_FAIL("Checked arithmetic requires an arithmetic or fixed-point type",
                 cudf::data_type_error);

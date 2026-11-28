@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/errc.hpp>
+#include <cudf/utilities/evaluation_error.hpp>
 #include <cudf/utilities/export.hpp>
 
 #include <cuda.h>
@@ -109,37 +110,6 @@ struct data_type_error : std::invalid_argument {
    * @param message Message to be associated with the exception
    */
   explicit data_type_error(std::string const& message) : std::invalid_argument(message) {}
-};
-
-/**
- * @brief Exception type thrown when evaluating an operator function results in an error (e.g.
- * overflow, division by zero, etc.)
- *
- */
-struct evaluation_error : public std::exception {
-  /**
-   * @brief Construct a new evaluation error object.
-   *
-   * @param error The error code that occurred during evaluation
-   * @param message An error message describing the evaluation error
-   */
-  evaluation_error(errc error, std::string message) : error_(error), message_(std::move(message)) {}
-
-  /**
-   * @brief Get the error message.
-   * @return A C-string describing the error
-   */
-  [[nodiscard]] char const* what() const noexcept override { return message_.c_str(); }
-
-  /**
-   * @brief Get the error code that occurred during evaluation.
-   * @return The error code
-   */
-  [[nodiscard]] errc error_code() const { return error_; }
-
- private:
-  errc error_;           //< The error code that occurred during evaluation
-  std::string message_;  //< An error message describing the evaluation error
 };
 
 /** @} */

@@ -4,6 +4,9 @@
  */
 
 #pragma once
+
+#include "jit/error.hpp"
+
 #include <cudf/ast/detail/operators.hpp>
 #include <cudf/ast/expressions.hpp>
 #include <cudf/column/column_factories.hpp>
@@ -105,6 +108,7 @@ struct [[nodiscard]] transform_args {
   std::string udf_expression = {};  ///< The generated function, which the kernel calls by name
   // Borrowed modules: descriptors and their bytes must stay valid until the kernel is retrieved.
   cudf::lto_fragments lto_fragments = {};
+  std::vector<error_operator> error_operator_map{};
 };
 
 struct node;
@@ -116,12 +120,13 @@ struct node;
  */
 struct [[nodiscard]] instance_context {
  private:
-  int32_t num_tmp_vars_   = 0;                 ///< The number of temporary variables generated
-  std::string tmp_prefix_ = "tmp_";            ///< The prefix for temporary variable identifiers
-  bool has_nulls_         = false;             ///< If expressions involve null values
-  std::vector<input> inputs_;                  ///< The inputs for the IR
-  std::vector<var_info> input_vars_;           ///< The input variables for the IR
-  std::vector<untyped_var_info> output_vars_;  ///< The output variables for the IR
+  int32_t num_tmp_vars_   = 0;       ///< The number of temporary variables generated
+  std::string tmp_prefix_ = "tmp_";  ///< The prefix for temporary variable identifiers
+  bool has_nulls_         = false;   ///< If expressions involve null values
+  std::vector<error_operator> error_operator_map_;  ///< Maps packed indices to error context
+  std::vector<input> inputs_;                       ///< The inputs for the IR
+  std::vector<var_info> input_vars_;                ///< The input variables for the IR
+  std::vector<untyped_var_info> output_vars_;       ///< The output variables for the IR
   std::unordered_multimap<size_t, node const*> cse_nodes_;  ///< multimap of IR nodes
   cuda::stream_ref stream_;  ///< The CUDA stream for any device operations during IR generation
   cudf::memory_resources
@@ -293,6 +298,8 @@ struct [[nodiscard]] node {
 
   std::string id_ = {};  ///< The identifier of the IR node
 
+  std::optional<int32_t> expression_id_{};  ///< Caller ID, excluded from CSE equivalence
+
   data_type type_ = {};  ///< The resolved type information of the IR node
 
   input_reference scale_reference_ = {};  ///< The index of the target scale as an IR input
@@ -342,11 +349,13 @@ struct [[nodiscard]] node {
    * @param target_scale The target scale for decimal rescaling if applicable
    * @param error_policy The error policy for the operation
    * @param args The arguments of the operation
+   * @param expression_id Caller identifier reported on evaluation failure
    */
   node(opcode op,
        std::optional<int32_t> target_scale,
        error_policy error_policy,
-       std::vector<std::unique_ptr<node>> args);
+       std::vector<std::unique_ptr<node>> args,
+       std::optional<int32_t> expression_id);
 
   /**
    * @brief Construct a new operation IR node
@@ -357,7 +366,7 @@ struct [[nodiscard]] node {
    */
   template <cuda::std::same_as<node>... T>
   node(opcode op, std::optional<int32_t> target_scale, error_policy error_policy, T... args)
-    : node(op, target_scale, error_policy, arguments(std::move(args)...))
+    : node(op, target_scale, error_policy, arguments(std::move(args)...), std::nullopt)
   {
   }
 
@@ -373,7 +382,7 @@ struct [[nodiscard]] node {
        std::optional<int32_t> target_scale,
        error_policy error_policy,
        std::unique_ptr<T>... args)
-    : node(op, target_scale, error_policy, arguments(std::move(args)...))
+    : node(op, target_scale, error_policy, arguments(std::move(args)...), std::nullopt)
   {
   }
 
@@ -389,8 +398,12 @@ struct [[nodiscard]] node {
    * @param udf The function to call
    * @param error_policy How a row whose call fails is handled
    * @param args The arguments of the call
+   * @param expression_id Caller identifier reported on evaluation failure
    */
-  node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args);
+  node(ast::jit::udf udf,
+       error_policy error_policy,
+       std::vector<std::unique_ptr<node>> args,
+       std::optional<int32_t> expression_id);
 
   /**
    * @brief Construct a node for a repeated reference to an AST call, which reuses the evaluation

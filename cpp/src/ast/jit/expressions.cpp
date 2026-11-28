@@ -183,18 +183,21 @@ expression const& jit::operation(ast::tree& tree,
                                  op operator_id,
                                  std::vector<std::reference_wrapper<expression const>> const& args,
                                  cudf::error_policy error_policy,
-                                 std::optional<int32_t> target_scale)
+                                 std::optional<int32_t> target_scale,
+                                 std::optional<int32_t> expression_id)
 {
-  return tree.push(
-    detail::operation(as_opcode(operator_id), std::move(args), error_policy, target_scale));
+  return tree.push(detail::operation(
+    as_opcode(operator_id), std::move(args), error_policy, target_scale, expression_id));
 }
 
 expression const& jit::call(ast::tree& tree,
                             ast::jit::udf function,
                             std::vector<std::reference_wrapper<expression const>> args,
-                            cudf::error_policy error_policy)
+                            cudf::error_policy error_policy,
+                            std::optional<int32_t> expression_id)
 {
-  return tree.push(detail::udf_call(std::move(function), std::move(args), error_policy));
+  return tree.push(
+    detail::udf_call(std::move(function), std::move(args), error_policy, expression_id));
 }
 
 expression const& jit::operation(
@@ -202,13 +205,15 @@ expression const& jit::operation(
   op operator_id,
   std::initializer_list<std::reference_wrapper<expression const>> args,
   cudf::error_policy error_policy,
-  std::optional<int32_t> target_scale)
+  std::optional<int32_t> target_scale,
+  std::optional<int32_t> expression_id)
 {
   return operation(tree,
                    operator_id,
                    std::vector<std::reference_wrapper<expression const>>(args),
                    error_policy,
-                   target_scale);
+                   target_scale,
+                   expression_id);
 }
 
 }  // namespace ast

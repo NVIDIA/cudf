@@ -86,12 +86,12 @@ struct bin_finder {
   {
   }
 
-  __device__ size_type operator()(cuda::std::pair<T, bool> input_value) const
+  __device__ size_type operator()(cudf::detail::value_and_validity<T> input_value) const
   {
     // Immediately return sentinel for null inputs.
-    if (!input_value.second) return NULL_VALUE;
+    if (!input_value.is_valid) return NULL_VALUE;
 
-    T value    = input_value.first;
+    T value    = input_value.value;
     auto bound = thrust::lower_bound(thrust::seq, m_left_begin, m_left_end, value, m_left_comp);
 
     // Exit early and return sentinel for values that lie below the interval.

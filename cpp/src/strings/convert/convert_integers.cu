@@ -42,15 +42,15 @@ namespace {
  */
 template <typename IntegerType>
 struct string_to_integer_check_fn {
-  __device__ bool operator()(cuda::std::pair<string_view, bool> const& p) const
+  __device__ bool operator()(cudf::detail::value_and_validity<string_view> const& p) const
   {
-    if (!p.second || p.first.empty()) { return false; }
+    if (!p.is_valid || p.value.empty()) { return false; }
 
-    auto const d_str = p.first.data();
+    auto const d_str = p.value.data();
     if (d_str[0] == '-' && cuda::std::is_unsigned_v<IntegerType>) { return false; }
 
     auto iter           = d_str + static_cast<int>((d_str[0] == '-' || d_str[0] == '+'));
-    auto const iter_end = d_str + p.first.size_bytes();
+    auto const iter_end = d_str + p.value.size_bytes();
     if (iter == iter_end) { return false; }
 
     auto const sign      = d_str[0] == '-' ? IntegerType{-1} : IntegerType{1};
@@ -166,13 +166,13 @@ std::unique_ptr<column> is_integer(strings_column_view const& input,
       d_column->pair_begin<string_view, true>(),
       d_column->pair_end<string_view, true>(),
       d_results,
-      [] __device__(auto const& p) { return p.second ? is_integer(p.first) : false; });
+      [] __device__(auto const& p) { return p.is_valid ? is_integer(p.value) : false; });
   } else {
     thrust::transform(rmm::exec_policy_nosync(stream, cudf::get_current_device_resource_ref()),
                       d_column->pair_begin<string_view, false>(),
                       d_column->pair_end<string_view, false>(),
                       d_results,
-                      [] __device__(auto const& p) { return is_integer(p.first); });
+                      [] __device__(auto const& p) { return is_integer(p.value); });
   }
 
   // Calling mutable_view() on a column invalidates it's null count so we need to set it back

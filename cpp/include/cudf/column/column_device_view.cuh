@@ -20,7 +20,6 @@
 #include <cuda/iterator>
 #include <cuda/memory>
 #include <cuda/std/concepts>
-#include <cuda/std/utility>
 #include <cuda/stream>
 
 #include <functional>
@@ -31,6 +30,20 @@
  */
 
 namespace CUDF_EXPORT cudf {
+
+namespace detail {
+
+/**
+ * @brief A column element and its validity.
+ * @tparam T Element type
+ */
+template <typename T>
+struct value_and_validity {
+  T value{};              ///< Element value, undefined when invalid
+  bool is_valid = false;  ///< Whether the element is valid
+};
+
+}  // namespace detail
 
 /**
  * @brief An immutable, non-owning view of device data as a column of elements
@@ -360,14 +373,14 @@ class alignas(16) column_device_view : public column_device_view_core {
   /**
    * @brief Return a pair iterator to the first element of the column.
    *
-   * Dereferencing the returned iterator returns a `cuda::std::pair<T, bool>`.
+   * Dereferencing the returned iterator returns a `detail::value_and_validity<T>`.
    *
    * If an element at position `i` is valid (or `has_nulls == false`), then
-   * for `p = *(iter + i)`, `p.first` contains the value of the element at `i`
-   * and `p.second == true`.
+   * for `p = *(iter + i)`, `p.value` contains the value of the element at `i`
+   * and `p.is_valid == true`.
    *
-   * Else, if the element at `i` is null, then the value of `p.first` is
-   * undefined and `p.second == false`.
+   * Else, if the element at `i` is null, then the value of `p.value` is
+   * undefined and `p.is_valid == false`.
    *
    * This function does not participate in overload resolution if
    * `column_device_view::has_element_accessor<T>()` is false.
@@ -389,16 +402,16 @@ class alignas(16) column_device_view : public column_device_view_core {
   /**
    * @brief Return a pair iterator to the first element of the column.
    *
-   * Dereferencing the returned iterator returns a `cuda::std::pair<rep_type, bool>`,
+   * Dereferencing the returned iterator returns a `detail::value_and_validity<rep_type>`,
    * where `rep_type` is `device_storage_type<T>`, the type used to store
    * the value on the device.
    *
    * If an element at position `i` is valid (or `has_nulls == false`), then
-   * for `p = *(iter + i)`, `p.first` contains the value of the element at `i`
-   * and `p.second == true`.
+   * for `p = *(iter + i)`, `p.value` contains the value of the element at `i`
+   * and `p.is_valid == true`.
    *
-   * Else, if the element at `i` is null, then the value of `p.first` is
-   * undefined and `p.second == false`.
+   * Else, if the element at `i` is null, then the value of `p.value` is
+   * undefined and `p.is_valid == false`.
    *
    * This function does not participate in overload resolution if
    * `column_device_view::has_element_accessor<T>()` is false.
@@ -926,9 +939,9 @@ struct optional_accessor {
  *
  * A unary functor returns pair with scalar value at `id` and boolean validity
  * `operator() (cudf::size_type id)` computes `element`  and
- * returns a `pair(element, validity)`
+ * returns the element and its validity
  *
- * the return value for element `i` will return `pair(column[i], validity)`
+ * the return value for element `i` will contain the column value and its validity
  * `validity` is `true` if `has_nulls=false`.
  * `validity` is validity of the element at `i` if `has_nulls=true` and the
  * column is nullable.
@@ -959,9 +972,9 @@ struct pair_accessor {
    * @brief Pair accessor
    *
    * @param[in] i index of the element
-   * @return pair(element, validity)
+   * @return Element value and validity
    */
-  __device__ inline cuda::std::pair<T, bool> operator()(cudf::size_type i) const
+  __device__ inline value_and_validity<T> operator()(cudf::size_type i) const
   {
     return {col.element<T>(i), (has_nulls ? col.is_valid_nocheck(i) : true)};
   }
@@ -972,9 +985,9 @@ struct pair_accessor {
  *
  * A unary functor returns pair with representative scalar value at `id` and boolean validity
  * `operator() (cudf::size_type id)` computes `element`  and
- * returns a `pair(element, validity)`
+ * returns the element and its validity
  *
- * the return value for element `i` will return `pair(column[i], validity)`
+ * the return value for element `i` will contain the column value and its validity
  * `validity` is `true` if `has_nulls=false`.
  * `validity` is validity of the element at `i` if `has_nulls=true` and the
  * column is nullable.
@@ -1007,9 +1020,9 @@ struct pair_rep_accessor {
    * @brief Pair accessor
    *
    * @param[in] i index of element to access
-   * @return pair of element and validity
+   * @return Element value and validity
    */
-  __device__ inline cuda::std::pair<rep_type, bool> operator()(cudf::size_type i) const
+  __device__ inline value_and_validity<rep_type> operator()(cudf::size_type i) const
   {
     return {get_rep<T>(i), (has_nulls ? col.is_valid_nocheck(i) : true)};
   }

@@ -4,6 +4,7 @@
  */
 
 #include <cudf/column/column_device_view_base.cuh>
+#include <cudf/detail/evaluation_status.hpp>
 #include <cudf/detail/row_ir/opcode.hpp>
 #include <cudf/errc.hpp>
 #include <cudf/strings/string_view.cuh>
@@ -13,9 +14,7 @@
 
 #include <cuda/std/algorithm>  // UDFs may use any algorithm without including it
 #include <cuda/std/cstddef>
-#include <cuda/std/tuple>
 #include <cuda/std/type_traits>
-#include <cuda/std/utility>
 
 #include <jit/transform_kernel.cuh>
 
@@ -80,14 +79,14 @@ __device__ void transform_kernel(size_type row_size,
                                  void* __restrict__ user_data,
                                  column_device_view_core const* __restrict__ input_cols,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
-                                 int32_t* __restrict__ max_error)
+                                 detail::packed_evaluation_status* __restrict__ status)
 {
   auto operation = [&](size_type row, auto... args) {
     return invoke_transform_op<has_user_data>(user_data, row, args...);
   };
 
   detail::transform_kernel<is_null_aware, InputAccessors, OutputAccessors>(
-    row_size, stencil, input_cols, output_cols, max_error, operation);
+    row_size, stencil, input_cols, output_cols, status, operation);
 }
 
 }  // namespace jit
@@ -108,7 +107,7 @@ extern "C" __global__ void cudf_kernel_entry(
   void* __restrict__ user_data,
   cudf::column_device_view_core const* __restrict__ input_cols,
   cudf::mutable_column_device_view_core const* __restrict__ output_cols,
-  int32_t* __restrict__ max_error)
+  cudf::detail::packed_evaluation_status* __restrict__ status)
 {
-  CUDF_KERNEL_INSTANCE(row_size, stencil, user_data, input_cols, output_cols, max_error);
+  CUDF_KERNEL_INSTANCE(row_size, stencil, user_data, input_cols, output_cols, status);
 }

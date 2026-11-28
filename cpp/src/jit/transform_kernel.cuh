@@ -6,6 +6,7 @@
 #pragma once
 
 #include <cudf/column/column_device_view_base.cuh>
+#include <cudf/detail/evaluation_status.hpp>
 #include <cudf/detail/utilities/cuda.cuh>
 #include <cudf/detail/utilities/grid_1d.cuh>
 #include <cudf/detail/utilities/integer_utils.hpp>
@@ -13,9 +14,7 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/bit.hpp>
 
-#include <cuda/atomic>
-#include <cuda/std/algorithm.max.h>
-#include <cuda/std/utility>
+#include <cuda/std/algorithm.min.h>
 
 #include <jit/column_accessor.cuh>
 #include <jit/sync.cuh>
@@ -40,7 +39,7 @@ __device__ void transform_kernel(size_type row_size,
                                  bitmask_type const* __restrict__ stencil,
                                  column_device_view_core const* __restrict__ input_cols,
                                  mutable_column_device_view_core const* __restrict__ output_cols,
-                                 int32_t* __restrict__ max_error,
+                                 packed_evaluation_status* __restrict__ status,
                                  RowOperation&& operation)
 {
   constexpr auto all_fixed_width_repr_compatible = []<typename... A>() {
@@ -49,9 +48,9 @@ __device__ void transform_kernel(size_type row_size,
   constexpr bool direct_access = InputAccessors::map(all_fixed_width_repr_compatible) &&
                                  OutputAccessors::map(all_fixed_width_repr_compatible);
 
-  auto const start  = grid_1d::global_thread_id();
-  auto const stride = grid_1d::grid_stride();
-  auto thread_error = errc::SUCCESS;
+  auto const start   = grid_1d::global_thread_id();
+  auto const stride  = grid_1d::grid_stride();
+  auto thread_status = evaluation_status::success;
 
   // `row_index` is intentionally kept wide to reduce register pressure.
   // The row indexes are checked against the row sizes before use.
@@ -64,23 +63,25 @@ __device__ void transform_kernel(size_type row_size,
       if constexpr (direct_access) {
         InputAccessors::map([&]<typename... In> {
           OutputAccessors::map([&]<typename... Out> {
-            auto const error = operation(
+            auto const status = operation(
               row_index,
               (Out::column(output_cols).template data<typename Out::element_type>() + row_index)...,
               In::column(input_cols)
                 .template data<typename In::element_type>()[In::map_index(row_index)]...);
-            thread_error = cuda::std::max(thread_error, error);
+            thread_status =
+              cuda::std::min(thread_status, evaluation_status::make(status, row_index));
           });
         });
       } else {
         OutputAccessors::map([&]<typename... Out> {
           [&](auto... outs) {
             InputAccessors::map([&]<typename... In> {
-              auto const error =
+              auto const status =
                 operation(row_index, &outs..., In::element(input_cols, row_index)...);
               (Out::assign(output_cols, row_index, outs), ...);
 
-              thread_error = cuda::std::max(thread_error, error);
+              thread_status =
+                cuda::std::min(thread_status, evaluation_status::make(status, row_index));
             });
           }(Out::output_arg(output_cols, row_index)...);
         });
@@ -97,7 +98,7 @@ __device__ void transform_kernel(size_type row_size,
       OutputAccessors::map([&]<typename... Out> {
         [&](auto... outs) {
           InputAccessors::map([&]<typename... In> {
-            auto const error =
+            auto const status =
               operation(row_index, &outs..., In::nullable_element(input_cols, row_index)...);
             // Null outputs are disengaged; the value written for those rows is undefined.
             (Out::assign(
@@ -105,17 +106,17 @@ __device__ void transform_kernel(size_type row_size,
              ...);
             (jit::warp_compact_validity<Out>(active_mask, output_cols, row_index, outs.has_value()),
              ...);
-            thread_error = cuda::std::max(thread_error, error);
+            thread_status =
+              cuda::std::min(thread_status, evaluation_status::make(status, row_index));
           });
         }(Out::nullable_output_arg(output_cols, row_index)...);
       });
     }
   }
 
-  if (thread_error == errc::SUCCESS) { return; }
+  if (thread_status == evaluation_status::success) { return; }
 
-  cuda::atomic_ref ref(*max_error);
-  ref.fetch_max(static_cast<int32_t>(thread_error), cuda::std::memory_order_relaxed);
+  atomicMin(reinterpret_cast<unsigned long long*>(status), thread_status);
 }
 
 }  // namespace cudf::detail

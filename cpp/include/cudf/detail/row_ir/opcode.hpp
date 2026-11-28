@@ -4,6 +4,7 @@
  */
 
 #pragma once
+#include <cudf/detail/evaluation_status.hpp>
 #include <cudf/detail/operators/operators.cuh>
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
@@ -15,12 +16,14 @@
 /**
  * @brief Declares a generated local from an `expected`, returning any error to the caller.
  */
-#define CUDF_ROW_IR_PROPAGATE_ERROR(type, name, ...)                            \
-  type name{};                                                                  \
-  do {                                                                          \
-    auto cudf_row_ir_result = (__VA_ARGS__);                                    \
-    if (!cudf_row_ir_result.has_value()) { return cudf_row_ir_result.error(); } \
-    name = cudf_row_ir_result.value();                                          \
+#define CUDF_ROW_IR_PROPAGATE_ERROR(type, name, operator_id, ...)                                  \
+  type name{};                                                                                     \
+  do {                                                                                             \
+    auto cudf_row_ir_result = (__VA_ARGS__);                                                       \
+    if (!cudf_row_ir_result.has_value()) {                                                         \
+      return cudf::detail::evaluation_status::make_error(cudf_row_ir_result.error(), operator_id); \
+    }                                                                                              \
+    name = cudf_row_ir_result.value();                                                             \
   } while (false)
 
 namespace CUDF_EXPORT cudf {

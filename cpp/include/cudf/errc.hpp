@@ -23,17 +23,20 @@ namespace CUDF_EXPORT cudf {
 /**
  * @brief Integer representation of error codes, compatible with external consumers such as Numba.
  */
-using error_int = cuda::std::int32_t;
+using error_int = int32_t;
 
 /**
- * @brief Operation error codes. Values through 0xFFFF are reserved for libcudf;
- * values at or above `USER_RESERVED` are interpreted by the consumer.
+ * @brief Operation error codes. Zero means success. User-defined errors must be in
+ * [USER_RESERVED_BEGIN, USER_RESERVED_END). Other values are reserved for libcudf.
+ *
+ * @note error codes are ordered by severity, with lower values indicating more severe errors.
  */
 enum class [[nodiscard]] errc : error_int {
   SUCCESS             = 0,
-  ARITHMETIC_OVERFLOW = 1,
-  DIVISION_BY_ZERO    = 2,
-  USER_RESERVED       = 0x10000
+  DIVISION_BY_ZERO    = 1,
+  ARITHMETIC_OVERFLOW = 2,
+  USER_RESERVED_BEGIN = 512,
+  USER_RESERVED_END   = 1536,
 };
 
 /**

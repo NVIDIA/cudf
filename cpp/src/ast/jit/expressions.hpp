@@ -32,12 +32,18 @@ struct operation : public ast::expression {
    * operations)
    * @param target_scale The target scale for this operation (only applicable for rescale and
    * precision check operations)
+   * @param expression_id Caller identifier reported on evaluation failure
    */
   operation(cudf::detail::row_ir::opcode op,
             std::vector<std::reference_wrapper<expression const>> args,
-            cudf::error_policy error_policy     = cudf::error_policy::PROPAGATE,
-            std::optional<int32_t> target_scale = std::nullopt)
-    : op_{op}, args_{std::move(args)}, error_policy_{error_policy}, target_scale_{target_scale}
+            cudf::error_policy error_policy      = cudf::error_policy::PROPAGATE,
+            std::optional<int32_t> target_scale  = std::nullopt,
+            std::optional<int32_t> expression_id = std::nullopt)
+    : expression{expression_id},
+      op_{op},
+      args_{std::move(args)},
+      error_policy_{error_policy},
+      target_scale_{target_scale}
   {
   }
 
@@ -116,11 +122,16 @@ struct udf_call : public ast::expression {
    * @param function The device function to call
    * @param args The arguments for this call
    * @param error_policy How a row whose call fails is handled
+   * @param expression_id Caller identifier reported on evaluation failure
    */
   udf_call(ast::jit::udf function,
            std::vector<std::reference_wrapper<expression const>> args,
-           cudf::error_policy error_policy)
-    : function_{std::move(function)}, args_{std::move(args)}, error_policy_{error_policy}
+           cudf::error_policy error_policy,
+           std::optional<int32_t> expression_id = std::nullopt)
+    : expression{expression_id},
+      function_{std::move(function)},
+      args_{std::move(args)},
+      error_policy_{error_policy}
   {
   }
 

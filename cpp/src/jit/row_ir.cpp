@@ -248,6 +248,96 @@ struct [[nodiscard]] opcode_info {
   return info;
 }
 
+std::string_view to_string(opcode op) { return get_op_info(op, error_policy::PROPAGATE).name; }
+
+std::optional<ast::jit::op> get_ast_operator(opcode op)
+{
+  using ast_op = ast::jit::op;
+  using enum opcode;
+  switch (op) {
+    case IDENTITY: return ast_op::IDENTITY;
+    case IS_NULL: return ast_op::IS_NULL;
+    case COALESCE: return ast_op::COALESCE;
+    case PREDICATE: return ast_op::PREDICATE;
+    case ADD: return ast_op::ADD;
+    case SUB: return ast_op::SUB;
+    case MUL: return ast_op::MUL;
+    case DIV: return ast_op::DIV;
+    case NEG: return ast_op::NEG;
+    case ABS: return ast_op::ABS;
+    case MOD: return ast_op::MOD;
+    case PYMOD: return ast_op::PYMOD;
+    case TRUE_DIV: return ast_op::TRUE_DIV;
+    case FLOOR_DIV: return ast_op::FLOOR_DIV;
+    case ADD_OVERFLOW: return ast_op::ADD_OVERFLOW;
+    case SUB_OVERFLOW: return ast_op::SUB_OVERFLOW;
+    case MUL_OVERFLOW: return ast_op::MUL_OVERFLOW;
+    case DIV_OVERFLOW: return ast_op::DIV_OVERFLOW;
+    case NEG_OVERFLOW: return ast_op::NEG_OVERFLOW;
+    case ABS_OVERFLOW: return ast_op::ABS_OVERFLOW;
+    case MOD_OVERFLOW: return ast_op::MOD_OVERFLOW;
+    case CHECK_PRECISION: return ast_op::CHECK_PRECISION;
+    case BITWISE_AND: return ast_op::BITWISE_AND;
+    case BITWISE_INVERT: return ast_op::BITWISE_INVERT;
+    case BITWISE_OR: return ast_op::BITWISE_OR;
+    case BITWISE_XOR: return ast_op::BITWISE_XOR;
+    case BITWISE_SHIFT_LEFT: return ast_op::BITWISE_SHIFT_LEFT;
+    case BITWISE_SHIFT_RIGHT: return ast_op::BITWISE_SHIFT_RIGHT;
+    case CAST_TO_BOOL8: return ast_op::CAST_TO_BOOL8;
+    case CAST_TO_INT8: return ast_op::CAST_TO_INT8;
+    case CAST_TO_INT16: return ast_op::CAST_TO_INT16;
+    case CAST_TO_INT32: return ast_op::CAST_TO_INT32;
+    case CAST_TO_INT64: return ast_op::CAST_TO_INT64;
+    case CAST_TO_UINT8: return ast_op::CAST_TO_UINT8;
+    case CAST_TO_UINT16: return ast_op::CAST_TO_UINT16;
+    case CAST_TO_UINT32: return ast_op::CAST_TO_UINT32;
+    case CAST_TO_UINT64: return ast_op::CAST_TO_UINT64;
+    case CAST_TO_FLOAT32: return ast_op::CAST_TO_FLOAT32;
+    case CAST_TO_FLOAT64: return ast_op::CAST_TO_FLOAT64;
+    case CAST_TO_DECIMAL32: return ast_op::CAST_TO_DECIMAL32;
+    case CAST_TO_DECIMAL64: return ast_op::CAST_TO_DECIMAL64;
+    case CAST_TO_DECIMAL128: return ast_op::CAST_TO_DECIMAL128;
+    case RESCALE: return ast_op::RESCALE;
+    case EQUAL: return ast_op::EQUAL;
+    case NOT_EQUAL: return ast_op::NOT_EQUAL;
+    case GREATER: return ast_op::GREATER;
+    case GREATER_EQUAL: return ast_op::GREATER_EQUAL;
+    case LESS: return ast_op::LESS;
+    case LESS_EQUAL: return ast_op::LESS_EQUAL;
+    case NULL_EQUAL: return ast_op::NULL_EQUAL;
+    case NULL_LOGICAL_AND: return ast_op::NULL_LOGICAL_AND;
+    case NULL_LOGICAL_OR: return ast_op::NULL_LOGICAL_OR;
+    case LOGICAL_AND: return ast_op::LOGICAL_AND;
+    case LOGICAL_OR: return ast_op::LOGICAL_OR;
+    case LOGICAL_NOT: return ast_op::LOGICAL_NOT;
+    case IF_ELSE: return ast_op::IF_ELSE;
+    case CBRT: return ast_op::CBRT;
+    case CEIL: return ast_op::CEIL;
+    case FLOOR: return ast_op::FLOOR;
+    case RINT: return ast_op::RINT;
+    case SQRT: return ast_op::SQRT;
+    case POW: return ast_op::POW;
+    case EXP: return ast_op::EXP;
+    case LOG: return ast_op::LOG;
+    case ARCCOS: return ast_op::ARCCOS;
+    case ARCCOSH: return ast_op::ARCCOSH;
+    case ARCSIN: return ast_op::ARCSIN;
+    case ARCSINH: return ast_op::ARCSINH;
+    case ARCTAN: return ast_op::ARCTAN;
+    case ARCTANH: return ast_op::ARCTANH;
+    case COS: return ast_op::COS;
+    case COSH: return ast_op::COSH;
+    case SIN: return ast_op::SIN;
+    case SINH: return ast_op::SINH;
+    case TAN: return ast_op::TAN;
+    case TANH: return ast_op::TANH;
+    case GET_INPUT:
+    case SET_OUTPUT:
+    case UDF_CALL: return std::nullopt;
+  }
+  CUDF_FAIL(std::format("Invalid opcode: {}", static_cast<int>(op)), std::runtime_error);
+}
+
 opcode as_opcode(ast::ast_operator op)
 {
   switch (op) {
@@ -553,8 +643,13 @@ size_t node::compute_hash() const
 node::node(opcode op,
            std::optional<int32_t> target_scale,
            error_policy error_policy,
-           std::vector<std::unique_ptr<node>> args)
-  : op_{op}, target_scale_{target_scale}, error_policy_{error_policy}, args_{std::move(args)}
+           std::vector<std::unique_ptr<node>> args,
+           std::optional<int32_t> expression_id)
+  : op_{op},
+    target_scale_{target_scale},
+    error_policy_{error_policy},
+    args_{std::move(args)},
+    expression_id_{expression_id}
 {
   auto op_info = get_op_info(op_, error_policy_);
   CUDF_EXPECTS(op_ != opcode::GET_INPUT && op_ != opcode::SET_OUTPUT,
@@ -597,8 +692,15 @@ node::node(input_reference input)
   hash_ = compute_hash();
 }
 
-node::node(ast::jit::udf udf, error_policy error_policy, std::vector<std::unique_ptr<node>> args)
-  : op_{opcode::UDF_CALL}, error_policy_{error_policy}, args_{std::move(args)}, udf_{std::move(udf)}
+node::node(ast::jit::udf udf,
+           error_policy error_policy,
+           std::vector<std::unique_ptr<node>> args,
+           std::optional<int32_t> expression_id)
+  : op_{opcode::UDF_CALL},
+    error_policy_{error_policy},
+    args_{std::move(args)},
+    expression_id_{expression_id},
+    udf_{std::move(udf)}
 {
   hash_ = compute_hash();
 }
@@ -607,6 +709,7 @@ node::node(repeated_reference reference)
   : op_{reference.first->op_},
     error_policy_{reference.first->error_policy_},
     hash_{reference.first->hash_},
+    expression_id_{reference.first->expression_id_},
     udf_{reference.first->udf_},
     alias_{reference.first}
 {
@@ -801,7 +904,16 @@ void node::emit_code(instance_context& instance, target_info const& info, code_s
 
       auto emit_call = [&](std::string const& call, bool is_fallible) {
         if (is_fallible && error_policy_ != cudf::error_policy::NULLIFY) {
-          sink.emit(std::format("CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {});\n", type, id_, call));
+          CUDF_EXPECTS(
+            instance.error_operator_map_.size() < evaluation_status::max_error_map_entries,
+            "Too many fallible operators in one row program",
+            std::invalid_argument);
+          auto const operator_id = instance.error_operator_map_.size();
+          instance.error_operator_map_.push_back(udf_.has_value()
+                                                   ? error_operator{udf_->symbol, expression_id_}
+                                                   : error_operator{op_, expression_id_});
+          sink.emit(std::format(
+            "CUDF_ROW_IR_PROPAGATE_ERROR({}, {}, {}, {});\n", type, id_, operator_id, call));
         } else {
           sink.emit(std::format("{} {} = {};\n", type, id_, call));
         }
@@ -907,7 +1019,8 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::operation const& e
   return std::make_unique<row_ir::node>(as_opcode(expr.get_operator()),
                                         expr.get_target_scale(),
                                         error_policy::PROPAGATE,
-                                        std::move(args));
+                                        std::move(args),
+                                        expr.get_expression_id());
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::detail::predicate const& expr)
@@ -924,8 +1037,11 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::opera
   for (auto& arg : expr.get_arguments()) {
     args.emplace_back(arg.get().accept(*this));
   }
-  return std::make_unique<row_ir::node>(
-    expr.get_opcode(), expr.get_target_scale(), expr.get_error_policy(), std::move(args));
+  return std::make_unique<row_ir::node>(expr.get_opcode(),
+                                        expr.get_target_scale(),
+                                        expr.get_error_policy(),
+                                        std::move(args),
+                                        expr.get_expression_id());
 }
 
 std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_call const& expr)
@@ -940,8 +1056,8 @@ std::unique_ptr<row_ir::node> ast_converter::add_ir_node(ast::jit::detail::udf_c
   for (auto& arg : expr.get_arguments()) {
     args.emplace_back(arg.get().accept(*this));
   }
-  auto call =
-    std::make_unique<row_ir::node>(expr.get_function(), expr.get_error_policy(), std::move(args));
+  auto call = std::make_unique<row_ir::node>(
+    expr.get_function(), expr.get_error_policy(), std::move(args), expr.get_expression_id());
   calls_.emplace(&expr, call.get());
   return call;
 }
@@ -1154,19 +1270,21 @@ transform_args ast_converter::compute_table(
                                        .nullability = output_nullabilities[i]});
   }
   auto row_size = std::max({left_table.num_rows(), right_table.num_rows()});
-  auto result   = transform_args{.scalar_columns       = std::move(scalar_columns),
-                                 .input_table_sources  = std::move(table_sources),
-                                 .input_column_indices = std::move(column_indices),
-                                 .udf                  = std::move(code),
-                                 .source_type          = cudf::udf_source_type::CUDA,
-                                 .is_null_aware        = is_null_aware,
-                                 .user_data            = std::nullopt,
-                                 .inputs               = inputs,
-                                 .outputs              = std::move(outputs),
-                                 .string_offsets{},
-                                 .row_size       = row_size,
-                                 .udf_expression = std::string{function_name},
-                                 .lto_fragments  = fragments};
+  auto result =
+    transform_args{.scalar_columns       = std::move(scalar_columns),
+                   .input_table_sources  = std::move(table_sources),
+                   .input_column_indices = std::move(column_indices),
+                   .udf                  = std::move(code),
+                   .source_type          = cudf::udf_source_type::CUDA,
+                   .is_null_aware        = is_null_aware,
+                   .user_data            = std::nullopt,
+                   .inputs               = inputs,
+                   .outputs              = std::move(outputs),
+                   .string_offsets{},
+                   .row_size           = row_size,
+                   .udf_expression     = std::string{function_name},
+                   .lto_fragments      = fragments,
+                   .error_operator_map = std::move(converter.instance_.error_operator_map_)};
   if (get_context().dump_codegen()) {
     std::cout << "Generated code for transform: \n" << result.udf << std::endl;
   }

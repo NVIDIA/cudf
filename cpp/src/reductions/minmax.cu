@@ -115,15 +115,16 @@ struct create_minmax {
 };
 
 /**
- * @brief Functor that takes a cuda::std::pair<T, bool> and produces a minmax_pair
+ * @brief Functor that takes a value and its validity and produces a minmax_pair
  * that is <T, T> for minimum and maximum or <cudf::DeviceMin::identity<T>(),
  * cudf::DeviceMax::identity<T>()>
  */
 template <typename T>
 struct create_minmax_with_nulls {
-  __device__ minmax_pair<T> operator()(cuda::std::pair<T, bool> i)
+  __device__ minmax_pair<T> operator()(auto const& input)
   {
-    return i.second ? minmax_pair<T>{i.first} : minmax_pair<T>{};
+    auto const [value, is_valid] = input;
+    return is_valid ? minmax_pair<T>{value} : minmax_pair<T>{};
   }
 };
 

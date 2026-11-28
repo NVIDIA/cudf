@@ -9,6 +9,9 @@ libcudf
 .. doxygennamespace:: cudf::ast
    :desc-only:
 
+.. doxygennamespace:: cudf::ast::jit
+   :desc-only:
+
 .. doxygennamespace:: cudf::io
    :desc-only:
 

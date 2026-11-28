@@ -8,7 +8,9 @@
 #include <cudf/types.hpp>
 #include <cudf/utilities/export.hpp>
 
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -64,9 +66,9 @@ namespace jit {
  * functions are never merged. A call expression is evaluated once per row however often the
  * tree refers to it, so all references to it see the same result.
  *
- * Functions return SUCCESS or an error code. Error codes below zero are ignored for error
- * reporting. Codes at or above `errc::USER_RESERVED` belong to the consumer and are preserved
- * by `evaluation_error`.
+ * Functions return SUCCESS, a libcudf error, or a user error in
+ * [errc::USER_RESERVED_BEGIN, errc::USER_RESERVED_END). User codes are preserved by
+ * `evaluation_error`. Returning an ABI-invalid status is undefined behavior.
  */
 struct udf {
   std::string symbol;                         ///< Unmangled device function name
@@ -93,6 +95,7 @@ struct udf {
  * @param function Declaration of the function to call
  * @param args Arguments matching the declared input types
  * @param error_policy How failing rows are handled
+ * @param expression_id Caller identifier reported on evaluation failure
  * @return The created expression
  */
 // The returned expression belongs to tree, independently of argument temporaries.
@@ -102,7 +105,8 @@ struct udf {
 expression const& call(ast::tree& tree,
                        ast::jit::udf function,
                        std::vector<std::reference_wrapper<expression const>> args,
-                       cudf::error_policy error_policy = cudf::error_policy::PROPAGATE);
+                       cudf::error_policy error_policy      = cudf::error_policy::PROPAGATE,
+                       std::optional<int32_t> expression_id = std::nullopt);
 }  // namespace jit
 /** @} */
 }  // namespace ast

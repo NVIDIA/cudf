@@ -67,6 +67,17 @@ enum class temporary_allocation_expectation {
   SOME   ///< At least one temporary-resource allocation is expected
 };
 
+/** @brief Checks applied to memory allocated from the harness temporary resource. */
+enum class temporary_memory_checks {
+  NONE,   ///< Forward temporary allocations to the upstream resource unchanged
+  POISON  ///< Fill temporary memory with `poison_byte` after allocation and before deallocation
+};
+
+/**
+ * @brief Byte written to temporary memory when `temporary_memory_checks::POISON` is enabled.
+ */
+constexpr unsigned char poison_byte = 0xA5;
+
 /** @brief Allocation expectations shared by reusable memory-resource tests. */
 struct memory_resource_expectations {
   output_allocation_expectation output{output_allocation_expectation::EXACT};
@@ -80,6 +91,12 @@ struct memory_resource_expectations {
  * It also owns a resource that throws on allocation and can be installed as the current resource
  * around only the API call under test. Counter assertion helpers synchronize the supplied stream
  * before inspecting allocation state.
+ *
+ * With `temporary_memory_checks::POISON`, every temporary allocation is filled with `poison_byte`
+ * when it is allocated and again before it is released; deallocation also synchronizes its stream
+ * so the poison is visible before the memory returns to `upstream`. Results that alias temporary
+ * memory, kernels that read temporaries after their stream-ordered release, and code that reads
+ * uninitialized temporaries then observe poisoned values and fail result validation.
  */
 class memory_resource_test_harness {
  public:
@@ -87,9 +104,11 @@ class memory_resource_test_harness {
    * @brief Construct instrumentation over `upstream`.
    *
    * @param upstream Resource used by each independent statistics adaptor
+   * @param temporary_checks Checks applied to temporary-resource memory
    */
   explicit memory_resource_test_harness(
-    rmm::device_async_resource_ref upstream = cudf::get_current_device_resource_ref());
+    rmm::device_async_resource_ref upstream  = cudf::get_current_device_resource_ref(),
+    temporary_memory_checks temporary_checks = temporary_memory_checks::NONE);
 
   /** @brief Return the statistics resource used to construct test inputs and expected results. */
   [[nodiscard]] rmm::mr::statistics_resource_adaptor& setup_mr() noexcept;

@@ -144,6 +144,28 @@ def test_construction_object():
     tm.assert_series_equal(psr, sr)
 
 
+@pytest.mark.parametrize(
+    "make_element",
+    [
+        lambda mod: mod.Series([1], index=["c0"]),
+        lambda mod: mod.Index([1, 2]),
+    ],
+)
+def test_construction_with_series_or_index_elements(make_element):
+    # https://github.com/NVIDIA/cudf/issues/24896
+    expected = make_element(pd)
+
+    sr = xpd.Series([make_element(xpd)])
+    assert sr.dtype == object
+    assert type(sr.iloc[0]).__name__ == type(expected).__name__
+    tm.assert_equal(sr.iloc[0], expected)
+
+    df = xpd.DataFrame({"c0": [make_element(xpd)]})
+    assert df["c0"].dtype == object
+    assert type(df.iloc[0, 0]).__name__ == type(expected).__name__
+    tm.assert_equal(df.iloc[0, 0], expected)
+
+
 def test_construction_from_frame(dataframe):
     pdf, _ = dataframe
     df = xpd.DataFrame(pdf)

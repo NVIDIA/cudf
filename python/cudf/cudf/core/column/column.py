@@ -3918,6 +3918,12 @@ def as_column(
         for element in arbitrary:
             # Carve-outs that cannot be parsed by pyarrow/pandas
             if is_column_like(element):
+                if cudf.get_option("mode.pandas_compatible"):
+                    # pandas stores each Series or Index as an object
+                    # element, which cudf cannot represent.
+                    raise MixedTypeError(
+                        "Cannot create a column of Series or Index objects"
+                    )
                 # e.g. test_nested_series_from_sequence_data
                 return cudf.core.column.ListColumn.from_sequences(arbitrary)
             elif isinstance(element, cp.ndarray):

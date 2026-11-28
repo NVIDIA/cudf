@@ -12,6 +12,7 @@ from datetime import datetime
 from enum import IntEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
+import polars as pl
 from polars import Struct as pl_Struct  # noqa: TC002 (used in runtime cast())
 from polars.exceptions import InvalidOperationError
 
@@ -25,6 +26,7 @@ from cudf_polars.dsl.utils.reshape import broadcast
 from cudf_polars.utils.dtypes import make_empty_column
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
     from typing import Self
 
     from polars import _plr as polars
@@ -126,6 +128,7 @@ class StringFunction(Expr):
         Name.EndsWith,
         Name.EscapeRegex,
         Name.Extract,
+        Name.ExtractAll,
         Name.ExtractGroups,
         Name.Find,
         Name.Head,
@@ -162,6 +165,14 @@ class StringFunction(Expr):
     # backslash via a back-reference replacement template.
     _ESCAPE_REGEX_PATTERN: ClassVar[str] = r"([#$&()*+\-.?\[\\\]\^{|}~])"
     _ESCAPE_REGEX_REPLACEMENT: ClassVar[str] = r"\\1"
+    _CASE_INSENSITIVE_FLAG: ClassVar[re.Pattern[str]] = re.compile(r"\(\?[a-zA-Z-]*i")
+    _ESCAPE_SEQUENCE: ClassVar[re.Pattern[str]] = re.compile(
+        r"\\(?:x([0-9a-fA-F]{2})|.)", re.DOTALL
+    )
+    _CLASS_HEX_ESCAPE: ClassVar[re.Pattern[str]] = re.compile(r"\\x[0-9a-fA-F]{2}")
+    _LONG_REPETITION_BOUND: ClassVar[re.Pattern[str]] = re.compile(
+        r"\{(?:\d{4,}(?:,\d*)?|\d*,\d{4,})\}"
+    )
     __slots__ = ("_empty_regex", "_invalid_regex", "_regex_program", "name", "options")
     _non_child = ("dtype", "name", "options")
 
@@ -225,6 +236,115 @@ class StringFunction(Expr):
                 # pattern in an outer group to emulate extracting group 0
                 # (the entire match).
                 pattern = f"({pattern})"
+            self._regex_program = self._create_regex_program(pattern)
+        elif self.name is StringFunction.Name.ExtractAll:
+            pattern_expr = self.children[1]
+            if not isinstance(pattern_expr, Literal) or not isinstance(
+                pattern_expr.value, str
+            ):
+                raise NotImplementedError(
+                    "extract_all only supports a scalar string pattern"
+                )
+            pattern = pattern_expr.value
+            if self._has_unsupported_class_or_word_boundary(pattern):
+                raise NotImplementedError(
+                    "extract_all does not support nested character classes, "
+                    "character class set operations, escapes in character "
+                    "class ranges, letter escapes in character classes, "
+                    r"or \< and \>"
+                )
+            if self._CASE_INSENSITIVE_FLAG.search(pattern):
+                raise NotImplementedError(
+                    "extract_all does not support case-insensitive patterns"
+                )
+            try:
+                parsed = re._parser.parse(pattern)  # type: ignore[attr-defined]
+            except re.error as e:
+                raise NotImplementedError(
+                    f"Unsupported regex {pattern} for extract_all"
+                ) from e
+            if parsed.state.groups > 1:
+                raise NotImplementedError(
+                    "extract_all does not support patterns with capture groups"
+                )
+            if parsed.getwidth()[0] == 0:
+                raise NotImplementedError(
+                    "extract_all does not support patterns that can match "
+                    "an empty string"
+                )
+            tokens = tuple(self._iter_regex_tokens(parsed))
+            # libcudf crashes or hangs on an unbounded repetition of a group
+            # that can match an empty string
+            repeat_ops = (
+                re._constants.MAX_REPEAT,  # type: ignore[attr-defined]
+                re._constants.MIN_REPEAT,  # type: ignore[attr-defined]
+            )
+            if any(
+                op in repeat_ops
+                and av[1] == re._constants.MAXREPEAT  # type: ignore[attr-defined]
+                and av[2].getwidth()[0] == 0
+                for op, av in tokens
+            ):
+                raise NotImplementedError(
+                    "extract_all does not support unbounded repetitions of "
+                    "groups that can match an empty string; use a bounded "
+                    "repetition such as {0,n} or make the group non-empty"
+                )
+            # libcudf also matches $ before a final newline, unlike polars
+            if (
+                not parsed.state.flags & re.MULTILINE
+                and (
+                    re._constants.AT,  # type: ignore[attr-defined]
+                    re._constants.AT_END,  # type: ignore[attr-defined]
+                )
+                in tokens
+            ):
+                raise NotImplementedError(
+                    "extract_all does not support $ outside of multiline mode"
+                )
+            # libcudf's \d, \w, \s, and \b do not follow the Unicode
+            # definitions that polars uses
+            if any(
+                op is re._constants.CATEGORY  # type: ignore[attr-defined]
+                or (
+                    op is re._constants.AT  # type: ignore[attr-defined]
+                    and av
+                    in {
+                        re._constants.AT_BOUNDARY,  # type: ignore[attr-defined]
+                        re._constants.AT_NON_BOUNDARY,  # type: ignore[attr-defined]
+                    }
+                )
+                for op, av in tokens
+            ):
+                raise NotImplementedError(
+                    r"extract_all does not support \d, \w, \s, \b, or their negations"
+                )
+            # libcudf reads at most 3 digits of a repetition bound and treats
+            # longer bounds as literal characters
+            if self._LONG_REPETITION_BOUND.search(pattern):
+                raise NotImplementedError(
+                    "extract_all does not support repetition bounds with more "
+                    "than 3 digits"
+                )
+            # libcudf stops parsing the pattern at a NUL character
+            if "\x00" in pattern:
+                raise NotImplementedError(
+                    "extract_all does not support patterns with NUL characters"
+                )
+            # libcudf does not encode \xHH escapes as UTF-8
+            if any(
+                m.group(1) is not None and int(m.group(1), 16) >= 0x80
+                for m in self._ESCAPE_SEQUENCE.finditer(pattern)
+            ):
+                raise NotImplementedError(
+                    r"extract_all does not support non-ASCII \x escapes"
+                )
+            try:
+                pl.select(pl.lit("", dtype=pl.String).str.extract_all(pattern))
+            except pl.exceptions.ComputeError as e:
+                raise NotImplementedError(
+                    f"Invalid regex {pattern} for extract_all"
+                ) from e
             self._regex_program = self._create_regex_program(pattern)
         elif self.name is StringFunction.Name.ExtractGroups:
             (_, pattern) = self.options
@@ -336,6 +456,64 @@ class StringFunction(Expr):
                 raise NotImplementedError(
                     "str.to_integer only supports base 10 on the GPU engine"
                 )
+
+    @staticmethod
+    def _iter_regex_tokens(
+        tokens: Iterable[tuple[Any, Any]],
+    ) -> Iterator[tuple[Any, Any]]:
+        """Yield the (opcode, argument) tokens of a parsed regex, recursively."""
+        sub_pattern = re._parser.SubPattern  # type: ignore[attr-defined]
+        for op, av in tokens:
+            yield op, av
+            if op is re._constants.IN or isinstance(av, sub_pattern):  # type: ignore[attr-defined]
+                yield from StringFunction._iter_regex_tokens(av)
+            elif isinstance(av, tuple | list):
+                for value in av:
+                    if isinstance(value, sub_pattern):
+                        yield from StringFunction._iter_regex_tokens(value)
+                    elif isinstance(value, list):
+                        for branch in value:
+                            yield from StringFunction._iter_regex_tokens(branch)
+
+    @staticmethod
+    def _has_unsupported_class_or_word_boundary(pattern: str) -> bool:
+        in_class = False
+        i = 0
+        while i < len(pattern):
+            char = pattern[i]
+            if char == "\\":
+                escaped = pattern[i + 1 : i + 2]
+                if escaped in {"<", ">"}:
+                    return True
+                hex_escape = StringFunction._CLASS_HEX_ESCAPE.match(pattern, i)
+                end = hex_escape.end() if hex_escape else i + 2
+                if in_class and (
+                    pattern[i - 1] == "-"
+                    or (
+                        pattern[end : end + 1] == "-"
+                        and pattern[end + 1 : end + 2] != "]"
+                    )
+                    or (
+                        escaped.isalnum()
+                        and escaped not in {"n", "t"}
+                        and hex_escape is None
+                    )
+                ):
+                    return True
+                i = end
+                continue
+            if in_class:
+                if char == "[" or pattern[i : i + 2] in {"&&", "--", "~~", "||"}:
+                    return True
+                in_class = char != "]"
+            elif char == "[":
+                in_class = True
+                i += 2 if pattern[i + 1 : i + 2] == "^" else 1
+                if pattern[i : i + 1] == "]":
+                    i += 1
+                continue
+            i += 1
+        return False
 
     @staticmethod
     def _create_regex_program(
@@ -561,6 +739,14 @@ class StringFunction(Expr):
             return Column(
                 plc.strings.extract.extract_single(
                     plc_column, self._regex_program, group, stream=df.stream
+                ),
+                dtype=self.dtype,
+            )
+        elif self.name is StringFunction.Name.ExtractAll:
+            plc_column = self.children[0].evaluate(df, context=context).obj
+            return Column(
+                plc.strings.findall.findall(
+                    plc_column, self._regex_program, stream=df.stream
                 ),
                 dtype=self.dtype,
             )

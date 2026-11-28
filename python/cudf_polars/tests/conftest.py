@@ -334,6 +334,17 @@ def in_memory_engine() -> pl.GPUEngine:
 
 
 @pytest.fixture
+def in_memory_fallback_engine() -> pl.GPUEngine:
+    """
+    Return an in-memory :class:`polars.GPUEngine` with ``raise_on_fail=False``.
+
+    Use this for tests that intentionally exercise the fallback to the CPU
+    engine for unsupported queries.
+    """
+    return pl.GPUEngine(executor="in-memory", raise_on_fail=False)
+
+
+@pytest.fixture
 def timeout_seconds() -> int:
     """
     Conservative timeout for APIs that accept a timeout parameter.

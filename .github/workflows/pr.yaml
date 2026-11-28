@@ -8,7 +8,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-polars-buffer-lifetime
+  group: ${{ github.workflow }}-${{ github.ref }}-polars-packed-kernels
   cancel-in-progress: true
 
 jobs:
@@ -20,15 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         trial:
-          - order-lifetime-reference
-          - order-lifetime-probe-01
-          - order-lifetime-probe-02
-          - order-lifetime-probe-03
-          - order-lifetime-probe-04
-          - order-lifetime-probe-05
-          - order-lifetime-probe-06
-          - order-lifetime-probe-07
-          - order-lifetime-probe-08
+          - packed-kernel-names
+          - sanitizer-packed-baseline
+          - sanitizer-packed-alternate
     permissions:
       actions: read
       contents: read

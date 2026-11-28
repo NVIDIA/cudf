@@ -5,8 +5,11 @@
 #include <dlfcn.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -23,6 +26,9 @@ struct record {
 _Static_assert(sizeof(struct record) == 104, "trace format");
 
 static struct record* trace_records;
+static int kernel_names_fd = -1;
+
+void stream_trace_set_kernel_names(int fd) { kernel_names_fd = fd; }
 static _Atomic uint64_t next_seq;
 static _Atomic uint64_t write_failures;
 static _Thread_local uint32_t thread_id;
@@ -95,6 +101,23 @@ static void callback(void* userdata,
   // without a write syscall for every CUDA call.
   __builtin_memcpy(&slot->ns, &line.ns, sizeof(line) - sizeof(line.seq));
   atomic_store_explicit(&slot->seq, sequence, memory_order_release);
+  if (kernel_names_fd >= 0 && line.phase == CUPTI_API_ENTER && cb->symbolName &&
+      strncmp(line.api, "cuLaunchKernel", 14) == 0) {
+    char const* symbol = cb->symbolName;
+    if (strstr(symbol, "ScanByKey") || strstr(symbol, "ReduceByKey") ||
+        strstr(symbol, "ScanInit")) {
+      char prefix[96];
+      int const length           = snprintf(prefix,
+                                  sizeof(prefix),
+                                  "%llu\t%#llx\t%#llx\t",
+                                  (unsigned long long)sequence,
+                                  (unsigned long long)line.stream,
+                                  (unsigned long long)line.object);
+      struct iovec const parts[] = {
+        {prefix, (size_t)length}, {(void*)symbol, strlen(symbol)}, {(void*)"\n", 1}};
+      (void)writev(kernel_names_fd, parts, sizeof(parts) / sizeof(parts[0]));
+    }
+  }
 }
 
 int install_stream_trace(int fd, char const* library)

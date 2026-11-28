@@ -36,6 +36,10 @@ if [[ "$trial" == order-reference ]]; then
     trial=signal-order-dask-datetime
 elif [[ "$trial" == order-alternate-reference ]]; then
     trial=signal-order-alternate-dask-datetime
+elif [[ "$trial" == packed-kernel-names ]]; then
+    trial=signal-order-packed-names-dask-datetime
+elif [[ "$trial" == sanitizer-packed-* ]]; then
+    trial="memcheck-packed-${trial#sanitizer-packed-}-dask-datetime"
 elif [[ "$trial" == sanitizer-order || "$trial" == sanitizer-order-alternate ]]; then
     trial="${trial/sanitizer/memcheck}-dask-datetime"
 elif [[ "$trial" == order-lifetime-reference ]]; then

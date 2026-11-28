@@ -47,8 +47,22 @@ def _run_chunk(source, consumer, br, mode):
                 )
             ]
         )
+    fixed = mode == "alias" and os.environ.get("CUDF_POLARS_SANITIZE_PACKED")
+    if fixed:
+        import polars as pl
+        from cudf_polars.containers import DataFrame, DataType
+        from cudf_polars.streaming.actor_graph.utils import (
+            _copy_shared_output_columns,
+        )
+
+        names, dtypes = ["x"], [DataType(pl.Int64())]
+        result = _copy_shared_output_columns(
+            DataFrame.from_table(result, names, dtypes, consumer),
+            DataFrame.from_table(source_table, names, dtypes, producer),
+        )
+        assert result.columns()[0].data().ptr != columns[0].data().ptr
     wrapped = TableChunk.from_pylibcudf_table(
-        result, consumer, exclusive_view=mode != "alias", br=br
+        result, consumer, exclusive_view=bool(fixed) or mode != "alias", br=br
     )
     # Keep producer-side deallocation after the final consumer access.
     plc.experimental.join_streams([consumer], producer)

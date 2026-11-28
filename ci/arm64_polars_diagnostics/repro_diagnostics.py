@@ -144,6 +144,14 @@ def _install_fault_report(worker):
         cupti = os.fsencode(candidates[0] if candidates else "libcupti.so.13")
         trace = _output / f"{worker}.stream.bin"
         trace_fd = os.open(trace, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        if os.environ.get("CUDF_POLARS_KERNEL_NAMES"):
+            names = _output / f"{worker}.kernels.tsv"
+            names_fd = os.open(
+                names,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_APPEND,
+                0o600,
+            )
+            reporter.stream_trace_set_kernel_names(names_fd)
         status = reporter.install_stream_trace(
             trace_fd, ctypes.c_char_p(cupti)
         )
@@ -204,6 +212,8 @@ def _install_context_probe(worker):
 
 def pytest_sessionstart(session):
     worker = os.environ.get("PYTEST_XDIST_WORKER")
+    if not worker and os.environ.get("CUDF_POLARS_SINGLE_PROCESS_TRACE"):
+        session._cudf_fault_reporter = _install_fault_report("main")
     if not worker:
         with (_output / "conda-explicit.txt").open("w") as packages:
             subprocess.run(
